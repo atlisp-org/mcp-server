@@ -1,0 +1,106 @@
+{
+  "name": "@lisp 编码规范",
+  "version": "1.0",
+  "description": "@lisp AutoLISP 代码编写规范",
+  "categories": {
+    "naming": {
+      "description": "命名规范",
+      "rules": [
+        { "rule": "函数名使用 kebab-case（连字符分隔小写）", "good": "load-module", "bad": "loadModule / load_module" },
+        { "rule": "内核函数使用 @:: 前缀", "good": "@::load-module", "bad": "load-module" },
+        { "rule": "包/模块函数使用 module:name 格式", "good": "string:format, layer:make", "bad": "string_format" },
+        { "rule": "全局变量使用 *earmuffs* 星号包裹", "good": "*ACAD*, @::*menu*", "bad": "acad_var / menu_var" },
+        { "rule": "循环/局部变量使用 % 后缀", "good": "pkg%, i%, lst%", "bad": "pkg_i / i" },
+        { "rule": "常量使用 +name+ 加号包裹", "good": "+aaa+", "bad": "AAA / Aaa" },
+        { "rule": "CAD 命令函数使用 C: 前缀", "good": "C:@, C:@H", "bad": "C-@-H" },
+        { "rule": "平台标志变量使用 is- 前缀", "good": "is-autocad, is-zwcad", "bad": "isAutocad" },
+        { "rule": "配置键使用 '@::key-name 引号格式", "good": "'@::auto-mode", "bad": "'@::autoMode" },
+        { "rule": "布尔谓词以 p 结尾（可选）", "good": "internetp, zero p", "bad": "is-internet" }
+      ]
+    },
+    "package": {
+      "description": "包与命名空间规范",
+      "rules": [
+        { "rule": "内核包名为 :@" },
+        { "rule": "包定义使用 Common Lisp 风格 defpackage" },
+        { "rule": "外部包使用简短前缀名", "examples": ["entity", "layer", "string", "json", "ui", "curve", "pickset", "block", "color", "text", "geometry", "matrix", "re", "excel", "word", "dcl", "datetime", "file", "ini", "svg", "xdata", "group", "layout"] },
+        { "rule": "子命名空间使用双冒号 ::", "examples": ["fun::indent", "@nlp::flatten"] }
+      ]
+    },
+    "file_structure": {
+      "description": "文件组织规范",
+      "rules": [
+        { "rule": "每个模块一个文件，命名与功能对应" },
+        { "rule": "文件开头加载依赖：(@::load-module 'name) 或 (require 'name:*)" },
+        { "rule": "模块级变量放在函数定义之前" },
+        { "rule": "文件末尾返回 T 或 (@::internetp) 表示加载成功" },
+        { "rule": "注册模块到 @::*modules*： (setq @::*modules* (cons 'name @::*modules*))" }
+      ],
+      "directory_layout": {
+        "src/": "AutoLISP 源码",
+        "src/modules/": "功能模块",
+        "src/sub-system/": "复杂子系统"
+      }
+    },
+    "documentation": {
+      "description": "注释与文档规范",
+      "rules": [
+        { "rule": "函数定义后紧跟字符串作为 docstring", "example": "(defun @::about (/ curr) \"显示版权信息.\" ...)" },
+        { "rule": "复杂函数使用字符串分节", "example": "(defun fn () ... \"1. Model\" ... \"2. View\" ...)" },
+        { "rule": "用户界面字符串使用 (_ \"text\") i18n 包装", "good": "(_ \"Download\")", "bad": "\"Download\"" },
+        { "rule": "段注释用 ;; 前缀" },
+        { "rule": "大段分隔用 ;;;;;;;;" },
+        { "rule": "行内注释用 ;" },
+        { "rule": "编码必须为 UTF-8（无 BOM）" }
+      ]
+    },
+    "error_handling": {
+      "description": "错误处理规范",
+      "rules": [
+        { "rule": "函数内定义局部 *error* 处理函数" },
+        { "rule": "使用 vl-catch-all-apply 包装可能失败的调用" },
+        { "rule": "使用 @::@log 分级日志（INFO / WARN / WARNING）" },
+        { "rule": "致命错误使用 (exit)" },
+        { "rule": "始终做防御性 nil/类型检查" },
+        { "rule": "用 cond 做多分支出错回退" }
+      ]
+    },
+    "function_definition": {
+      "description": "函数定义规范",
+      "rules": [
+        { "rule": "带参数的函数内部禁止使用交互函数（getint, getreal, getdist, getpoint, getstring, entsel, nentsel, nentselp 等）", "reason": "交互函数会中断程序流程等待用户输入，带参数的函数应通过形参接收数据" },
+        { "rule": "如需交互，由不带参数的函数收集用户输入，再调用带参数的函数处理", "good": "(defun c:draw-wall () (setq p1 (getpoint \"\\n起点: \") p2 (getpoint \"\\n终点: \")) (draw-wall p1 p2))", "bad": "(defun draw-wall (p1 p2) (setq p1 (getpoint \"\\n起点: \")) ...)" },
+        { "rule": "创建图形对象优先使用 entmake 或 ActiveX（vla-* / vlax-*）", "reason": "entmake/vlax-* 性能更好，不受系统变量影响，执行更可靠" },
+        { "rule": "禁止使用 (command ...) 创建图形对象", "reason": "command 依赖当前系统变量和命令状态（如 cmdecho, osmode），易出错且不可控" },
+        { "rule": "尽量使用 @lisp 函数库提供的高阶函数（如 pickset:to-list, string:format, entity:make-circle 等）替代手写底层逻辑", "reason": "@lisp 高阶函数经过跨平台兼容性测试，代码更简洁、可读性更强" }
+      ]
+    },
+    "platform": {
+      "description": "跨平台兼容规范",
+      "rules": [
+        { "rule": "使用 is-autocad / is-zwcad / is-gstarcad / is-bricscad 做分支判断" },
+        { "rule": "编译文件扩展名： .fas/.vlx (AutoCAD) .zelx/.vls (ZWCAD) .des (BricsCAD/GStarCAD)" },
+        { "rule": "VLA 函数（vlax-*, vla-*）在四大平台均可用" },
+        { "rule": "避免使用各平台独有 API，如有则用平台分支隔离" }
+      ]
+    },
+    "performance": {
+      "description": "性能规范",
+      "rules": [
+        { "rule": "频繁调用的循环内避免 (entget)/(entmod) 动态操作" },
+        { "rule": "大量实体操作使用 ActiveX (vla-*) 优于 command" },
+        { "rule": "大集合使用 vlax-for 而非重复 (ssname ...)" },
+        { "rule": "配置文件读写使用 Config Manager 子系统而非直接读写文件" },
+        { "rule": "网络请求设置合理超时 @::waitforresponse" }
+      ]
+    },
+    "i18n": {
+      "description": "国际化规范",
+      "rules": [
+        { "rule": "所有用户可见字符串必须用 (_ \"...\")" },
+        { "rule": "日志字符串可以不用 i18n 包装" },
+        { "rule": "i18n 文件放在 i18n.lsp 中管理" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "name": "CAD 制图规范",
+  "version": "1.0",
+  "description": "适用于 AutoCAD / ZWCAD / GStarCAD / BricsCAD 的通用制图规范",
+  "categories": {
+    "layers": {
+      "description": "图层命名规范：前缀 + 英文描述，统一大写",
+      "rules": [
+        { "prefix": "A-", "meaning": "建筑", "examples": ["A-WALL", "A-DOOR", "A-WIND", "A-ROOM", "A-STAIR"] },
+        { "prefix": "S-", "meaning": "结构", "examples": ["S-COLM", "S-BEAM", "S-SLAB", "S-FOOT", "S-REBAR"] },
+        { "prefix": "M-", "meaning": "暖通", "examples": ["M-DUCT", "M-EQPM", "M-PIPE"] },
+        { "prefix": "E-", "meaning": "电气", "examples": ["E-LIGHT", "E-POWER", "E-CABLE", "E-SWITCH"] },
+        { "prefix": "P-", "meaning": "给排水", "examples": ["P-WSUP", "P-WAST", "P-RAIN", "P-PIPE"] },
+        { "prefix": "DIM-", "meaning": "标注", "examples": ["DIM-LINEAR", "DIM-RADIAL", "DIM-ANG"] },
+        { "prefix": "TXT-", "meaning": "文字", "examples": ["TXT-NOTE", "TXT-TITLE", "TXT-DIM"] },
+        { "prefix": "HAT-", "meaning": "填充", "examples": ["HAT-SOLID", "HAT-CROSS", "HAT-EARTH"] },
+        { "prefix": "DEF-", "meaning": "图框/标题栏", "examples": ["DEF-BORDER", "DEF-TITLE", "DEF-REV"] },
+        { "prefix": "X-", "meaning": "参照/外部", "examples": ["X-REF", "X-CLIP"] },
+        { "prefix": "PUB-", "meaning": "公共", "examples": ["PUB-AXIS", "PUB-GRID", "PUB-LEVEL"] }
+      ]
+    },
+    "colors": {
+      "description": "图层颜色分配规范（ACI 索引号）",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "主要墙体、轮廓线" },
+        { "color": 2, "name": "Yellow", "usage": "门窗、标注引导线" },
+        { "color": 3, "name": "Green", "usage": "填充、绿化" },
+        { "color": 4, "name": "Cyan", "usage": "尺寸标注、注释" },
+        { "color": 5, "name": "Blue", "usage": "文字、说明" },
+        { "color": 6, "name": "Magenta", "usage": "设备、管线" },
+        { "color": 7, "name": "White/Black", "usage": "默认颜色、图框" },
+        { "color": 8, "name": "Gray", "usage": "参照、辅助线" },
+        { "color": 9, "name": "Light Gray", "usage": "填充背景" }
+      ]
+    },
+    "linetypes": {
+      "description": "常用线型定义及用途",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "可见轮廓线、图框" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线、不可见轮廓" },
+        { "name": "DASHED2", "description": "虚线（细）", "usage": "小尺寸虚线" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线、对称线" },
+        { "name": "CENTER2", "description": "中心线（细）", "usage": "小尺寸中心线" },
+        { "name": "PHANTOM", "description": "双点划线", "usage": "假想线、运动极限位置" },
+        { "name": "DOT", "description": "点线", "usage": "辅助定位线" },
+        { "name": "DASHDOT", "description": "点划线", "usage": "定位轴线、中心线" },
+        { "name": "BORDER", "description": "边界线", "usage": "图框边界、剖切线" },
+        { "name": "DIVIDE", "description": "分界线", "usage": "区域分界" }
+      ]
+    },
+    "lineweights": {
+      "description": "线宽规范（mm）",
+      "rules": [
+        { "weight": 0.00, "usage": "默认/随块" },
+        { "weight": 0.05, "usage": "极细线、填充" },
+        { "weight": 0.09, "usage": "细线、标注、文字" },
+        { "weight": 0.13, "usage": "中细线、门窗" },
+        { "weight": 0.18, "usage": "中等线、一般轮廓" },
+        { "weight": 0.25, "usage": "中粗线、主要轮廓" },
+        { "weight": 0.35, "usage": "粗线、图框外框" },
+        { "weight": 0.50, "usage": "加粗线、标题栏外框" },
+        { "weight": 0.70, "usage": "特粗线、封面" }
+      ]
+    },
+    "textstyles": {
+      "description": "文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "usage": "图纸标题" },
+        { "name": "SUBTITLE", "font": "黑体", "height": 5.0, "width": 0.8, "usage": "二级标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "usage": "一般说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "usage": "尺寸标注文字" },
+        { "name": "DIM-ISO", "font": "Arial", "height": 2.5, "width": 1.0, "usage": "ISO 尺寸标注" },
+        { "name": "TABLE", "font": "宋体", "height": 3.0, "width": 0.7, "usage": "表格文字" }
+      ]
+    },
+    "dimstyles": {
+      "description": "标注样式规范",
+      "rules": [
+        { "name": "STANDARD", "usage": "默认标注样式", "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } },
+        { "name": "DIM-ARCH", "usage": "建筑标注", "properties": { "arrow": "arch tick", "text_height": 2.5, "precision": 0, "unit": "millimeters" } },
+        { "name": "DIM-CIVIL", "usage": "总图标注", "properties": { "arrow": "closed filled", "text_height": 3.0, "precision": 2, "unit": "meters" } },
+        { "name": "DIM-RADIAL", "usage": "半径/直径标注", "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 1 } },
+        { "name": "DIM-ANG", "usage": "角度标注", "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 1, "unit": "decimal degrees" } }
+      ]
+    },
+    "plot": {
+      "description": "打印/出图规范",
+      "rules": [
+        { "name": "A0", "size": [1189, 841], "scale": "1:100", "usage": "大型总图" },
+        { "name": "A1", "size": [841, 594], "scale": "1:50", "usage": "平面/立面图" },
+        { "name": "A2", "size": [594, 420], "scale": "1:50", "usage": "剖面/详图" },
+        { "name": "A3", "size": [420, 297], "scale": "1:25", "usage": "大样/节点图" },
+        { "name": "A4", "size": [297, 210], "scale": "1:10", "usage": "变更/洽商图" }
+      ],
+      "ctb": "建议使用 monochrome.ctb 黑白打印，浅色(Cyan/Green)打印为灰度"
+    },
+    "file_naming": {
+      "description": "DWG 文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-专业代码-图纸类型-序号.dwg", "example": "P2024-A-FP-01.dwg" },
+        { "field": "项目编码", "description": "项目编号，如 P2024" },
+        { "field": "专业代码", "description": "A=建筑 S=结构 M=暖通 E=电气 P=给排水" },
+        { "field": "图纸类型", "description": "FP=平面图 EL=立面图 SC=剖面图 DT=详图" },
+        { "field": "序号", "description": "两位数字 01-99" }
+      ]
+    }
+  }
+}

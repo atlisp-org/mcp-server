@@ -1,0 +1,22 @@
+{
+  "name": "json-exchange",
+  "description": "JSON数据交换：从字符串解析JSON alist，从alist生成JSON",
+  "arguments": [
+    { "name": "action", "description": "操作 (encode/decode/decode-json)", "required": true, "default": "encode" },
+    { "name": "data", "description": "JSON字符串或Lisp alist文本", "required": true, "default": "((\"name\" . \"客厅\") (\"area\" . 45.5) (\"layer\" . \"A-WALL\"))" }
+  ],
+  "templates": {
+    "encode": {
+      "code": "(json:encode-from-alist '{{{data}}})",
+      "description": "将alist数据编码为JSON字符串"
+    },
+    "decode": {
+      "code": "(json:parse \"{{data}}\")",
+      "description": "使用纯Lisp解析器解析JSON字符串"
+    },
+    "decode-json": {
+      "code": "(json:decode-json-from-string \"{{data}}\")",
+      "description": "使用服务器API解码JSON字符串（支持GBK编码）"
+    }
+  }
+}

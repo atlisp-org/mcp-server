@@ -1,0 +1,14 @@
+{
+  "name": "batch-draw-lines",
+  "description": "批量绘制线段",
+  "arguments": [
+    { "name": "count", "description": "线段数量", "required": true, "default": 5 },
+    { "name": "length", "description": "线段长度", "required": false, "default": 1000 }
+  ],
+  "templates": {
+    "default": {
+      "code": "(defun c:batch-lines (/ i)\n  (setq i 0)\n  (repeat {{count}}\n    (command \"_.line\" (list (* i {{length}}) 0) (list (* (1+ i) {{length}}) 0) \"\")\n    (setq i (1+ i))\n  )\n  (princ)\n)\n(c:batch-lines)",
+      "description": "批量绘制 {{count}} 条长度为 {{length}} 的水平线段：\n\n此代码将绘制 {{count}} 条首尾相连的水平线段。"
+    }
+  }
+}

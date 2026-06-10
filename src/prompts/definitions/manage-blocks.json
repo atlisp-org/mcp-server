@@ -1,0 +1,28 @@
+{
+  "name": "manage-blocks",
+  "description": "块操作：插入块、列出块、获取/设置属性",
+  "arguments": [
+    { "name": "action", "description": "操作类型 (list/insert/attributes/dynprops)", "required": true, "default": "list" },
+    { "name": "blockName", "description": "块名", "required": false, "default": "块名" },
+    { "name": "insertPoint", "description": "插入点 \"x,y\"", "required": false, "default": "0,0" },
+    { "name": "scale", "description": "缩放比例", "required": false, "default": "1" }
+  ],
+  "templates": {
+    "list": {
+      "code": "(block:list)",
+      "description": "列出当前图纸中所有块定义"
+    },
+    "insert": {
+      "code": "(block:insert \"{{blockName}}\" \"{{blockName}}\" (list {{insertPoint}}) 0 {{scale}})",
+      "description": "插入块 \"{{blockName}}\" 到点 ({{insertPoint}})，比例 {{scale}}"
+    },
+    "attributes": {
+      "code": "(block:get-attributes (car (pickset:to-list (ssget \"_X\" (list (cons 2 \"{{blockName}}\"))))))",
+      "description": "获取块 \"{{blockName}}\" 的属性标签-值列表"
+    },
+    "dynprops": {
+      "code": "(block:get-dynamic-properties (car (pickset:to-list (ssget \"_X\" (list (cons 2 \"{{blockName}}\"))))))",
+      "description": "获取动态块 \"{{blockName}}\" 的可调属性"
+    }
+  }
+}

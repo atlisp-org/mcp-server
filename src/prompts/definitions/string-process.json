@@ -1,0 +1,40 @@
+{
+  "name": "string-process",
+  "description": "字符串处理：格式化、拆分、替换、正则",
+  "arguments": [
+    { "name": "action", "description": "操作 (format/split/subst-all/regexp/trim/number2chinese/to-list)", "required": true, "default": "format" },
+    { "name": "input", "description": "输入字符串", "required": true, "default": "Hello, {0}!" },
+    { "name": "arg1", "description": "参数1（格式参数/分隔符/旧串）", "required": false, "default": "World" },
+    { "name": "arg2", "description": "参数2（新串/正则模式）", "required": false, "default": "" }
+  ],
+  "templates": {
+    "format": {
+      "code": "(string:format \"{{input}}\" (list \"{{arg1}}\"))",
+      "description": "格式化: {{input}} 参数: {{arg1}}"
+    },
+    "split": {
+      "code": "(string:split \"{{input}}\" \"{{arg1}}\")",
+      "description": "拆分: \"{{input}}\" 按 \"{{arg1}}\" 分隔"
+    },
+    "subst-all": {
+      "code": "(string:subst-all \"{{arg2}}\" \"{{arg1}}\" \"{{input}}\")",
+      "description": "替换: 将 \"{{input}}\" 中的 \"{{arg1}}\" 替换为 \"{{arg2}}\""
+    },
+    "regexp": {
+      "code": "(re:match \"{{arg1}}\" \"{{input}}\")",
+      "description": "正则匹配: \"{{input}}\" 模式: {{arg1}}"
+    },
+    "trim": {
+      "code": "(string:trim-space \"{{input}}\")",
+      "description": "去除首尾空格: \"{{input}}\""
+    },
+    "number2chinese": {
+      "code": "(string:number2chinese {{input}})",
+      "description": "数字 {{input}} 转中文大写"
+    },
+    "to-list": {
+      "code": "(string:to-list \"{{input}}\" \"{{arg1}}\")",
+      "description": "按分隔符 \"{{arg1}}\" 拆分 \"{{input}}\" 为列表"
+    }
+  }
+}

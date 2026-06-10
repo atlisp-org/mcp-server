@@ -1,0 +1,9 @@
+{
+  "name": "excel-report",
+  "description": "Excel报表：导出CAD实体数据到Excel",
+  "arguments": [
+    { "name": "visible", "description": "是否显示Excel窗口 (true/false)", "required": false, "default": "false" },
+    { "name": "savePath", "description": "保存路径，不填则不保存", "required": false, "default": "" }
+  ],
+  "handlerFile": "excel-report"
+}

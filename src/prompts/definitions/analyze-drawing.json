@@ -1,0 +1,6 @@
+{
+  "name": "analyze-drawing",
+  "description": "分析当前图纸统计信息",
+  "arguments": [],
+  "handlerFile": "analyze-drawing"
+}

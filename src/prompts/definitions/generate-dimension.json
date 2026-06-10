@@ -1,0 +1,8 @@
+{
+  "name": "generate-dimension",
+  "description": "生成尺寸标注",
+  "arguments": [
+    { "name": "style", "description": "标注样式 (horizontal/vertical/aligned)", "required": false, "default": "aligned" }
+  ],
+  "handlerFile": "generate-dimension"
+}

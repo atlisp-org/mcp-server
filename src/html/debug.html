@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>@lisp MCP Debug Panel</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #1a1a2e; color: #eee; }
+        h1 { color: #00d4ff; }
+        h2 { color: #00d4ff; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .card { background: #16213e; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        .stat { display: inline-block; margin: 10px 20px; }
+        .stat-label { color: #888; font-size: 12px; }
+        .stat-value { font-size: 24px; color: #00d4ff; }
+        .status-ok { color: #49cc90; }
+        .status-error { color: #f93e3e; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #333; }
+        th { color: #888; }
+        code { background: #0f0f23; padding: 3px 8px; border-radius: 3px; color: #00d4ff; }
+        .refresh { background: #00d4ff; color: #1a1a2e; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🛠️ @lisp MCP Debug Panel</h1>
+    <button class="refresh" onclick="location.reload()">🔄 Refresh</button>
+    
+    <h2>System</h2>
+    <div class="card">
+        <div class="stat">
+            <div class="stat-label">Uptime</div>
+            <div class="stat-value">__UPTIME_MIN__m</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Memory RSS</div>
+            <div class="stat-value">__MEMORY_RSS_MB__ MB</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Heap Used</div>
+            <div class="stat-value">__HEAP_USED_MB__ MB</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">MCP Sessions</div>
+            <div class="stat-value">__SESSIONS_COUNT__</div>
+        </div>
+    </div>
+
+    <h2>CAD Status</h2>
+    <div class="card">
+        <span class="__CAD_STATUS_CLASS__">
+            __CAD_STATUS_TEXT__
+        </span>
+    </div>
+
+    <h2>Endpoints</h2>
+    <div class="card">
+        <table>
+            <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
+            <tr><td><code>/health</code></td><td>GET</td><td>Health check</td></tr>
+            <tr><td><code>/metrics</code></td><td>GET</td><td>Prometheus metrics</td></tr>
+            <tr><td><code>/mcp</code></td><td>POST</td><td>MCP JSON-RPC</td></tr>
+            <tr><td><code>/sse</code></td><td>GET</td><td>Server-Sent Events</td></tr>
+            <tr><td><code>/debug</code></td><td>GET</td><td>This panel</td></tr>
+            <tr><td><code>/api/docs</code></td><td>GET</td><td>API Documentation</td></tr>
+        </table>
+    </div>
+
+    <h2>Tools (__TOOLS_COUNT__)</h2>
+    <div class="card">
+        <p>Use <code>tools/list</code> MCP method to get full tool list.</p>
+    </div>
+
+    <script>
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</body>
+</html>

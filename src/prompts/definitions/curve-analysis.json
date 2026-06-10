@@ -1,0 +1,26 @@
+{
+  "name": "curve-analysis",
+  "description": "曲线分析：交点、最近点、子段、缓冲区",
+  "arguments": [
+    { "name": "action", "description": "操作 (inters/subsegments/closestpoint/join)", "required": true, "default": "inters" },
+    { "name": "distance", "description": "连接容差/偏移距离", "required": false, "default": "100" }
+  ],
+  "templates": {
+    "inters": {
+      "code": "(progn\n  (setq ss (ssget \"_X\" (list (cons 0 \"LWPOLYLINE,LINE,ARC,CIRCLE\"))))\n  (if (and ss (>= (sslength ss) 2))\n    (progn\n      (setq elst (pickset:to-list ss))\n      (setq e1 (car elst) e2 (cadr elst))\n      (curve:inters e1 e2 0)\n    )\n  )\n)",
+      "description": "选择前两个曲线对象，计算其交点（可指定 LWPOLYLINE, LINE, ARC, CIRCLE）"
+    },
+    "subsegments": {
+      "code": "(progn\n  (setq e (car (pickset:to-list (ssget \":S\" (list (cons 0 \"LWPOLYLINE\"))))))\n  (if e (curve:subsegments e))\n)",
+      "description": "选择一个LWPOLYLINE，返回其子段数"
+    },
+    "closestpoint": {
+      "code": "(progn\n  (setq e (car (pickset:to-list (ssget \":S\" (list (cons 0 \"LWPOLYLINE,LINE,ARC,CIRCLE\"))))))\n  (if e (curve:pickclosepointto e (getpoint \"\\n选择参考点: \")))\n)",
+      "description": "选择一个曲线对象，然后拾取一个点，返回曲线上离该点最近的点"
+    },
+    "join": {
+      "code": "(progn\n  (setq ss (ssget (list (cons 0 \"LINE,LWPOLYLINE\"))))\n  (if ss (curve:join (pickset:to-list ss) {{distance}}))\n)",
+      "description": "选择LINE/LWPOLYLINE线段，用 PEDIT Join 合并，容差距离={{distance}}"
+    }
+  }
+}

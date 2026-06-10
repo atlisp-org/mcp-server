@@ -1,0 +1,26 @@
+{
+  "name": "text-process",
+  "description": "文本处理：MTEXT解析、Markdown转MTEXT、去格式",
+  "arguments": [
+    { "name": "action", "description": "操作 (parse-mtext/remove-fmt/from-markdown/mtext2text)", "required": true, "default": "remove-fmt" },
+    { "name": "markdown", "description": "Markdown文本（from-markdown操作时用）", "required": false, "default": "这是 **粗体** 和 *斜体* 文本" }
+  ],
+  "templates": {
+    "remove-fmt": {
+      "code": "(progn\n  (setq e (car (pickset:to-list (ssget \":S\" (list (cons 0 \"MTEXT\"))))))\n  (if e (text:remove-fmt (cdr (assoc 1 (entget e)))))\n)",
+      "description": "选择一个MTEXT对象，去除所有格式代码，返回纯文本"
+    },
+    "parse-mtext": {
+      "code": "(progn\n  (setq e (car (pickset:to-list (ssget \":S\" (list (cons 0 \"MTEXT\"))))))\n  (if e (text:parse-mtext (cdr (assoc 1 (entget e)))))\n)",
+      "description": "选择一个MTEXT对象，解析为 (格式或文本 . 内容) 列表"
+    },
+    "from-markdown": {
+      "code": "(text:from-markdown \"{{markdown}}\")",
+      "description": "将Markdown转换为MTEXT格式代码：\n{{markdown}}"
+    },
+    "mtext2text": {
+      "code": "(progn\n  (setq e (car (pickset:to-list (ssget \":S\" (list (cons 0 \"MTEXT\"))))))\n  (if e (text:mtext2text e))\n)",
+      "description": "选择一个MTEXT对象，分解为多个单行TEXT"
+    }
+  }
+}

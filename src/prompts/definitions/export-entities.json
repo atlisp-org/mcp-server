@@ -1,0 +1,17 @@
+{
+  "name": "export-entities",
+  "description": "导出图纸实体统计",
+  "arguments": [
+    { "name": "action", "description": "导出格式 (json/list)", "required": false, "default": "json" }
+  ],
+  "templates": {
+    "json": {
+      "code": "(progn\n  (setq ss(ssget \"_X\"))\n  (if ss\n    (progn\n      (setq elst(mapcar(quote(lambda(x)(list(cdr(assoc 0(entget x)))(vlax-get x 'ObjectName))))(pickset:to-list ss)))\n      (stat:stat(mapcar(quote car)elst))\n    )\n  )\n)",
+      "description": "导出实体统计 (json 格式)：\n\n执行后将输出实体统计信息。"
+    },
+    "list": {
+      "code": "(progn\n  (princ \"\\n实体统计:\\n\")\n  (princ \"类型              数量\\n\")\n  (princ \"---------------------\\n\")\n  (setq ss(ssget \"_X\"))\n  (if ss\n    (progn\n      (setq elst(mapcar(quote(lambda(x)(cdr(assoc 0(entget x))))) (pickset:to-list ss)))\n      (foreach t '(\"LINE\" \"CIRCLE\" \"ARC\" \"TEXT\" \"MTEXT\" \"POLYLINE\" \"LWPOLYLINE\" \"INSERT\")\n        (setq cnt(length(member t elst)))\n        (if(> cnt 0)(princ(strcat t \"           \"(itoa cnt) \"\\n\")))\n      )\n    )\n  )\n)",
+      "description": "导出实体统计 (list 格式)：\n\n执行后将输出实体统计信息。"
+    }
+  }
+}

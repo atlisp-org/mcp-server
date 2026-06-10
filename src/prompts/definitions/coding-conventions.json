@@ -1,0 +1,11 @@
+{
+  "name": "coding-conventions",
+  "description": "AutoLISP 编码规范",
+  "arguments": [],
+  "templates": {
+    "default": {
+      "code": "",
+      "description": "## AutoLISP 编码规范\n\n### 禁止作为变量名的内置函数\n\n以下 AutoLISP 内置函数不可用作变量名，否则会覆盖内置函数导致程序错误：\n\n| 变量名 | 内置函数 | 说明 |\n|--------|----------|------|\n| `angle` | `(angle pt1 pt2)` | 严禁使用！获取两点连线与X轴夹角 |\n| `length` | `(length list)` | 获取列表长度 |\n| `type` | `(type symbol)` | 获取数据类型 |\n| `assoc` | `(assoc key alist)` | 关联表查找 |\n| `member` | `(member item list)` | 成员检测 |\n| `subst` | `(subst new old list)` | 替换列表元素 |\n| `append` | `(append list ...)` | 合并列表 |\n| `reverse` | `(reverse list)` | 反转列表 |\n| `apply` | `(apply fn list)` | 应用函数 |\n| `mapcar` | `(mapcar fn list...)` | 映射函数 |\n\n### 正确做法\n\n```lisp\n;; 错误：覆盖了内置 angle 函数\n(setq angle 45)\n\n;; 正确：使用有意义的变量名\n(setq rot-angle 45)\n(setq rotation 45)\n(setq ang 45)\n```"
+    }
+  }
+}

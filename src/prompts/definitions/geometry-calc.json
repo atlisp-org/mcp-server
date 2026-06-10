@@ -1,0 +1,9 @@
+{
+  "name": "geometry-calc",
+  "description": "几何计算：凸包、点到线距离、面内测试、变换",
+  "arguments": [
+    { "name": "action", "description": "操作 (convexhull/dist-point-line/in-curve-p/transform/centroid)", "required": true, "default": "centroid" },
+    { "name": "points", "description": "点集 \"x1,y1;x2,y2;...\"", "required": false, "default": "0,0;100,0;100,100;0,100" }
+  ],
+  "handlerFile": "geometry-calc"
+}

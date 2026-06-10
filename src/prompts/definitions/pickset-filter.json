@@ -1,0 +1,31 @@
+{
+  "name": "pickset-filter",
+  "description": "选择集操作：过滤、转换、批量操作",
+  "arguments": [
+    { "name": "action", "description": "操作 (by-layer/by-type/by-box/erase/zoom)", "required": true, "default": "by-type" },
+    { "name": "dxfType", "description": "DXF类型 \"LINE, CIRCLE, LWPOLYLINE, INSERT, TEXT\"", "required": false, "default": "LINE" },
+    { "name": "layerName", "description": "图层名", "required": false, "default": "0" }
+  ],
+  "templates": {
+    "by-type": {
+      "code": "(progn\n  (setq ss (ssget \"_X\" (list (cons 0 \"{{dxfType}}\"))))\n  (if ss (list (sslength ss) (mapcar (function (lambda (x) (cdr (assoc 0 (entget x))))) (pickset:to-list ss))))\n)",
+      "description": "统计所有类型为 {{dxfType}} 的实体数量"
+    },
+    "by-layer": {
+      "code": "(progn\n  (setq ss (ssget \"_X\" (list (cons 8 \"{{layerName}}\"))))\n  (if ss (list (sslength ss) (mapcar (function (lambda (x) (cdr (assoc 0 (entget x))))) (pickset:to-list ss))))\n)",
+      "description": "统计图层 {{layerName}} 上的实体数量和类型"
+    },
+    "by-box": {
+      "code": "(progn\n  (setq ss (ssget \"_X\"))\n  (if ss (pickset:getbox ss 0))\n)",
+      "description": "计算全图选择集的边界框"
+    },
+    "erase": {
+      "code": "(progn\n  (setq ss (ssget (list (cons 0 \"{{dxfType}}\"))))\n  (if ss (progn (pickset:erase ss) (princ (strcat \"已删除 \" (itoa (sslength ss)) \" 个 \" \"{{dxfType}}\" \" 实体\"))))\n)",
+      "description": "删除所有 {{dxfType}} 类型的实体"
+    },
+    "zoom": {
+      "code": "(progn\n  (setq ss (ssget \"_X\" (list (cons 0 \"{{dxfType}}\"))))\n  (if ss (pickset:zoom ss))\n)",
+      "description": "缩放到所有 {{dxfType}} 类型的实体"
+    }
+  }
+}

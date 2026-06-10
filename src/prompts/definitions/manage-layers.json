@@ -1,0 +1,35 @@
+{
+  "name": "manage-layers",
+  "description": "图层管理：创建、冻结、锁定、删除图层",
+  "arguments": [
+    { "name": "action", "description": "操作类型 (list/freeze/lock/off/make/delete)", "required": true, "default": "list" },
+    { "name": "layers", "description": "图层名，多个用逗号分隔", "required": false, "default": "" },
+    { "name": "color", "description": "图层颜色 (ACI号或RGB如 \"1,2,3\")", "required": false, "default": "7" }
+  ],
+  "templates": {
+    "list": {
+      "code": "(layer:list)",
+      "description": "列出所有图层"
+    },
+    "make": {
+      "code": "(layer:make \"{{layers[0]}}\" {{color}} \"Continuous\" 0)",
+      "description": "创建图层 {{layers[0]}}，颜色 {{color}}"
+    },
+    "freeze": {
+      "code": "(mapcar (function (lambda (x) (layer:freeze x 1))) '{{{layers}}})",
+      "description": "冻结图层: {{{layers}}}"
+    },
+    "lock": {
+      "code": "(mapcar (function (lambda (x) (layer:lock x 1))) '{{{layers}}})",
+      "description": "锁定图层: {{{layers}}}"
+    },
+    "off": {
+      "code": "(mapcar (function (lambda (x) (layer:off x))) '{{{layers}}})",
+      "description": "关闭图层: {{{layers}}}"
+    },
+    "delete": {
+      "code": "(mapcar (function (lambda (x) (layer:delete x))) '{{{layers}}})",
+      "description": "删除图层: {{{layers}}}"
+    }
+  }
+}

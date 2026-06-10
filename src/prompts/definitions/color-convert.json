@@ -1,0 +1,30 @@
+{
+  "name": "color-convert",
+  "description": "颜色转换：ACI/RGB/TrueColor/CSS互转",
+  "arguments": [
+    { "name": "action", "description": "操作 (aci2rgb/rgb2css/truecolor2rgb/rgb2truecolor/rgb)", "required": true, "default": "aci2rgb" },
+    { "name": "value", "description": "颜色值", "required": true, "default": "1" }
+  ],
+  "templates": {
+    "aci2rgb": {
+      "code": "(color:aci2rgb {{value}})",
+      "description": "ACI颜色索引 {{value}} 转RGB"
+    },
+    "rgb2css": {
+      "code": "(color:rgb2css (list {{value}}))",
+      "description": "RGB ({{value}}) 转CSS颜色 #FFFFFF"
+    },
+    "truecolor2rgb": {
+      "code": "(color:truecolor2rgb {{value}})",
+      "description": "TrueColor整数 {{value}} 转RGB列表"
+    },
+    "rgb2truecolor": {
+      "code": "(color:rgb2truecolor (list {{value}}))",
+      "description": "RGB ({{value}}) 转TrueColor整数"
+    },
+    "rgb": {
+      "code": "(color:rgb {{value}})",
+      "description": "计算RGB合成值：{{value}}"
+    }
+  }
+}

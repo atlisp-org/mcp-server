@@ -1,0 +1,62 @@
+{
+  "name": "@atlisp/mcp",
+  "version": "1.8.18",
+  "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
+  "type": "module",
+  "bin": {
+    "atlisp-mcp": "./dist/atlisp-mcp.js"
+  },
+  "main": "dist/atlisp-mcp.js",
+  "exports": {
+    ".": "./dist/atlisp-mcp.js",
+    "./cad": "./dist/atlisp-mcp.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "start": "node src/atlisp-mcp.js",
+    "build": "npm run build:main && npm run build:worker",
+    "build:main": "esbuild src/atlisp-mcp.js --bundle --platform=node --target=node18 --format=esm --outdir=dist --external:edge-js --packages=external --banner:js=\"#!/usr/bin/env node\"",
+    "build:worker": "node -e \"const fs=require('fs');const path=require('path');for(const f of ['cad-worker.js','lisp-security.js','logger.js','config.js'])fs.copyFileSync('src/'+f,'dist/'+f);if(!fs.existsSync('dist/html'))fs.mkdirSync('dist/html');for(const f of fs.readdirSync('src/html'))fs.copyFileSync('src/html/'+f,'dist/html/'+f);if(!fs.existsSync('dist/handlers'))fs.mkdirSync('dist/handlers');for(const f of fs.readdirSync('src/handlers'))fs.copyFileSync('src/handlers/'+f,'dist/handlers/'+f)\"",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "atlisp",
+    "cad",
+    "autolisp",
+    "package-manager"
+  ],
+  "author": "vitalgg",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://gitee.com/atlisp/atlisp-kernel.git"
+  },
+  "homepage": "https://gitee.com/atlisp",
+  "bugs": {
+    "url": "https://gitee.com/organizations/atlisp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-prometheus": "^0.218.0",
+    "@opentelemetry/instrumentation-http": "^0.218.0",
+    "@opentelemetry/sdk-metrics": "^2.7.1",
+    "edge-js": "^25.0.1",
+    "express": "^5.2.1",
+    "iconv-lite": "^0.6.3",
+    "ws": "^8.21.0",
+    "zod": "^3.24.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "vitest": "^4.1.5"
+  }
+}
