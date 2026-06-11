@@ -1,0 +1,33 @@
+{
+  "name": "test-autolisp",
+  "description": "AutoLISP 代码测试：单元测试、集成测试、调试、基准测试、验证测试",
+  "arguments": [
+    { "name": "action", "description": "测试类型: unit-test / integration / debug / benchmark / validate", "required": false, "default": "unit-test" },
+    { "name": "code", "description": "要测试的 AutoLISP 代码或文件路径", "required": false, "default": "" },
+    { "name": "functionName", "description": "函数名", "required": false, "default": "" },
+    { "name": "expected", "description": "期望结果（可选，用于断言）", "required": false, "default": "" },
+    { "name": "input", "description": "测试输入参数", "required": false, "default": "" }
+  ],
+  "templates": {
+    "unit-test": {
+      "code": "(progn\n  (load \"{{code}}\")\n  (setq result ({{functionName}} {{input}}))\n  (princ (strcat \"\\n返回值: \" (vl-princ-to-string result)))\n  (princ \"\\n返回值类型: \")\n  (princ (type result))\n  (princ)\n  result\n)",
+      "description": "## AutoLISP 单元测试\n\n测试单个函数 `{{functionName}}`。\n\n### 测试流程\n1. `(load \"{{code}}\")` 加载目标代码\n2. `({{functionName}} {{input}})` 执行被测函数\n3. 检查返回值和 `(type result)` 确认类型\n\n### 验证要点\n- 返回值是否符合预期\n- 函数是否有副作用（新增/修改/删除图元）\n- 边界情况：nil 参数、空列表、超大数值、特殊字符\n\n### 示例\n```lisp\n;; 调用方式\n(load \"test.lsp\")\n(setq r (entity:make-circle '(0 0) 50))\n(princ (strcat \"Result: \" (vl-princ-to-string r)))\n(entget r)  ;; 查看 DXF 数据\n```"
+    },
+    "integration": {
+      "code": "(progn\n  (princ \"\\n========== 集成测试 ==========\")\n  (load \"{{code}}\")\n  (setq before-ents (sslength (ssget \"_X\")))\n  (setq before-layers (layer:list))\n  (setq result ({{functionName}} {{input}}))\n  (princ (strcat \"\\n结果: \" (vl-princ-to-string result)))\n  (setq after-ents (sslength (ssget \"_X\")))\n  (princ (strcat \"\\n实体变化: \" (itoa (- after-ents before-ents))))\n  (command \"_U\")\n  (princ \"\\n✅ 已撤销\")\n  (princ)\n  result\n)",
+      "description": "## AutoLISP 集成测试\n\n测试 `{{functionName}}` 多步骤执行和副作用。\n\n### 测试流程\n1. 记录测试前状态（实体数、图层）\n2. 执行被测函数\n3. 检查返回值 + 状态变更\n4. `(command \"_U\")` 撤销清理\n\n### 注意事项\n- 必须撤销 `_U` 清理副作用，或在测试文档中执行\n- `ssget \"_X\"` 跨空间选择，注意布局上下文\n- 多个 `eval_lisp_with_result` 调用间 CAD 上下文可能丢失，优先使用 `(progn ...)` 合并"
+    },
+    "debug": {
+      "code": "(progn\n  (princ \"\\n========== 调试 ==========\")\n  (load \"{{code}}\")\n  (setq input-var {{input}})\n  (princ (strcat \"\\n输入: \" (vl-princ-to-string input-var)))\n  (princ (strcat \"\\n类型: \" (type input-var)))\n  (if (atoms-family 0 (list \"{{functionName}}\"))\n    (progn\n      (princ (strcat \"\\n函数已注册: {{functionName}}\"))\n      (setq result ({{functionName}} input-var))\n      (princ (strcat \"\\n返回值: \" (vl-princ-to-string result))))\n    (princ (strcat \"\\n❌ 函数未注册: {{functionName}}\")))\n  (princ \"\\n========== 结束 ==========\")\n  (princ)\n)",
+      "description": "## AutoLISP 调试\n\n诊断 `{{functionName}}` 的问题。\n\n### 调试策略\n1. **拆分为小步**：一个 `eval_lisp_with_result` 只做一件事\n2. **中间值打印**：每个步骤用 `(princ ...)` 输出\n3. **函数注册检查**：`(atoms-family 0 (list \"func-name\"))`\n4. **参数验证**：`(type x)` 检查类型，`(vl-princ-to-string x)` 查看内容\n\n### 常见错误\n| 错误 | 原因 |\n|------|------|\n| `bad argument type` | 参数类型不匹配，用 `(type x)` 检查 |\n| `Automation Error` | COM 对象无效，检查 vla-object |\n| `no function definition` | 函数未加载，检查 load 路径 |\n| 返回 nil | 变量未定义或函数无有效返回值 |\n\n### 调试技巧\n- 用 `(vl-bt)` 查看调用栈（仅调试用，生产环境禁用）\n- 用 `(!)variable` 快速查看变量值（在 CAD 命令行）"
+    },
+    "benchmark": {
+      "code": "(progn\n  (princ \"\\n========== 基准测试 ==========\")\n  (load \"{{code}}\")\n  (repeat 3 ({{functionName}} {{input}}))\n  (setq t1 (getvar \"millisecs\")\n        n 100)\n  (repeat n ({{functionName}} {{input}}))\n  (setq elapsed (- (getvar \"millisecs\") t1))\n  (princ (strcat \"\\n\" (itoa n) \" 次执行: \" (itoa elapsed) \" ms\"))\n  (princ (strcat \"\\n平均: \" (rtos (/ (float elapsed) n) 2 3) \" ms\"))\n  (princ)\n)",
+      "description": "## AutoLISP 基准测试\n\n`{{functionName}}` 性能指标。\n\n### 测试参数\n- 预热 3 次（消除首次加载影响）\n- 正式 100 次\n- 单位：毫秒\n\n### 结果解读\n| 平均耗时 | 评价 |\n|---------|------|\n| < 1 ms | 极佳 |\n| 1-10 ms | 良好 |\n| 10-100 ms | 可优化 |\n| > 100 ms | 需重构 |\n\n### 优化方向\n- `ssget \"_X\"` 频繁调用 → 缓存选择集\n- `command` 函数调用 → 改用 `vla-*`\n- 循环内重复计算 → 提取到循环外\n- 大批量操作 → `(vla-startundomark doc)` / `(vla-endundomark doc)` 包裹"
+    },
+    "validate": {
+      "code": "(progn\n  (princ \"\\n========== 验证测试 ==========\")\n  (load \"{{code}}\")\n  (setq cases (list {{input}}))\n  (setq passed 0 failed 0)\n  (foreach c cases\n    (setq args (car c) expected1 (cadr c))\n    (setq actual (apply (function {{functionName}}) args))\n    (if (equal actual expected1 1e-6)\n      (progn (setq passed (1+ passed))\n             (princ (strcat \"\\n✅ \" (vl-princ-to-string args))))\n      (progn (setq failed (1+ failed))\n             (princ (strcat \"\\n❌ \" (vl-princ-to-string args) \" → 期望 \" (vl-princ-to-string expected1) \" 实际 \" (vl-princ-to-string actual))))))\n  (princ (strcat \"\\n\\n通过: \" (itoa passed) \" 失败: \" (itoa failed)))\n  (princ)\n)",
+      "description": "## AutoLISP 验证测试\n\n批量测试 `{{functionName}}`。\n\n### 测试用例格式\n每项为 `(<输入参数列表> <期望结果>)`，整体作为列表传入：\n```lisp\n(setq cases '(\n  ((0 0 50) <Entity name: 7ffffb0a5a0>)\n  ((100 200 25) <Entity name: 7ffffb0a5e0>)\n  ((0 0 -1) nil)  ;; 无效参数返回 nil\n))\n```\n\n### 断言规则\n- `equal` 比较，数值容差 `1e-6`\n- 实体用 `(equal (entget a) (entget b))` 对比"
+    }
+  }
+}
