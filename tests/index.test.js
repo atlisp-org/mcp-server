@@ -258,7 +258,7 @@ describe('handleToolCall', () => {
     it('returns error when CAD not connected', async () => {
       const result = await handleToolCall('at_command', { command: '@H' });
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('请先连接');
+      expect(result.content[0].text).toContain('未连接');
     });
 
     it('sends command when connected', async () => {

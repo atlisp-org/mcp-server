@@ -1,6 +1,6 @@
 import { cad } from '../cad.js';
 import { log } from '../logger.js';
-import { escapeLispString } from '../handler-utils.js';
+import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 
 export async function connectCad(platform = null) {
     log(`connect_cad called${platform ? ` (target: ${platform})` : ''}, cad.connected before: ${cad.connected}`);
@@ -11,92 +11,68 @@ export async function connectCad(platform = null) {
         if (connected) {
             const messages = [`已连接到 ${cad.getPlatform()} ${cad.getVersion()}`];
             initAtlisp().catch(e => log(`connect_cad: initAtlisp failed: ${e.message}`));
-            return { content: [{ type: 'text', text: messages.join('；') }] };
+            return mcpSuccess(messages.join('；'));
         }
-        return { content: [{ type: 'text', text: '未能连接或启动 CAD，请确保 CAD 已安装' }], isError: true };
+        return mcpError('未能连接或启动 CAD，请确保 CAD 已安装');
     } catch (e) {
         log('connect_cad error: ' + e.message);
-        return { content: [{ type: 'text', text: `连接 CAD 失败: ${e.message}` }], isError: true };
+        return mcpError(`连接 CAD 失败: ${e.message}`);
     }
 }
 
-export async function evalLisp(code, withResult = false, encoding = null) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) {
-        return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    }
+export const evalLisp = withCadConnection(async (code, withResult = false, encoding = null) => {
     const trimmed = (code || '').trim();
-    if (!trimmed) return { content: [{ type: 'text', text: '命令为空，未发送' }] };
-    try {
-        if (withResult) {
-            const result = await cad.sendCommandWithResult(trimmed, encoding);
-            if (result !== null) {
-                return { content: [{ type: 'text', text: result }] };
-            }
-            return { content: [{ type: 'text', text: '执行失败或无返回值' }], isError: true };
-        } else {
-            await cad.sendCommand(trimmed + '\n');
-            return { content: [{ type: 'text', text: `已发送命令` }] };
+    if (!trimmed) return mcpSuccess('命令为空，未发送');
+    if (withResult) {
+        const result = await cad.sendCommandWithResult(trimmed, encoding);
+        if (result !== null) {
+            return mcpSuccess(result);
         }
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+        return mcpError('执行失败或无返回值');
     }
-}
-
-export async function getCadInfo() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: 'CAD 未连接' }] };
-    const info = await cad.getInfo();
-    return { content: [{ type: 'text', text: info }] };
-}
-
-export async function atCommand(command) {
-    if (!cad.connected) return { content: [{ type: 'text', text: '请先连接 CAD' }], isError: true };
-    const trimmed = (command || '').trim();
-    if (!trimmed) return { content: [{ type: 'text', text: '命令为空，未发送' }] };
     await cad.sendCommand(trimmed + '\n');
-    return { content: [{ type: 'text', text: '已发送命令' }] };
-}
+    return mcpSuccess('已发送命令');
+});
 
-export async function newDocument() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
+export const getCadInfo = withCadConnection(async () => {
+    const info = await cad.getInfo();
+    return mcpSuccess(info);
+});
+
+export const atCommand = withCadConnection(async (command) => {
+    const trimmed = (command || '').trim();
+    if (!trimmed) return mcpSuccess('命令为空，未发送');
+    await cad.sendCommand(trimmed + '\n');
+    return mcpSuccess('已发送命令');
+});
+
+export const newDocument = withCadConnection(async () => {
     const result = await cad.newDoc();
     if (result) {
-        return { content: [{ type: 'text', text: '已在 CAD 中新建空白文档' }] };
+        return mcpSuccess('已在 CAD 中新建空白文档');
     }
-    return { content: [{ type: 'text', text: '新建文档失败' }], isError: true };
-}
+    return mcpError('新建文档失败');
+});
 
-export async function bringToFront() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
+export const bringToFront = withCadConnection(async () => {
     const result = await cad.bringToFront();
     if (result) {
-        return { content: [{ type: 'text', text: '已将 CAD 窗口切换到前台' }] };
+        return mcpSuccess('已将 CAD 窗口切换到前台');
     }
-    return { content: [{ type: 'text', text: '切换前台失败' }], isError: true };
-}
+    return mcpError('切换前台失败');
+});
 
-export async function installAtlisp() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
+export const installAtlisp = withCadConnection(async () => {
     const installCode = '(progn(vl-load-com)(setq s strcat h "http" o(vlax-create-object (s"win"h".win"h"request.5.1"))v vlax-invoke e eval r read)(v o\'open "get" (s h"://atlisp.""cn/@"):vlax-true)(v o\'send)(v o\'WaitforResponse 1000)(e(r(vlax-get-property o\'ResponseText))))';
     await cad.sendCommand(installCode + '\n');
-    return { content: [{ type: 'text', text: '已发送 @lisp 安装代码到 CAD' }] };
-}
+    return mcpSuccess('已发送 @lisp 安装代码到 CAD');
+});
 
-export async function listFunctionsInCad() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const result = await cad.sendCommandWithResult('(atoms-family 0)', null);
-        if (result) return { content: [{ type: 'text', text: result }] };
-        return { content: [{ type: 'text', text: 'CAD 函数列表为空' }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const listFunctionsInCad = withCadConnection(async () => {
+    const result = await cad.sendCommandWithResult('(atoms-family 0)', null);
+    if (result) return mcpSuccess(result);
+    return mcpError('CAD 函数列表为空');
+});
 
 export async function getSystemStatus() {
   const status = {
@@ -140,9 +116,7 @@ export async function getSystemStatus() {
   return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
 }
 
-export async function initAtlisp() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
+export const initAtlisp = withCadConnection(async () => {
     const code = `(if (null @::load-module)
 	   (progn
 	     (vl-load-com)
@@ -151,30 +125,16 @@ export async function initAtlisp() {
 		   (v o'send)
 		   (v o'WaitforResponse 1000)
 		   (e(r(vlax-get o'ResponseText)))))`;
-    try {
-        await cad.sendCommand(code + '\n');
-        return { content: [{ type: 'text', text: '已发送 @lisp 函数库加载代码到 CAD' }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
-export async function getSystemVariable(name) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const result = await cad.sendCommandWithResult(`(vl-princ-to-string (getvar "${escapeLispString(name)}"))`);
-        return { content: [{ type: 'text', text: result || 'nil' }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
-export async function setSystemVariable(name, value) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        await cad.sendCommand(`(setvar "${escapeLispString(name)}" ${value})\n`);
-        return { content: [{ type: 'text', text: `已设置 ${name} = ${value}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+    await cad.sendCommand(code + '\n');
+    return mcpSuccess('已发送 @lisp 函数库加载代码到 CAD');
+});
+
+export const getSystemVariable = withCadConnection(async (name) => {
+    const result = await cad.sendCommandWithResult(`(vl-princ-to-string (getvar "${escapeLispString(name)}"))`);
+    return mcpSuccess(result || 'nil');
+});
+
+export const setSystemVariable = withCadConnection(async (name, value) => {
+    await cad.sendCommand(`(setvar "${escapeLispString(name)}" ${value})\n`);
+    return mcpSuccess(`已设置 ${name} = ${value}`);
+});

@@ -1,5 +1,6 @@
 import { cad } from './cad.js';
 import { log, error as logError } from './logger.js';
+import { parseLispList } from './handler-utils.js';
 
 const watches = new Map();
 const watchResults = new Map();
@@ -19,25 +20,145 @@ const WATCH_TYPES = {
     CUSTOM_LISP: 'custom_lisp',
 };
 
+function escapeLispStr(v) {
+    if (typeof v !== 'string') return v;
+    return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function buildFilterExpr(filter) {
+    if (!filter || typeof filter !== 'object') return 'nil';
+    const parts = [];
+    if (filter.type) {
+        parts.push(`(cons 0 "${escapeLispStr(filter.type)}")`);
+    }
+    if (filter.layer) {
+        parts.push(`(cons 8 "${escapeLispStr(filter.layer)}")`);
+    }
+    if (parts.length === 0) return 'nil';
+    return `(list ${parts.join(' ')})`;
+}
+
+function compare(count, operator, threshold) {
+    const v = threshold != null ? threshold : 1;
+    switch (operator) {
+        case 'gte': return count >= v;
+        case 'lte': return count <= v;
+        case 'eq':  return count === v;
+        default:    return count >= v;
+    }
+}
+
+function parseSingleInt(result) {
+    try {
+        const arr = parseLispList(result);
+        if (arr && arr.length > 0) return Number(arr[0]);
+    } catch {}
+    const n = Number(result);
+    return isNaN(n) ? 0 : n;
+}
+
+async function evaluateWatch(watch) {
+    try {
+        let result;
+        switch (watch.type) {
+            case 'entity_count': {
+                const filterExpr = buildFilterExpr(watch.filter);
+                result = await cad.sendCommandWithResult(
+                    `(progn (setq _ecnt 0) (if (setq _ess (ssget "_X" ${filterExpr})) (setq _ecnt (sslength _ess))) (list _ecnt))`
+                );
+                const count = parseSingleInt(result);
+                const matched = compare(count, watch.operator, watch.value);
+                return { matched, data: { count } };
+            }
+
+            case 'layer_count': {
+                result = await cad.sendCommandWithResult(
+                    `(progn (setq _lcnt 0) (setq _l (tblnext "LAYER" T)) (while _l (setq _lcnt (1+ _lcnt)) (setq _l (tblnext "LAYER"))) (list _lcnt))`
+                );
+                const count = parseSingleInt(result);
+                const matched = compare(count, watch.operator, watch.value);
+                return { matched, data: { count } };
+            }
+
+            case 'layer_exists': {
+                const lName = escapeLispStr(watch.layerName || '');
+                result = await cad.sendCommandWithResult(
+                    `(progn (if (tblsearch "LAYER" "${lName}") (list 1) (list 0)))`
+                );
+                const exists = parseSingleInt(result) !== 0;
+                return { matched: exists, data: { exists, layerName: watch.layerName } };
+            }
+
+            case 'doc_name': {
+                const pattern = escapeLispStr(watch.pattern || '*');
+                result = await cad.sendCommandWithResult(
+                    `(progn (setq _dn (getvar "dwgname")) (setq _dm (if (wcmatch _dn "${pattern}") 1 0)) (list _dm _dn))`
+                );
+                const arr = parseLispList(result) || [];
+                const matched = Number(arr[0]) !== 0;
+                const name = String(arr[1] || '');
+                return { matched, data: { matched: Boolean(matched), name } };
+            }
+
+            case 'doc_path': {
+                const pattern = escapeLispStr(watch.pattern || '*');
+                result = await cad.sendCommandWithResult(
+                    `(progn (setq _dp (getvar "dwgprefix")) (setq _dm (if (wcmatch _dp "${pattern}") 1 0)) (list _dm _dp))`
+                );
+                const arr = parseLispList(result) || [];
+                const matched = Number(arr[0]) !== 0;
+                const path = String(arr[1] || '');
+                return { matched, data: { matched: Boolean(matched), path } };
+            }
+
+            case 'entity_selected': {
+                result = await cad.sendCommandWithResult(
+                    `(progn (if (ssget "_I") (list 1) (list 0)))`
+                );
+                const selected = parseSingleInt(result) !== 0;
+                return { matched: selected, data: { selected } };
+            }
+
+            case 'custom_lisp': {
+                if (!watch.lispCode) {
+                    return { matched: false, data: { error: 'No lispCode provided' } };
+                }
+                const code = watch.lispCode.trim();
+                result = await cad.sendCommandWithResult(
+                    `(progn (setq _cr ${code}) (if _cr (list 1) (list 0)))`
+                );
+                const matched = parseSingleInt(result) !== 0;
+                return { matched, data: { matched: Boolean(matched) } };
+            }
+
+            default:
+                return { matched: false, data: { error: `Unknown watch type: ${watch.type}` } };
+        }
+    } catch (e) {
+        logError(`evaluateWatch error [${watch.id}]: ${e.message}`);
+        return { matched: false };
+    }
+}
+
 async function pollWatches() {
     if (watches.size === 0) return;
     if (pollingInProgress) return;
     pollingInProgress = true;
     try {
         for (const [id, watch] of watches) {
-        if (watch.fired) continue;
-        const outcome = await evaluateWatch(watch);
-        if (outcome.matched) {
-            watch.fired = true;
-            watch.matchedAt = new Date().toISOString();
-            watch.result = outcome.data;
-            watchResults.set(id, outcome.data);
-            if (watch.onMatch) {
-                try { watch.onMatch({ id, type: watch.type, data: outcome.data }); } catch (e) { logError(`Trigger onMatch callback error [${id}]: ${e.message}`); }
+            if (watch.fired) continue;
+            const outcome = await evaluateWatch(watch);
+            if (outcome.matched) {
+                watch.fired = true;
+                watch.matchedAt = new Date().toISOString();
+                watch.result = outcome.data;
+                watchResults.set(id, outcome.data);
+                if (watch.onMatch) {
+                    try { watch.onMatch({ id, type: watch.type, data: outcome.data }); } catch (e) { logError(`Trigger onMatch callback error [${id}]: ${e.message}`); }
+                }
+                log(`Trigger fired: ${watch.name || id} (type: ${watch.type})`);
             }
-            log(`Trigger fired: ${watch.name || id} (type: ${watch.type})`);
         }
-    }
     } finally {
         pollingInProgress = false;
     }

@@ -1,11 +1,7 @@
 import { cad } from '../cad.js';
-import { log } from '../logger.js';
-import { escapeLispString } from '../handler-utils.js';
+import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 
-export async function getEntity(handle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const getEntity = withCadConnection(async (handle) => {
     const code = `(progn
         (vl-load-com)
         (if (setq ent (handent "${escapeLispString(handle)}"))
@@ -23,21 +19,14 @@ export async function getEntity(handle) {
             nil
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (!result || result === 'nil') {
-            return { content: [{ type: 'text', text: `未找到实体: ${handle}` }], isError: true };
-        }
-        return { content: [{ type: 'text', text: result }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (!result || result === 'nil') {
+        return mcpError(`未找到实体: ${handle}`);
     }
-}
+    return mcpSuccess(result);
+});
 
-export async function setEntityProperty(handle, property, value) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const setEntityProperty = withCadConnection(async (handle, property, value) => {
     let propCode = '';
     switch (property) {
         case 'layer':
@@ -53,7 +42,7 @@ export async function setEntityProperty(handle, property, value) {
             propCode = `(cons 38 ${isNaN(Number(value)) ? 0 : Number(value)})`;
             break;
         default:
-            return { content: [{ type: 'text', text: `不支持的属性: ${property}` }], isError: true };
+            return mcpError(`不支持的属性: ${property}`);
     }
 
     const code = `(progn
@@ -67,21 +56,14 @@ export async function setEntityProperty(handle, property, value) {
             "NOTFOUND"
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'OK' || result === '"OK"') {
-            return { content: [{ type: 'text', text: `已设置实体 ${handle} 的 ${property} 为 ${value}` }] };
-        }
-        return { content: [{ type: 'text', text: `操作失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'OK' || result === '"OK"') {
+        return mcpSuccess(`已设置实体 ${handle} 的 ${property} 为 ${value}`);
     }
-}
+    return mcpError(`操作失败: ${result}`);
+});
 
-export async function deleteEntity(handle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const deleteEntity = withCadConnection(async (handle) => {
     const code = `(progn
         (vl-load-com)
         (if (setq ent (handent "${escapeLispString(handle)}"))
@@ -92,21 +74,14 @@ export async function deleteEntity(handle) {
             "NOTFOUND"
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'DELETED' || result === '"DELETED"') {
-            return { content: [{ type: 'text', text: `已删除实体: ${handle}` }] };
-        }
-        return { content: [{ type: 'text', text: `删除失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'DELETED' || result === '"DELETED"') {
+        return mcpSuccess(`已删除实体: ${handle}`);
     }
-}
+    return mcpError(`删除失败: ${result}`);
+});
 
-export async function selectEntities(filter) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const selectEntities = withCadConnection(async (filter) => {
     let filterCode = 'nil';
     if (filter && (filter.type || filter.layer)) {
         const items = [];
@@ -128,69 +103,44 @@ export async function selectEntities(filter) {
             nil
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (!result || result === 'nil') {
-            return { content: [{ type: 'text', text: '未找到符合条件的实体' }] };
-        }
-        return { content: [{ type: 'text', text: result }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (!result || result === 'nil') {
+        return mcpSuccess('未找到符合条件的实体');
     }
-}
-export async function bringToFront(handle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_F")\n`);
-        return { content: [{ type: 'text', text: `已置于最前: ${handle}` }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function sendToBack(handle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_B")\n`);
-        return { content: [{ type: 'text', text: `已置于最后: ${handle}` }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function bringAbove(handle, referenceHandle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_A" (handent "${escapeLispString(referenceHandle)}"))\n`);
-        return { content: [{ type: 'text', text: `已置于 ${referenceHandle} 之上` }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function sendBelow(handle, referenceHandle) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_U" (handent "${escapeLispString(referenceHandle)}"))\n`);
-        return { content: [{ type: 'text', text: `已置于 ${referenceHandle} 之下` }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function selectAll() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const result = await cad.sendCommandWithResult('(progn (setq ss (ssget "_X")) (setq handles nil) (setq i 0) (if ss (repeat (sslength ss) (setq handles (cons (cdr (assoc 5 (entget (ssname ss i)))) handles)) (setq i (1+ i)))) (vl-prin1-to-string (reverse handles)))');
-        return { content: [{ type: 'text', text: result || '[]' }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function selectLast() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const result = await cad.sendCommandWithResult('(vl-princ-to-string (list (cdr (assoc 5 (entget (entlast))))))');
-        return { content: [{ type: 'text', text: result || 'nil' }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function selectByColor(colorIndex) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const result = await cad.sendCommandWithResult(`(progn (setq ss (ssget "_X" (list (cons 62 ${colorIndex})))) (setq handles nil) (setq i 0) (if ss (repeat (sslength ss) (setq handles (cons (cdr (assoc 5 (entget (ssname ss i)))) handles)) (setq i (1+ i)))) (vl-prin1-to-string (reverse handles)))`);
-        return { content: [{ type: 'text', text: result || '[]' }] };
-    } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
+    return mcpSuccess(result);
+});
+
+export const bringToFrontEntity = withCadConnection(async (handle) => {
+    await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_F")\n`);
+    return mcpSuccess(`已置于最前: ${handle}`);
+});
+
+export const sendToBackEntity = withCadConnection(async (handle) => {
+    await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_B")\n`);
+    return mcpSuccess(`已置于最后: ${handle}`);
+});
+
+export const bringAboveEntity = withCadConnection(async (handle, referenceHandle) => {
+    await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_A" (handent "${escapeLispString(referenceHandle)}"))\n`);
+    return mcpSuccess(`已置于 ${referenceHandle} 之上`);
+});
+
+export const sendBelowEntity = withCadConnection(async (handle, referenceHandle) => {
+    await cad.sendCommand(`(command "_.DRAWORDER" (handent "${escapeLispString(handle)}") "" "_U" (handent "${escapeLispString(referenceHandle)}"))\n`);
+    return mcpSuccess(`已置于 ${referenceHandle} 之下`);
+});
+
+export const selectAll = withCadConnection(async () => {
+    const result = await cad.sendCommandWithResult('(progn (setq ss (ssget "_X")) (setq handles nil) (setq i 0) (if ss (repeat (sslength ss) (setq handles (cons (cdr (assoc 5 (entget (ssname ss i)))) handles)) (setq i (1+ i)))) (vl-prin1-to-string (reverse handles)))');
+    return mcpSuccess(result || '[]');
+});
+
+export const selectLast = withCadConnection(async () => {
+    const result = await cad.sendCommandWithResult('(vl-princ-to-string (list (cdr (assoc 5 (entget (entlast))))))');
+    return mcpSuccess(result || 'nil');
+});
+
+export const selectByColor = withCadConnection(async (colorIndex) => {
+    const result = await cad.sendCommandWithResult(`(progn (setq ss (ssget "_X" (list (cons 62 ${colorIndex})))) (setq handles nil) (setq i 0) (if ss (repeat (sslength ss) (setq handles (cons (cdr (assoc 5 (entget (ssname ss i)))) handles)) (setq i (1+ i)))) (vl-prin1-to-string (reverse handles)))`);
+    return mcpSuccess(result || '[]');
+});

@@ -1,10 +1,7 @@
 import { cad } from '../cad.js';
-import { escapeLispString } from '../handler-utils.js';
+import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 
-export async function createLayer(name, color = 7, linetype = 'Continuous') {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const createLayer = withCadConnection(async (name, color = 7, linetype = 'Continuous') => {
     const code = `(progn
         (vl-load-com)
              (if (not (tblsearch "LAYER" "${escapeLispString(name)}"))
@@ -23,24 +20,17 @@ export async function createLayer(name, color = 7, linetype = 'Continuous') {
             "EXISTS"
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'CREATED' || result === '"CREATED"') {
-            return { content: [{ type: 'text', text: `已创建图层: ${name}` }] };
-        }
-        if (result === 'EXISTS' || result === '"EXISTS"') {
-            return { content: [{ type: 'text', text: `图层已存在: ${name}` }] };
-        }
-        return { content: [{ type: 'text', text: `创建失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'CREATED' || result === '"CREATED"') {
+        return mcpSuccess(`已创建图层: ${name}`);
     }
-}
+    if (result === 'EXISTS' || result === '"EXISTS"') {
+        return mcpSuccess(`图层已存在: ${name}`);
+    }
+    return mcpError(`创建失败: ${result}`);
+});
 
-export async function deleteLayer(name) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const deleteLayer = withCadConnection(async (name) => {
     const code = `(progn
         (vl-load-com)
         (cond
@@ -54,27 +44,20 @@ export async function deleteLayer(name) {
             (t "NOTFOUND")
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'DELETED' || result === '"DELETED"') {
-            return { content: [{ type: 'text', text: `已删除图层: ${name}` }] };
-        }
-        if (result === 'CURRENT' || result === '"CURRENT"') {
-            return { content: [{ type: 'text', text: `无法删除当前图层: ${name}` }], isError: true };
-        }
-        if (result === 'NOTFOUND' || result === '"NOTFOUND"') {
-            return { content: [{ type: 'text', text: `图层不存在: ${name}` }], isError: true };
-        }
-        return { content: [{ type: 'text', text: `删除失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'DELETED' || result === '"DELETED"') {
+        return mcpSuccess(`已删除图层: ${name}`);
     }
-}
+    if (result === 'CURRENT' || result === '"CURRENT"') {
+        return mcpError(`无法删除当前图层: ${name}`);
+    }
+    if (result === 'NOTFOUND' || result === '"NOTFOUND"') {
+        return mcpError(`图层不存在: ${name}`);
+    }
+    return mcpError(`删除失败: ${result}`);
+});
 
-export async function setLayerProperty(name, property, value) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const setLayerProperty = withCadConnection(async (name, property, value) => {
     let propCode = '';
     switch (property) {
         case 'color':
@@ -96,7 +79,7 @@ export async function setLayerProperty(name, property, value) {
             propCode = `(command "._LAYER" "U" "${escapeLispString(name)}" "")`;
             break;
         default:
-            return { content: [{ type: 'text', text: `不支持的属性: ${property}` }], isError: true };
+            return mcpError(`不支持的属性: ${property}`);
     }
 
     const code = `(progn
@@ -109,21 +92,14 @@ export async function setLayerProperty(name, property, value) {
             "NOTFOUND"
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'OK' || result === '"OK"') {
-            return { content: [{ type: 'text', text: `已设置图层 ${name} 的 ${property} 为 ${value}` }] };
-        }
-        return { content: [{ type: 'text', text: `操作失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'OK' || result === '"OK"') {
+        return mcpSuccess(`已设置图层 ${name} 的 ${property} 为 ${value}`);
     }
-}
+    return mcpError(`操作失败: ${result}`);
+});
 
-export async function setCurrentLayer(name) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
+export const setCurrentLayer = withCadConnection(async (name) => {
     const code = `(progn
         (vl-load-com)
         (if (tblsearch "LAYER" "${escapeLispString(name)}")
@@ -134,48 +110,44 @@ export async function setCurrentLayer(name) {
             "NOTFOUND"
         )
     )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'OK' || result === '"OK"') {
-            return { content: [{ type: 'text', text: `已设置当前图层: ${name}` }] };
-        }
-        return { content: [{ type: 'text', text: `设置失败: ${result}` }], isError: true };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
+    const result = await cad.sendCommandWithResult(code);
+    if (result === 'OK' || result === '"OK"') {
+        return mcpSuccess(`已设置当前图层: ${name}`);
     }
-}
-export async function layerIsolate(name) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand(`(command "_.LAYISO" "${escapeLispString(name)}" "")\n`); return { content: [{ type: 'text', text: `已隔离图层: ${name}` }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerUnisolate() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand('(command "_.LAYUNISO")\n'); return { content: [{ type: 'text', text: '已取消图层隔离' }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerFreezeAll() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand('(command "_.LAYER" "F" "*" "")\n'); return { content: [{ type: 'text', text: '已冻结所有图层' }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerThawAll() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand('(command "_.LAYER" "T" "*" "")\n'); return { content: [{ type: 'text', text: '已解冻所有图层' }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerLockAll() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand('(command "_.LAYER" "LO" "*" "")\n'); return { content: [{ type: 'text', text: '已锁定所有图层' }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerUnlockAll() {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand('(command "_.LAYER" "U" "*" "")\n'); return { content: [{ type: 'text', text: '已解锁所有图层' }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
-export async function layerMerge(sourceName, targetName) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try { await cad.sendCommand(`(command "_.LAYMRG" "${escapeLispString(sourceName)}" "" "${escapeLispString(targetName)}" "Y")\n`); return { content: [{ type: 'text', text: `已将图层 ${sourceName} 合并到 ${targetName}` }] }; } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
-}
+    return mcpError(`设置失败: ${result}`);
+});
+
+export const layerIsolate = withCadConnection(async (name) => {
+    await cad.sendCommand(`(command "_.LAYISO" "${escapeLispString(name)}" "")\n`);
+    return mcpSuccess(`已隔离图层: ${name}`);
+});
+
+export const layerUnisolate = withCadConnection(async () => {
+    await cad.sendCommand('(command "_.LAYUNISO")\n');
+    return mcpSuccess('已取消图层隔离');
+});
+
+export const layerFreezeAll = withCadConnection(async () => {
+    await cad.sendCommand('(command "_.LAYER" "F" "*" "")\n');
+    return mcpSuccess('已冻结所有图层');
+});
+
+export const layerThawAll = withCadConnection(async () => {
+    await cad.sendCommand('(command "_.LAYER" "T" "*" "")\n');
+    return mcpSuccess('已解冻所有图层');
+});
+
+export const layerLockAll = withCadConnection(async () => {
+    await cad.sendCommand('(command "_.LAYER" "LO" "*" "")\n');
+    return mcpSuccess('已锁定所有图层');
+});
+
+export const layerUnlockAll = withCadConnection(async () => {
+    await cad.sendCommand('(command "_.LAYER" "U" "*" "")\n');
+    return mcpSuccess('已解锁所有图层');
+});
+
+export const layerMerge = withCadConnection(async (sourceName, targetName) => {
+    await cad.sendCommand(`(command "_.LAYMRG" "${escapeLispString(sourceName)}" "" "${escapeLispString(targetName)}" "Y")\n`);
+    return mcpSuccess(`已将图层 ${sourceName} 合并到 ${targetName}`);
+});

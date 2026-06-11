@@ -12,6 +12,7 @@ import { sessionManager, setNotify as subMgrSetNotify } from './subscription-man
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpContext, getOrCreateSessionServer, removeSessionServer, broadcastToAllSessions, sessionServers } from './mcp-server-state.js';
 import { SseSession, parseLastEventId } from './sse-session.js';
+import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
 import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from './rate-limiter.js';
 import { tools } from './tools/index.js';
@@ -326,6 +327,14 @@ export function setupRoutes(app) {
 
     app.get('/sse', mcpLimiter, handleSse);
     app.post('/message', mcpLimiter, handleMessage);
+
+    app.get('/cad/events', (req, res) => {
+        const sessionId = randomUUID();
+        subscribeEvents(sessionId, res);
+        req.on('close', () => {
+            unsubscribeEvents(sessionId);
+        });
+    });
 
     app.use(createErrorHandler());
 

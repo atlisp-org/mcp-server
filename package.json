@@ -1,6 +1,6 @@
 {
   "name": "@atlisp/mcp",
-  "version": "1.8.18",
+  "version": "1.8.19",
   "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
   "type": "module",
   "bin": {
@@ -21,7 +21,9 @@
     "build:worker": "node -e \"const fs=require('fs');const path=require('path');for(const f of ['cad-worker.js','lisp-security.js','logger.js','config.js'])fs.copyFileSync('src/'+f,'dist/'+f);if(!fs.existsSync('dist/html'))fs.mkdirSync('dist/html');for(const f of fs.readdirSync('src/html'))fs.copyFileSync('src/html/'+f,'dist/html/'+f);if(!fs.existsSync('dist/handlers'))fs.mkdirSync('dist/handlers');for(const f of fs.readdirSync('src/handlers'))fs.copyFileSync('src/handlers/'+f,'dist/handlers/'+f)\"",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "vitest run tests/e2e/",
+    "test:e2e:docker": "docker compose -f docker-compose.test.yml build && vitest run tests/e2e/"
   },
   "keywords": [
     "mcp",

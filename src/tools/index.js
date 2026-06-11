@@ -35,7 +35,9 @@ import { tools as viewport_tools } from './viewport-tools.js';
 import { tools as purge_tools } from './purge-tools.js';
 import { tools as spatial_tools } from './spatial-tools.js';
 import { tools as text_tools } from './text-tools.js';
+import { tools as skill_tools } from './skill-tools.js';
 import { tools as context_tools } from './context-tools.js';
+import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 
 const READ_ONLY_TOOLS = new Set([
   'get_cad_info', 'get_platform_info', 'get_system_status',
@@ -71,6 +73,7 @@ const READ_ONLY_TOOLS = new Set([
   'find_entities_in_polygon',
   'find_text',
   'stream_entities', 'stream_text', 'stream_block_refs',
+  'skill_search', 'skill_list_installed', 'skill_list_categories',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -122,5 +125,9 @@ export const tools = [
   ...sandbox_tools,
   ...audit_tools,
   ...pool_tools,
-  ...draw_tools, ...edit_tools, ...viewport_tools, ...purge_tools, ...spatial_tools, ...text_tools, ...context_tools
+  ...draw_tools, ...edit_tools, ...viewport_tools, ...purge_tools, ...spatial_tools, ...text_tools, ...context_tools,
+  ...batch_transaction_tools,
+  ...skill_tools,
 ].map(addAnnotations);
+
+export const toolsByName = new Map(tools.map(t => [t.name, t]));

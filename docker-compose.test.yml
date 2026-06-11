@@ -1,0 +1,8 @@
+services:
+  mcp-server:
+    build: .
+    environment:
+      - TRANSPORT=stdio
+      - DEBUG=true
+    stdin_open: true
+    tty: true

@@ -3,15 +3,12 @@ import path from 'path';
 import os from 'os';
 import zlib from 'zlib';
 import { error as logError } from './logger.js';
+import { ensureDir } from './handler-utils.js';
 
 const AUDIT_DIR = path.join(os.homedir(), '@lisp', 'logs');
 const AUDIT_FILE = path.join(AUDIT_DIR, 'audit.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024;
 const MAX_LOG_AGE = 90 * 24 * 60 * 60 * 1000;
-
-function ensureDir() {
-  if (!fs.existsSync(AUDIT_DIR)) fs.mkdirSync(AUDIT_DIR, { recursive: true });
-}
 
 function rotateIfNeeded() {
   try {
@@ -32,7 +29,7 @@ function rotateIfNeeded() {
 
 export function writeAuditEntry(entry) {
   try {
-    ensureDir();
+    ensureDir(AUDIT_DIR);
     rotateIfNeeded();
     const line = JSON.stringify({
       timestamp: entry.timestamp || new Date().toISOString(),

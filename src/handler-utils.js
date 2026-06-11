@@ -29,6 +29,20 @@ export async function ensureCadConnected() {
   }
 }
 
+export function withCadConnection(handler) {
+  return async function(...args) {
+    try {
+      await ensureCadConnected();
+      return await handler(...args);
+    } catch (e) {
+      if (e.code === ERROR_CODES.CAD_NOT_CONNECTED) {
+        return mcpError('CAD 未连接');
+      }
+      return mcpError(e.message);
+    }
+  };
+}
+
 export function escapeLispString(str) {
   if (typeof str !== 'string') return '';
   return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -182,4 +196,8 @@ export function validateFilePath(filePath, options = {}) {
     throw new Error(`文件不存在: ${normalized}`);
   }
   return normalized;
+}
+
+export function ensureDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }

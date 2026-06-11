@@ -1,0 +1,85 @@
+import { clearCache } from './handlers/resource-handlers.js';
+import * as subMgr from './subscription-manager.js';
+
+export function notifyResourceChanges(toolName) {
+    const resourceMap = {
+        connect_cad:    ['atlisp://cad/info', 'atlisp://dwg/tbl', 'atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://packages'],
+        new_document:   ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://dwg/tbl', 'atlisp://dwg/entities', 'atlisp://dwg/text-content'],
+        install_package: ['atlisp://packages'],
+        install_atlisp: ['atlisp://packages', 'atlisp://cad/info'],
+        init_atlisp:    ['atlisp://packages', 'atlisp://cad/info'],
+        create_layer:   ['atlisp://dwg/tbl'],
+        delete_layer:   ['atlisp://dwg/tbl'],
+        set_layer:      ['atlisp://dwg/tbl'],
+        set_current_layer: ['atlisp://dwg/tbl'],
+        create_block:   ['atlisp://dwg/block-refs', 'atlisp://dwg/tbl'],
+        open_dwg:       ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://dwg/tbl', 'atlisp://dwg/entities', 'atlisp://dwg/block-refs', 'atlisp://dwg/text-content'],
+        save_dwg:       ['atlisp://dwg/name', 'atlisp://dwg/path'],
+        export_pdf:     [],
+        close_dwg:      ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://dwg/block-refs', 'atlisp://dwg/text-content'],
+        delete_entity:         ['atlisp://dwg/entities', 'atlisp://dwg/block-refs'],
+        batch_delete:          ['atlisp://dwg/entities', 'atlisp://dwg/block-refs'],
+        batch_explode:         ['atlisp://dwg/entities', 'atlisp://dwg/block-refs'],
+        explode_block:         ['atlisp://dwg/entities', 'atlisp://dwg/block-refs'],
+        batch_set_color:       ['atlisp://dwg/entities'],
+        batch_set_linetype:    ['atlisp://dwg/entities'],
+        batch_move:            ['atlisp://dwg/entities', 'atlisp://dwg/tbl'],
+        batch_rename:          ['atlisp://dwg/entities'],
+        batch_create_group:    ['atlisp://dwg/groups'],
+        batch_add_to_group:    ['atlisp://dwg/groups'],
+        set_xdata:             ['atlisp://dwg/entities'],
+        delete_xdata:          ['atlisp://dwg/entities'],
+        copy_xdata:            ['atlisp://dwg/entities'],
+        import_xdata_from_file:['atlisp://dwg/entities'],
+        attach_xref:           ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        detach_xref:           ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        reload_xref:           ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        batch_set_block_attributes: ['atlisp://dwg/block-refs', 'atlisp://dwg/entities'],
+        unload_xref:           ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        bind_xref:             ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        clip_xref:             ['atlisp://dwg/entities'],
+        path_xref:             ['atlisp://dwg/tbl'],
+        xref_convert_to_block: ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        xref_demote:           ['atlisp://dwg/tbl', 'atlisp://dwg/entities'],
+        xref_path_relative:    ['atlisp://dwg/tbl'],
+        create_sheet_set:      [],
+        add_sheet:             [],
+        delete_sheet:          [],
+        create_box:            ['atlisp://dwg/entities'],
+        create_sphere:         ['atlisp://dwg/entities'],
+        create_cylinder:       ['atlisp://dwg/entities'],
+        create_cone:           ['atlisp://dwg/entities'],
+        create_torus:          ['atlisp://dwg/entities'],
+        create_wedge:          ['atlisp://dwg/entities'],
+        extrude_solid:         ['atlisp://dwg/entities'],
+        revolve_solid:         ['atlisp://dwg/entities'],
+        boolean_union:         ['atlisp://dwg/entities'],
+        boolean_subtract:      ['atlisp://dwg/entities'],
+        boolean_intersect:     ['atlisp://dwg/entities'],
+        slice_solid:           ['atlisp://dwg/entities'],
+        thicken_surface:       ['atlisp://dwg/entities'],
+        create_region:         ['atlisp://dwg/entities'],
+        create_loft_surface:   ['atlisp://dwg/entities'],
+        create_dimension_style: ['atlisp://dwg/tbl'],
+        create_text_style:     ['atlisp://dwg/tbl'],
+        create_linetype:       ['atlisp://dwg/tbl'],
+        load_linetype:         ['atlisp://dwg/tbl'],
+        attach_pdf:            ['atlisp://dwg/entities'],
+        detach_pdf:            ['atlisp://dwg/entities'],
+        import_dxf:            ['atlisp://dwg/entities'],
+        import_dgn:            ['atlisp://dwg/entities'],
+        create_hyperlink:      ['atlisp://dwg/entities'],
+        remove_hyperlink:      ['atlisp://dwg/entities'],
+        batch_attach_pdfs:     ['atlisp://dwg/entities'],
+        save_pdf_layout:       [],
+    };
+    const uris = resourceMap[toolName];
+    if (uris) {
+        for (const uri of uris) {
+            clearCache(uri);
+            if (subMgr.isSubscribed(uri)) {
+                subMgr.notify(uri, null);
+            }
+        }
+    }
+}

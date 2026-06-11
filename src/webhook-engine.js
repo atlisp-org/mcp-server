@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { log, error as logError } from './logger.js';
+import { ensureDir } from './handler-utils.js';
 
 const WEBHOOKS_FILE = path.join(os.homedir(), '.atlisp', 'webhooks.json');
 const MAX_RETRIES = 3;
@@ -18,8 +19,7 @@ function loadWebhooks() {
 
 function saveWebhooks() {
   try {
-    const dir = path.dirname(WEBHOOKS_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    ensureDir(path.dirname(WEBHOOKS_FILE));
     fs.writeFileSync(WEBHOOKS_FILE, JSON.stringify(webhooks, null, 2), 'utf-8');
   } catch (e) { logError(`Webhook save error: ${e.message}`); }
 }

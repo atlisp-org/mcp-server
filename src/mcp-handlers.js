@@ -27,6 +27,9 @@ import { checkToolRateLimit } from './rate-limiter.js';
 import { log, error as logError, setLoggingNotify } from './logger.js';
 import { tools } from './tools/index.js';
 
+const COMPLETIONS_CACHE_TTL = 300;
+const completionsCache = new Map(); // Map<refType, {values: string[], ts: number}>
+
 const RESOURCE_TEMPLATES = [
     {
         uriTemplate: 'atlisp://dwg/entity/{handle}',
@@ -224,102 +227,189 @@ export function createMcpServer(handlers = {}) {
                 }
             } catch {}
         } else if (ref?.type === 'layer') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    `(progn (setq res nil) (while (setq e (tblnext "LAYER" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
-                );
-                if (result && result !== 'nil') {
-                    try {
-                        const layers = JSON.parse(result);
-                        for (const l of layers) {
-                            if (String(l).toLowerCase().startsWith(prefix)) values.push(l);
-                        }
-                    } catch {}
+            const cached = completionsCache.get('layer');
+            let layerItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                layerItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        `(progn (setq res nil) (while (setq e (tblnext "LAYER" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            layerItems = JSON.parse(result);
+                            completionsCache.set('layer', { values: layerItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (layerItems) {
+                for (const l of layerItems) {
+                    if (String(l).toLowerCase().startsWith(prefix)) values.push(l);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'block') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    `(progn (setq res nil) (while (setq e (tblnext "BLOCK" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
-                );
-                if (result && result !== 'nil') {
-                    try {
-                        const blocks = JSON.parse(result);
-                        for (const b of blocks) {
-                            if (String(b).toLowerCase().startsWith(prefix)) values.push(b);
-                        }
-                    } catch {}
+            const cached = completionsCache.get('block');
+            let blockItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                blockItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        `(progn (setq res nil) (while (setq e (tblnext "BLOCK" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            blockItems = JSON.parse(result);
+                            completionsCache.set('block', { values: blockItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (blockItems) {
+                for (const b of blockItems) {
+                    if (String(b).toLowerCase().startsWith(prefix)) values.push(b);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'linetype') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    `(progn (setq res nil) (while (setq e (tblnext "LTYPE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
-                );
-                if (result && result !== 'nil') {
-                    try {
-                        const ltypes = JSON.parse(result);
-                        for (const l of ltypes) {
-                            if (String(l).toLowerCase().startsWith(prefix)) values.push(l);
-                        }
-                    } catch {}
+            const cached = completionsCache.get('linetype');
+            let ltypeItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                ltypeItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        `(progn (setq res nil) (while (setq e (tblnext "LTYPE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            ltypeItems = JSON.parse(result);
+                            completionsCache.set('linetype', { values: ltypeItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (ltypeItems) {
+                for (const l of ltypeItems) {
+                    if (String(l).toLowerCase().startsWith(prefix)) values.push(l);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'textstyle') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    `(progn (setq res nil) (while (setq e (tblnext "STYLE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
-                );
-                if (result && result !== 'nil') {
-                    try {
-                        const styles = JSON.parse(result);
-                        for (const s of styles) {
-                            if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
-                        }
-                    } catch {}
+            const cached = completionsCache.get('textstyle');
+            let styleItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                styleItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        `(progn (setq res nil) (while (setq e (tblnext "STYLE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            styleItems = JSON.parse(result);
+                            completionsCache.set('textstyle', { values: styleItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (styleItems) {
+                for (const s of styleItems) {
+                    if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'dimstyle') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    `(progn (setq res nil) (while (setq e (tblnext "DIMSTYLE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
-                );
-                if (result && result !== 'nil') {
-                    try {
-                        const styles = JSON.parse(result);
-                        for (const s of styles) {
-                            if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
-                        }
-                    } catch {}
+            const cached = completionsCache.get('dimstyle');
+            let dimItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                dimItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        `(progn (setq res nil) (while (setq e (tblnext "DIMSTYLE" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))`
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            dimItems = JSON.parse(result);
+                            completionsCache.set('dimstyle', { values: dimItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (dimItems) {
+                for (const s of dimItems) {
+                    if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'ucs') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    '(progn (setq res nil) (while (setq e (tblnext "UCS" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))'
-                );
-                if (result && result !== 'nil') {
-                    try { const items = JSON.parse(result); for (const s of items) { if (String(s).toLowerCase().startsWith(prefix)) values.push(s); } } catch {}
+            const cached = completionsCache.get('ucs');
+            let ucsItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                ucsItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        '(progn (setq res nil) (while (setq e (tblnext "UCS" (null res))) (setq res (cons (cdr (assoc 2 e)) res))) (reverse res))'
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            ucsItems = JSON.parse(result);
+                            completionsCache.set('ucs', { values: ucsItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (ucsItems) {
+                for (const s of ucsItems) {
+                    if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'layout') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    '(progn (setq res nil) (foreach x (layoutlist) (setq res (cons x res))) (reverse res))'
-                );
-                if (result && result !== 'nil') {
-                    try { const items = JSON.parse(result); for (const s of items) { if (String(s).toLowerCase().startsWith(prefix)) values.push(s); } } catch {}
+            const cached = completionsCache.get('layout');
+            let layoutItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                layoutItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        '(progn (setq res nil) (foreach x (layoutlist) (setq res (cons x res))) (reverse res))'
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            layoutItems = JSON.parse(result);
+                            completionsCache.set('layout', { values: layoutItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (layoutItems) {
+                for (const s of layoutItems) {
+                    if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'group') {
-            try {
-                const result = await cad.sendCommandWithResult(
-                    '(progn (setq res (dictsearch (namedobjdict) "ACAD_GROUP")) (setq names nil) (setq i 0) (while (setq e (nth i res)) (setq names (cons (car e) names)) (setq i (+ i 2))) (vl-prin1-to-string names))'
-                );
-                if (result && result !== 'nil') {
-                    try { const items = JSON.parse(result); for (const s of items) { if (String(s).toLowerCase().startsWith(prefix)) values.push(s); } } catch {}
+            const cached = completionsCache.get('group');
+            let groupItems = null;
+            if (cached && (Date.now() - cached.ts) < COMPLETIONS_CACHE_TTL) {
+                groupItems = cached.values;
+            } else {
+                try {
+                    const result = await cad.sendCommandWithResult(
+                        '(progn (setq res (dictsearch (namedobjdict) "ACAD_GROUP")) (setq names nil) (setq i 0) (while (setq e (nth i res)) (setq names (cons (car e) names)) (setq i (+ i 2))) (vl-prin1-to-string names))'
+                    );
+                    if (result && result !== 'nil') {
+                        try {
+                            groupItems = JSON.parse(result);
+                            completionsCache.set('group', { values: groupItems, ts: Date.now() });
+                        } catch {}
+                    }
+                } catch {}
+            }
+            if (groupItems) {
+                for (const s of groupItems) {
+                    if (String(s).toLowerCase().startsWith(prefix)) values.push(s);
                 }
-            } catch {}
+            }
         } else if (ref?.type === 'hatch') {
             const hatchPatterns = ['ANSI31','ANSI32','ANSI33','ANSI34','ANSI35','ANSI36','ANSI37','ANSI38','AR-B816','AR-B816C','AR-B88','AR-BRELM','AR-BRSTD','AR-CONC','AR-HBONE','AR-PARQ1','AR-RROOF','AR-RSHKE','AR-SAND','BOX','BRASS','BRICK','BRSTONE','CLAY','CORK','CROSS','DASH','DOLMIT','DOTS','EARTH','ESCHER','FLEX','GRASS','GRATE','HEX','HONEY','HOUND','INSUL','LINE','MUDST','NET','NET3','PLAST','PLASTI','SACNCR','SQUARE','STARS','STEEL','SWAMP','TRANS','TRIANG','ZIGZAG'];
             for (const p of hatchPatterns) { if (p.toLowerCase().startsWith(prefix)) values.push(p); }

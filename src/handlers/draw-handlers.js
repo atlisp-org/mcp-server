@@ -1,175 +1,87 @@
 import { cad } from '../cad.js';
-import { escapeLispString } from '../handler-utils.js';
+import { withCadConnection, mcpSuccess, escapeLispString } from '../handler-utils.js';
 
-export async function drawLine(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.LINE" "${escapeLispString(params.p1)}" "${escapeLispString(params.p2)}" "")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制直线: ${params.p1} → ${params.p2}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawLine = withCadConnection(async (p1, p2) => {
+    await cad.sendCommand(`(command "_.LINE" "${escapeLispString(p1)}" "${escapeLispString(p2)}" "")`);
+    return mcpSuccess(`已绘制直线: ${p1} → ${p2}`);
+});
 
-export async function drawCircle(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.CIRCLE" "${escapeLispString(params.center)}" ${params.radius})`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制圆: 圆心 ${params.center}，半径 ${params.radius}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawCircle = withCadConnection(async (center, radius) => {
+    await cad.sendCommand(`(command "_.CIRCLE" "${escapeLispString(center)}" ${radius})`);
+    return mcpSuccess(`已绘制圆: 圆心 ${center}，半径 ${radius}`);
+});
 
-export async function drawArc(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(progn
-            (setq cen (list ${params.center}))
-            (setq r ${params.radius})
-            (setq ang1 (* pi (/ ${params.startAngle} 180.0)))
-            (setq ang2 (* pi (/ ${params.endAngle} 180.0)))
+export const drawArc = withCadConnection(async (center, radius, startAngle, endAngle) => {
+    const code = `(progn
+            (setq cen (list ${center}))
+            (setq r ${radius})
+            (setq ang1 (* pi (/ ${startAngle} 180.0)))
+            (setq ang2 (* pi (/ ${endAngle} 180.0)))
             (command "_.ARC" "C" cen (polar cen ang1 r) (polar cen ang2 r))
         )`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制圆弧: 圆心 ${params.center}，半径 ${params.radius}，角度 ${params.startAngle}°→${params.endAngle}°` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+    await cad.sendCommand(code);
+    return mcpSuccess(`已绘制圆弧: 圆心 ${center}，半径 ${radius}，角度 ${startAngle}°→${endAngle}°`);
+});
 
-export async function drawRectangle(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.RECTANG" "${escapeLispString(params.corner1)}" "${escapeLispString(params.corner2)}")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制矩形: ${params.corner1} — ${params.corner2}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawRectangle = withCadConnection(async (corner1, corner2) => {
+    await cad.sendCommand(`(command "_.RECTANG" "${escapeLispString(corner1)}" "${escapeLispString(corner2)}")`);
+    return mcpSuccess(`已绘制矩形: ${corner1} — ${corner2}`);
+});
 
-export async function drawPolygon(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.POLYGON" ${params.sides} "${escapeLispString(params.center)}" "I" ${params.radius})`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制正${params.sides}边形: 中心 ${params.center}，半径 ${params.radius}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawPolygon = withCadConnection(async (center, sides, radius) => {
+    await cad.sendCommand(`(command "_.POLYGON" ${sides} "${escapeLispString(center)}" "I" ${radius})`);
+    return mcpSuccess(`已绘制正${sides}边形: 中心 ${center}，半径 ${radius}`);
+});
 
-export async function drawEllipse(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.ELLIPSE" "C" "${escapeLispString(params.center)}" "${escapeLispString(params.majorAxis)}" "${escapeLispString(params.minorAxis)}")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已绘制椭圆: 中心 ${params.center}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawEllipse = withCadConnection(async (center, majorAxis, minorAxis) => {
+    await cad.sendCommand(`(command "_.ELLIPSE" "C" "${escapeLispString(center)}" "${escapeLispString(majorAxis)}" "${escapeLispString(minorAxis)}")`);
+    return mcpSuccess(`已绘制椭圆: 中心 ${center}`);
+});
 
-export async function drawText(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const h = params.height || 2.5;
-        const code = `(command "_.TEXT" "${escapeLispString(params.point)}" ${h} "0" "${escapeLispString(params.text)}")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已创建单行文字: "${params.text}"` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawText = withCadConnection(async (text, point, height) => {
+    const h = height || 2.5;
+    await cad.sendCommand(`(command "_.TEXT" "${escapeLispString(point)}" ${h} "0" "${escapeLispString(text)}")`);
+    return mcpSuccess(`已创建单行文字: "${text}"`);
+});
 
-export async function drawMtext(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const w = params.width || 0;
-        const code = `(command "_.MTEXT" "${escapeLispString(params.point)}" "W" ${w} "${escapeLispString(params.text)}" "")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已创建多行文字: "${params.text}"` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawMtext = withCadConnection(async (text, point, width) => {
+    const w = width || 0;
+    await cad.sendCommand(`(command "_.MTEXT" "${escapeLispString(point)}" "W" ${w} "${escapeLispString(text)}" "")`);
+    return mcpSuccess(`已创建多行文字: "${text}"`);
+});
 
-export async function drawPolyline(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const pts = params.points.split(/\s+/).filter(Boolean);
-        const pointArgs = pts.map(p => `"${escapeLispString(p)}"`).join(' ');
-        const closeArg = params.closed ? ' "C"' : ' ""';
-        const code = `(command "_.PLINE" ${pointArgs}${closeArg})`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已创建多段线: ${pts.length} 个顶点` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawPolyline = withCadConnection(async (points, closed) => {
+    const pts = points.split(/\s+/).filter(Boolean);
+    const pointArgs = pts.map(p => `"${escapeLispString(p)}"`).join(' ');
+    const closeArg = closed ? ' "C"' : ' ""';
+    await cad.sendCommand(`(command "_.PLINE" ${pointArgs}${closeArg})`);
+    return mcpSuccess(`已创建多段线: ${pts.length} 个顶点`);
+});
 
-export async function drawSpline(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const pts = params.points.split(/\s+/).filter(Boolean);
-        const pointArgs = pts.map(p => `"${escapeLispString(p)}"`).join(' ');
-        const code = `(command "_.SPLINE" ${pointArgs} "" "" "")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已创建样条曲线: ${pts.length} 个控制点` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawSpline = withCadConnection(async (points) => {
+    const pts = points.split(/\s+/).filter(Boolean);
+    const pointArgs = pts.map(p => `"${escapeLispString(p)}"`).join(' ');
+    await cad.sendCommand(`(command "_.SPLINE" ${pointArgs} "" "" "")`);
+    return mcpSuccess(`已创建样条曲线: ${pts.length} 个控制点`);
+});
 
-export async function drawPoint(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const code = `(command "_.POINT" "${escapeLispString(params.point)}")`;
-        await cad.sendCommand(code);
-        return { content: [{ type: 'text', text: `已创建点: ${params.point}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+export const drawPoint = withCadConnection(async (point) => {
+    await cad.sendCommand(`(command "_.POINT" "${escapeLispString(point)}")`);
+    return mcpSuccess(`已创建点: ${point}`);
+});
 
-export async function drawHatch(params) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-    try {
-        const pattern = params.pattern || 'ANSI31';
-        const pts = params.points.split(/\s+/).filter(Boolean);
-        const ptList = pts.map(p => { const [x, y] = p.split(','); return `${x} ${y}`; }).join(' ');
-        const lispPts = `(list ${pts.map(p => `(list ${p})`).join(' ')})`;
-        const code = `(progn
+export const drawHatch = withCadConnection(async (points, pattern) => {
+    const pat = pattern || 'ANSI31';
+    const pts = points.split(/\s+/).filter(Boolean);
+    const lispPts = `(list ${pts.map(p => `(list ${p})`).join(' ')})`;
+    const boundaryCode = `(progn
             (setq pts ${lispPts})
             (entmake (list '(0 . "LWPOLYLINE") '(100 . "AcDbEntity") '(100 . "AcDbPolyline")
                 (cons 90 ${pts.length}) '(70 . 1)
                 (cons 10 (nth 0 pts)) (cons 10 (nth 1 pts))
             ))
         )`;
-        const code2 = `(command "_.HATCH" "${escapeLispString(pattern)}" "" "")`;
-        try {
-            await cad.sendCommand(code);
-            await cad.sendCommand(code2);
-        } catch(hErr) {
-            return { content: [{ type: 'text', text: `错误: ${hErr.message}` }], isError: true };
-        }
-        return { content: [{ type: 'text', text: `已创建图案填充: ${pattern}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}
+    await cad.sendCommand(boundaryCode);
+    await cad.sendCommand(`(command "_.HATCH" "${escapeLispString(pat)}" "" "")`);
+    return mcpSuccess(`已创建图案填充: ${pat}`);
+});

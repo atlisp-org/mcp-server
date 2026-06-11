@@ -33,6 +33,7 @@ const envSchema = z.object({
     LLM_MODEL: z.string().optional().default('gpt-4o-mini'),
     LLM_MAX_TOKENS: z.string().optional().default('4096'),
     LLM_TEMPERATURE: z.string().optional().default('0.7'),
+    WORKER_POOL_SIZE: z.string().optional().default('2'),
 });
 
 const configSchema = z.object({
@@ -71,6 +72,7 @@ const configSchema = z.object({
     llmMaxTokens: z.number().optional(),
     llmTemperature: z.number().optional(),
     maxPoolSize: z.number().optional(),
+    workerPoolSize: z.number().optional(),
 });
 
 function parseArgs() {
@@ -171,6 +173,7 @@ const config = {
     llmMaxTokens: fileConfig?.llmMaxTokens || parseInt(env.LLM_MAX_TOKENS, 10),
     llmTemperature: fileConfig?.llmTemperature || parseFloat(env.LLM_TEMPERATURE),
     maxPoolSize: fileConfig?.maxPoolSize || 3,
+    workerPoolSize: fileConfig?.workerPoolSize || parseInt(env.WORKER_POOL_SIZE, 10),
 };
 
 export function validateConfig() {
@@ -201,16 +204,20 @@ export function validateConfig() {
 }
 
 let configWatchers = [];
+let configReloadLock = false;
 
 if (configFilePath && fs.existsSync(configFilePath)) {
     try {
         fs.watch(configFilePath, (eventType) => {
             if (eventType === 'change') {
+                if (configReloadLock) return;
+                configReloadLock = true;
                 const newFileConfig = loadConfigFile(configFilePath);
                 if (newFileConfig) {
                     Object.assign(config, newFileConfig);
-                    configWatchers.forEach(fn => fn(config));
+                    configWatchers.forEach(fn => { try { fn(config); } catch {} });
                 }
+                configReloadLock = false;
             }
         });
     } catch (e) { console.error(`Config file watch error: ${e.message}`); }
@@ -225,12 +232,16 @@ export function getAllConfig() {
 }
 
 export function reloadConfig() {
+    if (configReloadLock) return false;
+    configReloadLock = true;
     const newFileConfig = loadConfigFile(config.configFile);
     if (newFileConfig) {
         Object.assign(config, newFileConfig);
-        configWatchers.forEach(fn => fn(config));
+        configWatchers.forEach(fn => { try { fn(config); } catch {} });
+        configReloadLock = false;
         return true;
     }
+    configReloadLock = false;
     return false;
 }
 

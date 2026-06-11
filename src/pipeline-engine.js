@@ -1,15 +1,12 @@
 import { handleToolCall } from './mcp-tools.js';
 import { log, error as logError } from './logger.js';
+import { ensureDir } from './handler-utils.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
 const PIPELINE_DIR = path.join(os.homedir(), '.atlisp', 'pipelines');
 const savedPipelines = new Map();
-
-function ensureDir() {
-    try { if (!fs.existsSync(PIPELINE_DIR)) fs.mkdirSync(PIPELINE_DIR, { recursive: true }); } catch (e) { logError(`Pipeline dir error: ${e.message}`); }
-}
 
 function resolveRef(ref, results) {
     const match = ref.match(/^\$ref:(.+)\.(.+)$/);
@@ -120,7 +117,7 @@ function evaluateCondition(condition, results) {
 }
 
 export async function savePipeline(name, steps) {
-    ensureDir();
+    ensureDir(PIPELINE_DIR);
     const filePath = path.join(PIPELINE_DIR, `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
     const data = { name, steps, createdAt: new Date().toISOString() };
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
@@ -129,7 +126,7 @@ export async function savePipeline(name, steps) {
 }
 
 export function listPipelines() {
-    ensureDir();
+    ensureDir(PIPELINE_DIR);
     const pipelines = [];
     try {
         const files = fs.readdirSync(PIPELINE_DIR).filter(f => f.endsWith('.json'));
@@ -145,7 +142,7 @@ export function listPipelines() {
 
 export function loadPipeline(name) {
     if (savedPipelines.has(name)) return savedPipelines.get(name);
-    ensureDir();
+    ensureDir(PIPELINE_DIR);
     const filePath = path.join(PIPELINE_DIR, `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
     if (!fs.existsSync(filePath)) return null;
     try {

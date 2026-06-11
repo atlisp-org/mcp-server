@@ -13,19 +13,30 @@ const BUSY_DELAY = parseInt(process.env.BUSY_DELAY || '500', 10);
 const LISP_CACHE = new Map();
 const LISP_CACHE_MAX = parseInt(process.env.LISP_CACHE_MAX || '500', 10);
 
+const CACHE_TTL = parseInt(process.env.LISP_CACHE_TTL || '300000', 10);
+
 function getCachedLisp(code) {
   const hash = crypto.createHash('sha256').update(code).digest('hex');
-  if (LISP_CACHE.has(hash)) return LISP_CACHE.get(hash);
-  return null;
+  const entry = LISP_CACHE.get(hash);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL) {
+    LISP_CACHE.delete(hash);
+    return null;
+  }
+  entry.ts = Date.now();
+  return entry.compiled;
 }
 
 function setCachedLisp(code, compiled) {
   const hash = crypto.createHash('sha256').update(code).digest('hex');
   if (LISP_CACHE.size >= LISP_CACHE_MAX) {
-    const firstKey = LISP_CACHE.keys().next().value;
-    LISP_CACHE.delete(firstKey);
+    let oldest = null;
+    for (const [k, v] of LISP_CACHE) {
+      if (!oldest || v.ts < oldest.ts) oldest = { k, ts: v.ts };
+    }
+    if (oldest) LISP_CACHE.delete(oldest.k);
   }
-  LISP_CACHE.set(hash, compiled);
+  LISP_CACHE.set(hash, { compiled, ts: Date.now() });
   return compiled;
 }
 
@@ -151,16 +162,34 @@ const cadSendWithResult = edge.func(function() {/*
           string code = d.code.ToString();
           string platform = d.platform.ToString();
 string encoding = d.encoding != null ? d.encoding.ToString() : "";
+          string codeHash = d.codeHash != null ? d.codeHash.ToString() : "";
+          bool cacheEnabled = d.cacheEnabled != null && d.cacheEnabled.ToString() == "True";
+          bool hasCacheKey = cacheEnabled && !string.IsNullOrEmpty(codeHash);
            string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
            string tempDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "@lisp", "tmp");
           System.IO.Directory.CreateDirectory(tempDir);
           
+          // 结果文件始终使用 GUID 命名（每次调用唯一）
           tempFile = System.IO.Path.Combine(tempDir, "atlisp_result_" + System.Guid.NewGuid().ToString("N") + ".txt");
-          lispFile = System.IO.Path.Combine(tempDir, "atlisp_code_" + System.Guid.NewGuid().ToString("N") + ".lsp");
-          userCodeFile = System.IO.Path.Combine(tempDir, "atlisp_user_" + System.Guid.NewGuid().ToString("N") + ".lsp");
           
-          // 用户代码单独写入文件，避免拼接注入风险
-          System.IO.File.WriteAllText(userCodeFile, code, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
+          // 代码文件：启用缓存时使用 hash 命名，否则使用 GUID 命名
+          string fileKey = hasCacheKey ? codeHash : System.Guid.NewGuid().ToString("N");
+          userCodeFile = System.IO.Path.Combine(tempDir, "atlisp_user_" + fileKey + ".lsp");
+          lispFile = System.IO.Path.Combine(tempDir, "atlisp_code_" + fileKey + ".lsp");
+          
+          bool useCachedUserCode = false;
+          if (hasCacheKey) {
+              if (System.IO.File.Exists(userCodeFile)) {
+                  var userFileInfo = new System.IO.FileInfo(userCodeFile);
+                  if ((DateTime.Now - userFileInfo.LastWriteTime).TotalHours < 1) {
+                      useCachedUserCode = true;
+                  }
+              }
+          }
+          
+          if (!useCachedUserCode) {
+              System.IO.File.WriteAllText(userCodeFile, code, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
+          }
           
           string lispCode = "(progn"
               + "(setq f(open \"" + tempFile.Replace("\\", "\\\\") + "\" \"w\"))"
@@ -171,7 +200,6 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
               + "(close f)"
               + "(princ))";
             
-            // 使用系统 ANSI 编码以兼容 GstarCAD / ZWCAD
             System.IO.File.WriteAllText(lispFile, lispCode, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
           
           dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
@@ -193,11 +221,9 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                               byte[] bytes = System.IO.File.ReadAllBytes(tempFile);
                               System.Text.Encoding enc;
                               
-                              // 优先使用指定的编码
                               if (!string.IsNullOrEmpty(encoding)) {
                                   enc = System.Text.Encoding.GetEncoding(encoding);
                               } else {
-                                  // 自动检测编码：先尝试 UTF-8，如果失败则使用 GBK
                                   try {
                                       string utf8Result = System.Text.Encoding.UTF8.GetString(bytes);
                                       if (!utf8Result.Contains("\ufffd")) {
@@ -216,14 +242,13 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                               
                               result = enc.GetString(bytes).Trim();
                               
-                              // 检查是否有错误前缀
                               if (result.StartsWith("ERROR:")) {
                                   return new { success = false, error = result.Substring(6).Trim() };
                               }
                               
                               try { System.IO.File.Delete(tempFile); } catch {}
                               try { System.IO.File.Delete(lispFile); } catch {}
-                              try { System.IO.File.Delete(userCodeFile); } catch {}
+                              if (!hasCacheKey) { try { if (System.IO.File.Exists(userCodeFile)) System.IO.File.Delete(userCodeFile); } catch {} }
                               break;
                           } catch (System.IO.IOException) {
                               System.Threading.Thread.Sleep(200);
@@ -482,6 +507,13 @@ async function connectToPlatform(targetPlatform) {
   });
 }
 
+function computeCodeHash(code, cacheEnabled) {
+  if (cacheEnabled) {
+    return crypto.createHash('sha256').update(code).digest('hex');
+  }
+  return '';
+}
+
 async function handleMessage(msg) {
   if (msg.type === 'ping') {
     return { pong: true };
@@ -554,9 +586,11 @@ async function handleMessage(msg) {
       return { success: false, error: `安全限制: ${injectionCheck.error}` };
     }
     if (msg.code.length > 255) {
-      log(`send (long code ${msg.code.length} chars, fallback to sendResult): ${msg.code.substring(0, 80)}...`);
+      const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
+      const codeHash = computeCodeHash(msg.code, cacheEnabled);
+      log(`send (long code ${msg.code.length} chars, fallback to sendResult, cache=${cacheEnabled}): ${msg.code.substring(0, 80)}...`);
       const r = await new Promise((resolve, reject) => {
-        cadSendWithResult({ code: msg.code, platform: msg.platform || 'AutoCAD', encoding: '' }, (e, r) => {
+        cadSendWithResult({ code: msg.code, platform: msg.platform || 'AutoCAD', encoding: '', codeHash, cacheEnabled }, (e, r) => {
           if (e) reject(e);
           else resolve(r);
         });
@@ -606,6 +640,8 @@ async function handleMessage(msg) {
     if (!injectionCheck.valid) {
       return { success: false, error: `安全限制: ${injectionCheck.error}` };
     }
+    const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
+    const codeHash = computeCodeHash(msg.code, cacheEnabled);
     const maxRetriesResult = 3;
     let lastErrorResult = null;
     for (let i = 0; i < maxRetriesResult; i++) {
@@ -614,7 +650,7 @@ async function handleMessage(msg) {
         log(`sendResult: ${msg.code}`);
         try {
           const r = await new Promise((resolve, reject) => {
-            cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '' }, (e, r) => {
+            cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '', codeHash, cacheEnabled }, (e, r) => {
               if (e) reject(e);
               else resolve(r);
             });

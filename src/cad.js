@@ -26,7 +26,18 @@ const PRIORITY_NORMAL = 1;
 const PRIORITY_LOW = 2;
 const MAX_QUEUE_SIZE = 500;
 
-const READ_PATTERN = /^\(tblnext|^\(ssget|^\(entget|^\(entsel|^\(tblsearch|^\(layoutlist|^\(layoutname|^\(getvar|^\(getcfg/;
+const READ_PREFIXES = new Set([
+  '(tblnext', '(ssget', '(entget', '(entsel', '(tblsearch',
+  '(layoutlist', '(layoutname', '(getvar', '(getcfg',
+]);
+
+function isReadCommand(code) {
+  const trimmed = code.trim();
+  for (const prefix of READ_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return true;
+  }
+  return false;
+}
 
 // --- Module-level document change callbacks (shared across all instances) ---
 const _docChangeCallbacks = [];
@@ -52,7 +63,7 @@ class ReadBatcher {
   }
 
   add(command, dedupKey) {
-    if (!READ_PATTERN.test(command.code.trim())) return false;
+    if (!isReadCommand(command.code)) return false;
     this._batch.push({ command, dedupKey });
     if (this._batch.length >= this._maxBatchSize) {
       this._flush();
@@ -132,6 +143,9 @@ class CommandQueue {
     if (dedupKey) {
       const existing = this._dedupMap.get(dedupKey);
       if (existing) {
+        if (existing.resolve) {
+          existing.reject(new Error('Deduplicated: replaced by newer command'));
+        }
         existing.resolve = command.resolve;
         existing.reject = command.reject;
         return;
@@ -208,7 +222,9 @@ class CommandQueue {
 
 // --- CadConnection instance ---
 class CadConnection {
-  _worker = null;
+  _primaryWorker = null;
+  _readWorkers = [];
+  _readWorkerIndex = 0;
   _platform = null;
   _version = null;
   _product = null;
@@ -216,7 +232,6 @@ class CadConnection {
 
   _heartbeatTimer = null;
   _pendingRequests = new Map();
-  _stdoutHandlerSetup = false;
   _commandQueue = null;
 
   _cbState = CB_CLOSED;
@@ -229,10 +244,15 @@ class CadConnection {
   _activeDocName = null;
   _monitorStarted = false;
   _connectionId = null;
+  _readRestartTimers = [];
 
   constructor() {
     this._connectionId = randomUUID().slice(0, 8);
     this._commandQueue = new CommandQueue(this);
+  }
+
+  get _workerPoolSize() {
+    return config.workerPoolSize || 2;
   }
 
   isAvailable() {
@@ -426,38 +446,80 @@ class CadConnection {
   }
 
   // --- Worker management ---
-  _getWorker(force = false) {
-    if (!this._worker || !this._worker.connected || force) {
-      if (this._worker) this._worker.kill();
-      const w = spawn('node', [workerPath], { stdio: ['pipe', 'pipe', 'pipe'] });
-      w.connected = true;
-      this._worker = w;
-      this._cbSuccess();
+  _isReadOnlyMessage(msg) {
+    if (msg.code) return isReadCommand(msg.code);
+    return false;
+  }
 
-      w.on('exit', (code) => {
-        console.error(`[${this._connectionId}] worker exited with code:`, code);
-        if (w !== this._worker) return;
-        w.connected = false;
+  _spawnWorker(type) {
+    const w = spawn('node', [workerPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+    w.connected = true;
+    w._workerType = type;
+
+    this._setupStdoutHandler(w);
+
+    w.on('exit', (code) => {
+      console.error(`[${this._connectionId}] ${type} worker exited with code:`, code);
+      w.connected = false;
+
+      if (type === 'primary') {
+        if (w !== this._primaryWorker) return;
         this._cbFailure();
-        const exitError = new Error(`Worker exited with code ${code}`);
+        const exitError = new Error(`Primary worker exited with code ${code}`);
         for (const [id, entry] of this._pendingRequests) {
           clearTimeout(entry.timeout);
           entry._skipCb = true;
           entry.reject(exitError);
         }
         this._pendingRequests.clear();
-        this._stdoutHandlerSetup = false;
         if (this._heartbeatTimer) {
           clearInterval(this._heartbeatTimer);
           this._heartbeatTimer = null;
         }
         this._scheduleRestart();
-      });
-      this._setupStdoutHandler(w);
-      this._startHeartbeat();
+      } else {
+        const idx = this._readWorkers.indexOf(w);
+        if (idx >= 0) this._readWorkers.splice(idx, 1);
+        const poolSize = this._workerPoolSize;
+        const alive = this._readWorkers.filter(rw => rw.connected).length;
+        if (alive < poolSize - 1) {
+          const rw = this._spawnWorker('read');
+          this._readWorkers.push(rw);
+        }
+      }
+    });
+
+    return w;
+  }
+
+  _getWorker(isReadOnly = false) {
+    const poolSize = this._workerPoolSize;
+
+    if (!this._primaryWorker || !this._primaryWorker.connected) {
+      if (this._primaryWorker) {
+        try { this._primaryWorker.kill(); } catch {}
+        this._primaryWorker = null;
+      }
+      this._primaryWorker = this._spawnWorker('primary');
+      this._cbSuccess();
+      if (!this._heartbeatTimer) this._startHeartbeat();
       this._restartCount = 0;
     }
-    return this._worker;
+
+    if (isReadOnly && poolSize > 1) {
+      this._readWorkers = this._readWorkers.filter(rw => rw.connected);
+      const needed = poolSize - 1 - this._readWorkers.length;
+      for (let i = 0; i < needed; i++) {
+        const rw = this._spawnWorker('read');
+        this._readWorkers.push(rw);
+      }
+      if (this._readWorkers.length > 0) {
+        this._readWorkerIndex = (this._readWorkerIndex + 1) % this._readWorkers.length;
+        return this._readWorkers[this._readWorkerIndex];
+      }
+    }
+
+    return this._primaryWorker;
   }
 
   _resetWorker() {
@@ -466,21 +528,34 @@ class CadConnection {
       reject(new Error('Worker reset'));
     }
     this._pendingRequests.clear();
-    this._stdoutHandlerSetup = false;
     this._commandQueue.clear();
-    if (this._worker) {
-      this._worker.kill();
-      this._worker = null;
+
+    if (this._primaryWorker) {
+      try { this._primaryWorker.kill(); } catch {}
+      this._primaryWorker = null;
     }
+    for (const rw of this._readWorkers) {
+      try { rw.kill(); } catch {}
+    }
+    this._readWorkers = [];
+    this._readWorkerIndex = 0;
+
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
       this._heartbeatTimer = null;
     }
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+    for (const t of this._readRestartTimers) {
+      clearTimeout(t);
+    }
+    this._readRestartTimers = [];
   }
 
   _setupStdoutHandler(w) {
     let buffer = '';
-    this._stdoutHandlerSetup = true;
     const self = this;
 
     w.stdout.on('data', (data) => {
@@ -519,7 +594,7 @@ class CadConnection {
       }
     });
 
-    w.stderr.on('data', (d) => console.error(`[${self._connectionId}] worker stderr:`, d.toString()));
+    w.stderr.on('data', (d) => console.error(`[${self._connectionId}] ${w._workerType || 'worker'} stderr:`, d.toString()));
   }
 
   _startHeartbeat() {
@@ -566,7 +641,8 @@ class CadConnection {
     this._restartTimer = setTimeout(() => {
       self._restartTimer = null;
       console.error(`[${self._connectionId}] Attempting worker restart...`);
-      self._getWorker(true);
+      self._resetWorker();
+      self._getWorker(false);
     }, delay);
   }
 
@@ -578,7 +654,8 @@ class CadConnection {
   }
 
   _sendMessageInternal(msg, noCircuitBreaker = false) {
-    const w = this._getWorker();
+    const isReadOnly = this._isReadOnlyMessage(msg);
+    const w = this._getWorker(isReadOnly);
     const requestId = randomUUID();
     const self = this;
 
@@ -630,7 +707,6 @@ export const cad = {
   get connected() { return _activeConnection.connected; },
   set connected(v) { _activeConnection.connected = v; },
 
-  // Backward-compat direct property access for version/product
   get version() { return _activeConnection._version; },
   set version(v) { _activeConnection._version = v; },
   get product() { return _activeConnection._product; },
