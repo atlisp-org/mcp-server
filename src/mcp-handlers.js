@@ -25,15 +25,36 @@ import { trackToolCall, trackError, trackCadCommand, trackMcpMethod } from './me
 import { checkToolRateLimit } from './rate-limiter.js';
 import { log, error as logError, setLoggingNotify } from './logger.js';
 import { tools } from './tools/index.js';
+import { cad } from './cad.js';
+import { setClientRoots } from './client-roots.js';
 
 const COMPLETIONS_CACHE_TTL = 300;
-const completionsCache = new Map(); // Map<refType, {values: string[], ts: number}>
-let clientRoots = [];
 
-export function getClientRoots() {
-    return clientRoots;
+async function queryCadTable(tableName) {
+  try {
+    const code = `(progn (setq r nil) (setq e (tblnext "${tableName.toUpperCase()}" t)) (while e (setq r (cons (cdr (assoc 2 e)) r)) (setq e (tblnext "${tableName.toUpperCase()}" nil))) (reverse r))`;
+    const result = await cad.sendCommandWithResult(code);
+    if (result && result !== 'nil') return parseLispList(result) || [];
+    return [];
+  } catch { return []; }
 }
 
+async function queryCadHandles() {
+  try {
+    const result = await cad.sendCommandWithResult(`(progn (setq r nil) (vlax-for e (vla-get-ModelSpace (vla-get-ActiveDocument (vlax-get-acad-object))) (setq r (cons (vla-get-Handle e) r))) (reverse r))`);
+    if (result && result !== 'nil') return parseLispList(result) || [];
+    return [];
+  } catch { return []; }
+}
+
+function parseLispList(str) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) return null;
+  const parts = trimmed.slice(1, -1).split(/\s+/).filter(Boolean);
+  return parts.map(p => { if (p.startsWith('"') && p.endsWith('"')) return p.slice(1, -1); return p; });
+}
+const completionsCache = new Map(); // Map<refType, {values: string[], ts: number}>
 const RESOURCE_TEMPLATES = [
     {
         uriTemplate: 'atlisp://dwg/entity/{handle}',
@@ -42,19 +63,19 @@ const RESOURCE_TEMPLATES = [
         mimeType: 'application/json'
     },
     {
-        uriTemplate: 'atlisp://dwg/entities',
-        name: 'Entities Summary',
-        description: '返回图元总数和按类型统计列表',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/entities?type={type}&layer={layer}&bbox={bbox}',
+        uriTemplate: 'atlisp://dwg/entities{?type,layer,bbox}',
         name: 'Filtered Entities',
         description: '按 type/layer/bbox 过滤图元，返回 entity:properties 全属性 JSON（ObjectName, Handle, Layer, Color, Center, Radius 等）',
         mimeType: 'application/json'
     },
     {
-        uriTemplate: 'atlisp://packages?search={query}',
+        uriTemplate: 'atlisp://dwg/text-content{?bbox,layer,offset,limit}',
+        name: 'Text Content',
+        description: '文本内容及位置，用于语义分析',
+        mimeType: 'application/json'
+    },
+    {
+        uriTemplate: 'atlisp://packages{?search}',
         name: 'Package Search',
         description: '搜索 @lisp 包',
         mimeType: 'application/json'
@@ -69,12 +90,6 @@ const RESOURCE_TEMPLATES = [
         uriTemplate: 'atlisp://dwg/tbl/{tbl}',
         name: 'CAD Tables',
         description: '获取 CAD 表数据 (layer, block, textstyle, dimstyle, linetype, ucs, view, regapp)',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/text-content?bbox={bbox}&layer={layer}&offset={offset}&limit={limit}',
-        name: 'Text Content',
-        description: '文本内容及位置，用于语义分析',
         mimeType: 'application/json'
     }
 ];
@@ -208,11 +223,24 @@ export function createMcpServer(handlers = {}) {
         if (ref?.type === 'ref/prompt') {
             try {
                 const prompts = await listPrompts();
-                for (const p of prompts) {
-                    if (p.name.toLowerCase().startsWith(prefix)) values.push(p.name);
-                    if (p.arguments) {
-                        for (const a of p.arguments) {
-                            if (a.name && a.name.toLowerCase().startsWith(prefix)) values.push(a.name);
+                if (argument?.name) {
+                    const prompt = prompts.find(p => p.name === ref.name);
+                    if (prompt?.arguments) {
+                        for (const a of prompt.arguments) {
+                            if (a.name === argument.name && a.validValues) {
+                                for (const v of a.validValues) {
+                                    if (v.toLowerCase().startsWith(prefix)) values.push(v);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    for (const p of prompts) {
+                        if (p.name.toLowerCase().startsWith(prefix)) values.push(p.name);
+                        if (p.arguments) {
+                            for (const a of p.arguments) {
+                                if (a.name && a.name.toLowerCase().startsWith(prefix)) values.push(a.name);
+                            }
                         }
                     }
                 }
@@ -427,10 +455,21 @@ export function createMcpServer(handlers = {}) {
                     for (const opt of paramDef.enum) {
                         if (String(opt).toLowerCase().startsWith(prefix)) values.push(opt);
                     }
-                }
-                if (paramDef?.type === 'string' && paramDef.description) {
-                    const hintWords = (paramDef.description || '').match(/[a-zA-Z\u4e00-\u9fff]+/g) || [];
-                    for (const w of hintWords) { if (w.toLowerCase().startsWith(prefix)) values.push(w); }
+                } else if (/handle/i.test(paramName) && cad.connected) {
+                    const handles = await queryCadHandles();
+                    for (const h of handles) { if (h.toLowerCase().startsWith(prefix)) values.push(h); }
+                } else if (cad.connected) {
+                    let tableName = null;
+                    if (/layer/i.test(paramName)) tableName = 'layer';
+                    else if (/block/i.test(paramName) && /name/i.test(paramName)) tableName = 'block';
+                    else if (/linetype/i.test(paramName)) tableName = 'ltype';
+                    else if (/textstyle/i.test(paramName) || /style/i.test(paramName)) tableName = 'style';
+                    else if (/ucs/i.test(paramName)) tableName = 'ucs';
+                    else if (/layout/i.test(paramName)) tableName = 'layer';
+                    if (tableName) {
+                        const items = await queryCadTable(tableName);
+                        for (const item of items) { if (item.toLowerCase().startsWith(prefix)) values.push(item); }
+                    }
                 }
             }
         }
@@ -471,7 +510,7 @@ export function createMcpServer(handlers = {}) {
         log('MCP client initialized, session ready');
         server.listRoots().then(roots => {
             if (roots?.length) {
-                clientRoots = roots;
+                setClientRoots(roots);
                 log(`Client roots: ${roots.map(r => r.uri).join(', ')}`);
             }
         }).catch(() => {});
@@ -480,7 +519,7 @@ export function createMcpServer(handlers = {}) {
     server.setNotificationHandler(RootsListChangedNotificationSchema, () => {
         log('Client roots changed');
         server.listRoots().then(roots => {
-            clientRoots = roots || [];
+            setClientRoots(roots);
         }).catch(() => {});
     });
 

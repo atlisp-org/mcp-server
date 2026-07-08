@@ -1,4 +1,5 @@
 import { mcpSuccessResponse, createError, ERROR_CODES } from './errors.js';
+import { getClientRoots } from './client-roots.js';
 import path from 'path';
 import fs from 'fs';
 import { progressContext } from './mcp-server-state.js';
@@ -32,8 +33,10 @@ export async function ensureCadConnected() {
 export function withCadConnection(handler) {
   return async function(...args) {
     try {
+      const hasInstance = typeof args[args.length - 1] === 'string' && args[args.length - 1].length > 0;
+      const instance = hasInstance ? args.pop() : null;
       await ensureCadConnected();
-      return await handler(...args);
+      return await handler(...args, instance);
     } catch (e) {
       if (e.code === ERROR_CODES.CAD_NOT_CONNECTED) {
         return mcpError('CAD 未连接');
@@ -181,9 +184,11 @@ export function validateFilePath(filePath, options = {}) {
   if (normalized.includes('..')) {
     throw new Error('文件路径不允许包含 ..');
   }
-  if (options.allowedDirs) {
+  const roots = getClientRoots().map(r => r.uri).filter(Boolean);
+  const allowedDirs = [].concat(options.allowedDirs || [], roots);
+  if (allowedDirs.length > 0) {
     const resolved = path.resolve(normalized);
-    const allowed = Array.isArray(options.allowedDirs) ? options.allowedDirs : [options.allowedDirs];
+    const allowed = Array.isArray(allowedDirs) ? allowedDirs : [allowedDirs];
     const isAllowed = allowed.some(dir => {
       const resolvedDir = path.resolve(dir);
       return resolved.startsWith(resolvedDir + path.sep) || resolved === resolvedDir;

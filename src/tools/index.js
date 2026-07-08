@@ -91,15 +91,43 @@ const EXTRA_DESTRUCTIVE = new Set([
   'batch_set_color', 'batch_set_linetype', 'stretch',
 ]);
 
+const IDEMPOTENT_WRITE_TOOLS = new Set([
+  'set_system_variable', 'set_current_layer', 'save_dwg',
+  'init_atlisp', 'install_atlisp', 'connect_cad', 'bring_to_front',
+  'cad_pool_connect', 'cad_pool_disconnect', 'cad_pool_switch',
+  'agent_set_context', 'agent_delete_context', 'agent_clear_context',
+  'set_page_setup', 'create_page_setup',
+]);
+
+const OPEN_WORLD_TOOLS = new Set([
+  'install_atlisp', 'init_atlisp', 'install_package', 'import_funlib',
+  'skill_install', 'skill_search', 'skill_list_categories',
+  'webhook_register', 'webhook_remove',
+  'external_db_query', 'import_external_data', 'export_to_external',
+  'import_dxf', 'import_dgn', 'import_page_setup',
+  'load_linetype',
+]);
+
 function addAnnotations(tool) {
   const isDeprecated = DEPRECATED_TOOLS.has(tool.name);
+  const isPoolTool = tool.name.startsWith('cad_pool_') || tool.name === 'session_pin_instance' || tool.name === 'session_unpin_instance';
+  const schema = { ...(tool.inputSchema || {}) };
+  if (!isPoolTool && schema.properties) {
+    schema.properties = {
+      ...schema.properties,
+      instance: { type: 'string', description: '目标 CAD 实例 key（可选，默认活动实例）。如 "autocad", "zwcad"', optional: true },
+    };
+  }
   return {
     ...tool,
+    inputSchema: schema,
     ...(isDeprecated ? { deprecated: true, title: `${tool.name} (deprecated)` } : {}),
     annotations: {
       readOnlyHint: READ_ONLY_TOOLS.has(tool.name),
       destructiveHint: tool.name.startsWith('delete_') || tool.name.startsWith('purge_') ||
         tool.name.startsWith('boolean_') || EXTRA_DESTRUCTIVE.has(tool.name),
+      idempotentHint: READ_ONLY_TOOLS.has(tool.name) || IDEMPOTENT_WRITE_TOOLS.has(tool.name),
+      openWorldHint: OPEN_WORLD_TOOLS.has(tool.name),
       ...(isDeprecated ? { deprecatedReason: 'This tool has been superseded. Check documentation for alternatives.' } : {}),
     },
   };

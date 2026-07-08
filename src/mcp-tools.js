@@ -585,6 +585,19 @@ export const TOOL_HANDLERS = {
         const list = pool.listInstances();
         return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] };
     },
+    session_pin_instance: (a) => {
+        const ctx = mcpContext.getStore();
+        if (!pool.getConnection(a.key)) {
+            return { content: [{ type: 'text', text: `实例 "${a.key}" 未连接` }], isError: true };
+        }
+        ctx.instanceKey = a.key;
+        return { content: [{ type: 'text', text: `会话已绑定到实例 "${a.key}"` }] };
+    },
+    session_unpin_instance: () => {
+        const ctx = mcpContext.getStore();
+        ctx.instanceKey = null;
+        return { content: [{ type: 'text', text: '已取消实例绑定' }] };
+    },
 
     // === Agent Context ===
     agent_set_context: async (a) => {

@@ -119,10 +119,18 @@ export async function listPrompts() {
 
   const result = [];
   for (const d of builtin) {
-    result.push({ name: d.name, description: d.description, arguments: d.arguments || [] });
+    const args = (d.arguments || []).map(a => {
+      const validValues = a.name === 'action' && d.templates ? Object.keys(d.templates) : undefined;
+      return { ...a, validValues };
+    });
+    result.push({ name: d.name, description: d.description, arguments: args });
   }
   for (const p of ext) {
-    result.push({ name: p.name, description: p.description, arguments: p.arguments || [] });
+    const args = (p.arguments || []).map(a => {
+      const validValues = a.name === 'action' && p.templates ? Object.keys(p.templates) : undefined;
+      return { ...a, validValues };
+    });
+    result.push({ name: p.name, description: p.description, arguments: args });
   }
   return result;
 }

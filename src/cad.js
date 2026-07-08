@@ -16,8 +16,8 @@ const RESTART_BACKOFF_BASE = 1000;
 const CB_CLOSED = 0;
 const CB_OPEN = 1;
 const CB_HALF_OPEN = 2;
-const CB_FAILURE_THRESHOLD = 3;
-const CB_RESET_TIMEOUT = 30000;
+const CB_FAILURE_THRESHOLD = 5;
+const CB_RESET_TIMEOUT = 10000;
 
 const MAX_BUFFER_SIZE = 1024 * 1024;
 
@@ -646,9 +646,14 @@ class CadConnection {
     }, delay);
   }
 
-  _sendMessage(msg) {
+  async _sendMessage(msg) {
     if (!this._cbAllowRequest()) {
-      return Promise.reject(new Error(`Circuit breaker OPEN: CAD 不可用（${Math.ceil((CB_RESET_TIMEOUT - (Date.now() - this._cbLastFailureTime)) / 1000)}s 后重试）`));
+      console.error(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
+      this._cbState = CB_CLOSED;
+      this._cbFailureCount = 0;
+      if (this._cbTimer) { clearTimeout(this._cbTimer); this._cbTimer = null; }
+      await this._resetWorker();
+      await this._getWorker(false);
     }
     return this._sendMessageInternal(msg);
   }
@@ -703,8 +708,22 @@ export function getActiveConnection() {
   return _activeConnection;
 }
 
+// Hook for instance routing; set by cad-router.js
+let _resolveInstanceConn = null;
+export function _setInstanceResolver(fn) {
+  _resolveInstanceConn = fn;
+}
+
+function _resolveConn() {
+  if (_resolveInstanceConn) {
+    const conn = _resolveInstanceConn();
+    if (conn) return conn;
+  }
+  return _activeConnection;
+}
+
 export const cad = {
-  get connected() { return _activeConnection.connected; },
+  get connected() { return _resolveConn().connected; },
   set connected(v) { _activeConnection.connected = v; },
 
   get version() { return _activeConnection._version; },
@@ -715,8 +734,8 @@ export const cad = {
   set _platform(v) { _activeConnection._platform = v; },
 
   async connect(platform) { return _activeConnection.connect(platform); },
-  async sendCommand(code) { return _activeConnection.sendCommand(code); },
-  async sendCommandWithResult(code, encoding) { return _activeConnection.sendCommandWithResult(code, encoding); },
+  async sendCommand(code) { return _resolveConn().sendCommand(code); },
+  async sendCommandWithResult(code, encoding) { return _resolveConn().sendCommandWithResult(code, encoding); },
   getVersion() { return _activeConnection.getVersion(); },
   getPlatform() { return _activeConnection.getPlatform(); },
   getConnectionId() { return _activeConnection.getConnectionId(); },

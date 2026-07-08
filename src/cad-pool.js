@@ -24,6 +24,11 @@ class CadConnectionPool {
     this._maxPoolSize = config.maxPoolSize || 3;
   }
 
+  getConnection(key) {
+    this._ensureDefault();
+    return this._instances.get(key)?.connection || null;
+  }
+
   /**
    * Ensure the default entry exists. Created lazily to avoid
    * calling getActiveConnection() at module import time (which

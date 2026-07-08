@@ -55,4 +55,20 @@ export const tools = [
     description: '列出连接池中所有 CAD 实例及其状态',
     inputSchema: { type: 'object', properties: {} }
   },
+  {
+    name: 'session_pin_instance',
+    description: '将当前会话绑定到指定 CAD 实例。后续所有工具调用自动路由到该实例，无需每次传入 instance 参数',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'CAD 实例 key，如 "autocad"、"zwcad"。可通过 cad_pool_list 查看可用实例' }
+      },
+      required: ['key']
+    }
+  },
+  {
+    name: 'session_unpin_instance',
+    description: '取消当前会话的实例绑定。恢复为使用连接池的活动实例（cad_pool_switch 指定的）',
+    inputSchema: { type: 'object', properties: {} }
+  }
 ];

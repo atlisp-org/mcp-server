@@ -3,10 +3,11 @@ import { validateToolArgs } from './tool-validators.js';
 import { notifyResourceChanges } from './tool-dispatch.js';
 import { READ_ONLY_TOOLS } from './tools/index.js';
 import { checkToolRateLimit } from './rate-limiter.js';
-import { progressContext } from './mcp-server-state.js';
+import { progressContext, mcpContext } from './mcp-server-state.js';
 import { setNotifyProgress, getNotifyProgress } from './handler-utils.js';
 import { error as logError } from './logger.js';
 import { cad } from './cad.js';
+import { pool } from './cad-pool.js';
 import { writeAuditEntry } from './audit-log.js';
 import { callCustomTool } from './tool-registry.js';
 
@@ -34,11 +35,20 @@ export async function handleToolCall(name, args, options = {}) {
         try {
             validateToolArgs(name, args || {});
 
-            if (!isReadOnly && cad.connected) {
-                try {
-                    await cad.sendCommand('(command "_.UNDO" "_BEGIN")');
-                    undoBegun = true;
-                } catch (e) { logError(`UNDO_BEGIN failed: ${e.message}`); }
+            const instance = args?.instance || null;
+            if (instance) {
+                const ctx = mcpContext.getStore();
+                ctx._toolInstance = instance;
+            }
+
+            if (!isReadOnly) {
+                const targetConn = instance ? pool.getConnection(instance) : cad;
+                if (targetConn?.connected) {
+                    try {
+                        await targetConn.sendCommand('(command "_.UNDO" "_BEGIN")');
+                        undoBegun = true;
+                    } catch (e) { logError(`UNDO_BEGIN failed: ${e.message}`); }
+                }
             }
 
             const np = getNotifyProgress();
@@ -66,6 +76,8 @@ export async function handleToolCall(name, args, options = {}) {
             });
             return { content: [{ type: 'text', text: `工具执行错误: ${e.message}` }], isError: true };
         } finally {
+            const ctx = mcpContext.getStore();
+            if (ctx) ctx._toolInstance = null;
             if (undoBegun) {
                 try { await cad.sendCommand('(command "_.UNDO" "_END")'); } catch (_) {}
             }

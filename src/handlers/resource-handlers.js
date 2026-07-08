@@ -1282,54 +1282,26 @@ export async function listResources(subscribedUris = []) {
     };
 
     if (hasLive) {
-      // Enrich resource descriptors with live CAD state
       switch (r.uri) {
         case 'atlisp://cad/info':
           entry.description = `CAD 连接信息 (${snapshot.platform || '未知平台'}${snapshot.dwgName ? ', ' + snapshot.dwgName : ''})`;
-          entry.annotations = {
-            platform: snapshot.platform,
-            dwgName: snapshot.dwgName,
-            cadConnected: true,
-          };
           break;
-
         case 'atlisp://dwg/entities':
           entry.description = `图元列表。${snapshot.entityCount} 个实体，${snapshot.layerCount} 个图层。支持 ?type=LINE&layer=0&bbox=0,0,100,100`;
-          entry.size = snapshot.entityCount;
-          entry.annotations = {
-            entityCount: snapshot.entityCount,
-            layerCount: snapshot.layerCount,
-          };
           break;
-
         case 'atlisp://dwg/name':
           entry.description = `当前 DWG 文件名: ${snapshot.dwgName || '(未命名)'}`;
-          entry.annotations = { name: snapshot.dwgName };
           break;
-
         case 'atlisp://dwg/path':
-          entry.description = snapshot.dwgPath
-            ? `文件完整路径: ${snapshot.dwgPath}`
-            : '文件完整路径';
-          entry.annotations = { path: snapshot.dwgPath };
+          entry.description = snapshot.dwgPath ? `文件完整路径: ${snapshot.dwgPath}` : '文件完整路径';
           break;
-
         case 'atlisp://dwg/tbl':
           entry.description = `CAD 表数据 (${snapshot.layerCount} 个图层)。支持路径方式 atlisp://dwg/tbl/layer`;
-          entry.annotations = { layerCount: snapshot.layerCount };
           break;
-
         case 'atlisp://dwg/context':
           entry.description = `当前图纸上下文: ${snapshot.dwgName || '(未命名)'}，${snapshot.entityCount} 实体，${snapshot.layerCount} 图层`;
-          entry.annotations = {
-            dwgName: snapshot.dwgName,
-            entityCount: snapshot.entityCount,
-            layerCount: snapshot.layerCount,
-          };
           break;
-
-        default:
-          break;
+        default: break;
       }
     }
 
