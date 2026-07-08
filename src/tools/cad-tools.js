@@ -74,6 +74,6 @@ export const tools = [
         description: '获取完整系统诊断信息：MCP 状态、CAD 连接、Lisp 执行、包列表',
         inputSchema: { type: 'object', properties: {} }
     },
-{ name: 'get_system_variable', description: '获取 CAD 系统变量值', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '系统变量名，使用 * 列出所有' } }, required: ['name'] } },
+{ name: 'get_system_variable', description: '获取 CAD 系统变量值。输出字符串形式的值。使用 * 可列出所有系统变量', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '系统变量名，使用 * 列出所有' } }, required: ['name'] } },
 { name: 'set_system_variable', description: '设置 CAD 系统变量值', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '系统变量名' }, value: { type: 'string', description: '变量值' } }, required: ['name', 'value'] } }
 ];

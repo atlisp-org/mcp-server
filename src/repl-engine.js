@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { cad } from './cad.js';
 import { log, error as logError } from './logger.js';
+import { analyzeLispCode } from './lint-analyzer.js';
 
 const sessions = new Map();
 const MAX_SESSIONS = 50;
@@ -45,6 +46,10 @@ export class ReplSession {
   }
 
   async execute(code) {
+    const analysis = analyzeLispCode(code);
+    if (!analysis.valid) {
+      throw new Error(`代码存在安全问题:\n${analysis.errors.map(e => `  L${e.line}: [${e.rule}] ${e.message}`).join('\n')}`);
+    }
     const rawResult = await cad.sendCommandWithResult(code);
     const entry = {
       code,

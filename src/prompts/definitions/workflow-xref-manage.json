@@ -1,0 +1,28 @@
+{
+  "name": "workflow-xref-manage",
+  "description": "外部参照管理流程：附着 → 管理 → 拆离/绑定。用于协作设计中的参照管理",
+  "arguments": [
+    { "name": "action", "description": "步骤: attach/manage/detach/bind", "required": true, "default": "attach" },
+    { "name": "path", "description": "DWG 文件路径", "required": false },
+    { "name": "name", "description": "外部参照名称", "required": false },
+    { "name": "insertPoint", "description": "插入点", "required": false }
+  ],
+  "templates": {
+    "attach": {
+      "code": "",
+      "description": "1. 调用 attach_xref({ path, point: insertPoint, scale: 1, overlay: false }) 附着参照\n2. overlay: true 为覆盖型，false 为附着型"
+    },
+    "manage": {
+      "code": "",
+      "description": "1. 调用 list_xrefs() 查看所有外部参照\n2. 调用 path_xref({ name, newPath }）修改参照路径\n3. 调用 reload_xref({ name }) 重载\n4. 调用 unload_xref({ name }) 卸载"
+    },
+    "detach": {
+      "code": "",
+      "description": "1. 调用 detach_xref({ name }) 拆离参照\n2. 或 clip_xref({ name, points }) 裁剪参照显示范围"
+    },
+    "bind": {
+      "code": "",
+      "description": "1. 调用 bind_xref({ name, bindType: 'bind' }）绑定参照\n2. bindType: 'bind' 保留命名空间，'insert' 直接插入"
+    }
+  }
+}

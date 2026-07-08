@@ -9,9 +9,14 @@ import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
 import { tools } from './tools/index.js';
 import { mcpContext } from './mcp-server-state.js';
-import { executePipeline, savePipeline, listPipelines, loadPipeline, deletePipeline } from './pipeline-engine.js';
+
 import { registerWatch, removeWatch, listWatches, waitForWatch, createAndWait } from './trigger-engine.js';
 import { validateLispCode, addToAllowlist, clearSessionAllowlist } from './lisp-sandbox.js';
+import { analyzeLispCode } from './lint-analyzer.js';
+import { formatCode } from '@atlisp/lint/dist/formatter.js';
+import { lintProject } from '@atlisp/lint/dist/project.js';
+import { RULES } from '@atlisp/lint/dist/rules.js';
+
 import { executeInSession, getHistory, listSessions, closeSession } from './repl-engine.js';
 import { registerWebhook, removeWebhook, listWebhooks, getWebhookLog } from './webhook-engine.js';
 import { queryAuditLog, getAuditStats } from './audit-log.js';
@@ -391,45 +396,16 @@ export const TOOL_HANDLERS = {
     draw_spline: lazy('draw_spline', (a) => a.points),
     draw_point: lazy('draw_point', (a) => a.point),
     draw_hatch: lazy('draw_hatch', (a) => [a.points, a.pattern]),
+    draw_helix: lazy('draw_helix', (a) => [a.center, a.topRadius, a.bottomRadius, a.height, a.turns]),
+    draw_donut: lazy('draw_donut', (a) => [a.center, a.innerRadius, a.outerRadius]),
+    draw_2d_solid: lazy('draw_2d_solid', (a) => [a.p1, a.p2, a.p3, a.p4]),
+    draw_xline: lazy('draw_xline', (a) => [a.point, a.direction]),
+    draw_ray: lazy('draw_ray', (a) => [a.point, a.direction]),
+    draw_leader: lazy('draw_leader', (a) => [a.points, a.annotation]),
+    draw_table: lazy('draw_table', (a) => [a.insertionPoint, a.rows, a.columns, a.rowHeight, a.colWidth]),
 
-    // === Pipeline ===
+    // === Batch Transaction ===
     batch_transaction:      lazy('batch_transaction'),
-    pipeline_execute: async (a) => {
-        if (!a.steps || !Array.isArray(a.steps) || a.steps.length === 0) {
-            return { content: [{ type: 'text', text: 'pipeline_execute 需要 steps 数组' }], isError: true };
-        }
-        const result = await executePipeline(a.steps, {});
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-    pipeline_save: async (a) => {
-        if (!a.name || !a.steps) {
-            return { content: [{ type: 'text', text: 'pipeline_save 需要 name 和 steps' }], isError: true };
-        }
-        await savePipeline(a.name, a.steps);
-        return { content: [{ type: 'text', text: `管道 "${a.name}" 已保存` }] };
-    },
-    pipeline_list: async () => {
-        const pipelines = listPipelines();
-        return { content: [{ type: 'text', text: JSON.stringify(pipelines, null, 2) }] };
-    },
-    pipeline_run: async (a) => {
-        if (!a.name) {
-            return { content: [{ type: 'text', text: 'pipeline_run 需要 name' }], isError: true };
-        }
-        const pipeline = loadPipeline(a.name);
-        if (!pipeline) {
-            return { content: [{ type: 'text', text: `管道 "${a.name}" 未找到` }], isError: true };
-        }
-        const result = await executePipeline(pipeline.steps, {});
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
-    pipeline_delete: async (a) => {
-        if (!a.name) {
-            return { content: [{ type: 'text', text: 'pipeline_delete 需要 name' }], isError: true };
-        }
-        const ok = deletePipeline(a.name);
-        return { content: [{ type: 'text', text: ok ? `管道 "${a.name}" 已删除` : `管道 "${a.name}" 未找到` }] };
-    },
 
     // === Watch / Trigger ===
     watch_register: (a) => {
@@ -524,6 +500,37 @@ export const TOOL_HANDLERS = {
     import_external_data: lazy('import_external_data', (a) => a),
     export_to_external:  lazy('export_to_external', (a) => a),
     list_data_sources:   lazy('list_data_sources'),
+
+    // === Lint & Analysis ===
+    analyze_lisp_code: (a) => {
+        const result = analyzeLispCode(a.code, { lintConfig: a.config });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+    format_lisp_code: (a) => {
+        try {
+            const formatted = formatCode(a.code, { tabWidth: a.tabWidth || 2 });
+            return { content: [{ type: 'text', text: formatted }] };
+        } catch (e) {
+            return { content: [{ type: 'text', text: `格式化失败: ${e.message}` }], isError: true };
+        }
+    },
+    list_lint_rules: () => {
+        try {
+            const list = RULES.map(r => ({ rule: r.name, severity: r.severity || 'warn', description: r.description || '', fixable: !!r.fix }));
+            return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] };
+        } catch (e) {
+            return { content: [{ type: 'text', text: `获取规则列表失败: ${e.message}` }], isError: true };
+        }
+    },
+    lint_project: async (a) => {
+        if (!a.directory) return { content: [{ type: 'text', text: '需要 directory 参数' }], isError: true };
+        try {
+            const results = await lintProject(a.directory, a.config || {});
+            return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+        } catch (e) {
+            return { content: [{ type: 'text', text: `项目分析失败: ${e.message}` }], isError: true };
+        }
+    },
 
     // === Sandbox (Security) ===
     sandbox_validate: (a) => {

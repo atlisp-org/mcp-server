@@ -90,7 +90,7 @@ describe('resource-handlers', () => {
     });
 
     it('contains all expected resources', () => {
-      expect(RESOURCES).toHaveLength(14);
+      expect(RESOURCES).toHaveLength(16);
       const uris = RESOURCES.map(r => r.uri);
       expect(uris).toContain('atlisp://cad/info');
       expect(uris).toContain('atlisp://dwg/entities');
@@ -106,6 +106,8 @@ describe('resource-handlers', () => {
       expect(uris).toContain('atlisp://standards/drafting');
       expect(uris).toContain('atlisp://standards/coding');
       expect(uris).toContain('atlisp://cad/events');
+      expect(uris).toContain('atlisp://dwg/context');
+      expect(uris).toContain('atlisp://tools/relationships');
     });
   });
 

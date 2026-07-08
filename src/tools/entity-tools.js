@@ -36,11 +36,11 @@ export const tools = [
     },
 {
         name: 'select_entities',
-        description: '按条件选择实体，返回句柄列表',
+        description: '按条件选择实体，返回句柄列表。输出: string[] 句柄数组。后续可将 handle 传给 batch_delete/batch_move/batch_set_layer 等批量操作工具',
         inputSchema: {
             type: 'object',
             properties: {
-                filter: { type: 'object', description: '过滤条件: type, layer' }
+                filter: { type: 'object', description: '过滤条件: { type: "LINE", layer: "0" }。type 可选 LINE/CIRCLE/TEXT/ARC/etc，layer 为图层名' }
             }
         }
     },

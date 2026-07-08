@@ -1,6 +1,7 @@
 import { cad } from '../cad.js';
 import { log } from '../logger.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
+import { analyzeLispCode } from '../lint-analyzer.js';
 
 export async function connectCad(platform = null) {
     log(`connect_cad called${platform ? ` (target: ${platform})` : ''}, cad.connected before: ${cad.connected}`);
@@ -23,6 +24,13 @@ export async function connectCad(platform = null) {
 export const evalLisp = withCadConnection(async (code, withResult = false, encoding = null) => {
     const trimmed = (code || '').trim();
     if (!trimmed) return mcpSuccess('命令为空，未发送');
+
+    const analysis = analyzeLispCode(trimmed);
+    if (!analysis.valid) {
+        const detail = analysis.errors.map(e => `  L${e.line}: [${e.rule}] ${e.message}`).join('\n');
+        return mcpError(`代码存在安全问题:\n${detail}`);
+    }
+
     if (withResult) {
         const result = await cad.sendCommandWithResult(trimmed, encoding);
         if (result !== null) {
@@ -42,6 +50,13 @@ export const getCadInfo = withCadConnection(async () => {
 export const atCommand = withCadConnection(async (command) => {
     const trimmed = (command || '').trim();
     if (!trimmed) return mcpSuccess('命令为空，未发送');
+
+    const analysis = analyzeLispCode(trimmed);
+    if (!analysis.valid) {
+        const detail = analysis.errors.map(e => `  L${e.line}: [${e.rule}] ${e.message}`).join('\n');
+        return mcpError(`代码存在安全问题:\n${detail}`);
+    }
+
     await cad.sendCommand(trimmed + '\n');
     return mcpSuccess('已发送命令');
 });

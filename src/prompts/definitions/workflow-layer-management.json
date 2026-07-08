@@ -1,0 +1,38 @@
+{
+  "name": "workflow-layer-management",
+  "description": "图层全套操作：查看、创建、修改属性、隔离、合并、清理。端到端图层管理",
+  "arguments": [
+    { "name": "action", "description": "操作类型: list/create/set/isolate/merge/purge", "required": true, "default": "list" },
+    { "name": "layerName", "description": "图层名", "required": false },
+    { "name": "newName", "description": "新图层名（rename 需要用）", "required": false },
+    { "name": "color", "description": "颜色号（1-255）", "required": false },
+    { "name": "sourceLayer", "description": "源图层名（merge 需要）", "required": false },
+    { "name": "targetLayer", "description": "目标图层名", "required": false }
+  ],
+  "templates": {
+    "list": {
+      "code": "",
+      "description": "使用 atlisp://dwg/tbl/layer 资源获取所有图层信息，或调用 list_tools_by_category({ category: '图层' }) 查看图层相关工具"
+    },
+    "create": {
+      "code": "(layer:make \"{{layerName}}\" {{color}} \"Continuous\" 0)",
+      "description": "创建图层 {{layerName}}\n1. 调用 create_layer({ name: layerName, color, linetype })\n2. 调用 set_current_layer({ name: layerName }）设为当前"
+    },
+    "set": {
+      "code": "",
+      "description": "修改图层属性:\n- set_layer({ name: layerName, property: 'color', value: color })\n- set_layer({ name: layerName, property: 'freeze', value: '1' })\n- set_layer({ name: layerName, property: 'lock', value: '1' })"
+    },
+    "isolate": {
+      "code": "",
+      "description": "1. 调用 layer_isolate({ name: layerName }）隔离图层（关闭其他）\n2. 操作完成后调用 layer_unisolate() 恢复"
+    },
+    "merge": {
+      "code": "",
+      "description": "1. 调用 layer_merge({ sourceName: sourceLayer, targetName: targetLayer }）\n2. 源图层所有实体移到目标图层，源图层被删除"
+    },
+    "purge": {
+      "code": "",
+      "description": "1. 调用 purge_layers({ namePattern: '*TEMP*' }）清理未使用图层\n2. 或调用 purge_all() 清理所有未使用项"
+    }
+  }
+}

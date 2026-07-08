@@ -496,8 +496,6 @@ async function waitForIdle(platform) {
   return false;
 }
 
-export { checkParens } from './lisp-security.js';
-
 async function connectToPlatform(targetPlatform) {
   return new Promise((resolve, reject) => {
     cadConnectByName(targetPlatform, (e, r) => {

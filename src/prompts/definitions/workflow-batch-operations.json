@@ -1,0 +1,24 @@
+{
+  "name": "workflow-batch-operations",
+  "description": "批量操作工作流：选择实体 → 批量修改 → 保存。推荐用于大量实体的统一修改",
+  "arguments": [
+    { "name": "action", "description": "步骤: select/modify/save", "required": true, "default": "modify" },
+    { "name": "type", "description": "实体类型过滤（如 LINE, CIRCLE, TEXT）", "required": false },
+    { "name": "layer", "description": "图层过滤", "required": false },
+    { "name": "operation", "description": "批量操作: move/copy/delete/set-layer/set-color/rotate/scale/mirror", "required": false, "default": "set-layer" }
+  ],
+  "templates": {
+    "select": {
+      "code": "",
+      "description": "1. 调用 select_entities({ filter: { type, layer } }) 选择实体\n2. 获取返回的 handle 列表\n3. 或使用 stream_entities 先查看有哪些实体"
+    },
+    "modify": {
+      "code": "",
+      "description": "根据 operation 选择:\n- move: batch_move({ handles, dx, dy })\n- copy: batch_copy({ handles, dx, dy })\n- delete: batch_delete({ handles })\n- set-layer: batch_set_layer({ handles, layerName })\n- set-color: batch_set_color({ handles, color })\n- rotate: batch_rotate({ handles, angle, basePoint })\n- scale: batch_scale({ handles, scaleFactor, basePoint })\n- mirror: batch_mirror({ handles, startPoint, endPoint })"
+    },
+    "save": {
+      "code": "",
+      "description": "1. 调用 save_dwg 保存修改\n2. 如需另存为，传入 filePath 参数"
+    }
+  }
+}

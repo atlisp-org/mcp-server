@@ -71,6 +71,48 @@ npm ci → npm run build → npm test     # Node 18/20
 npx eslint src/ --ext .js             # lint (continue-on-error)
 ```
 
+## Lint 代码分析
+
+使用 `@atlisp/parser` + `@atlisp/lint` 对 AutoLISP 代码进行结构化分析。
+
+### 分析模块
+
+`src/lint-analyzer.js` 提供统一分析入口：
+- **安全层**：通过 `@atlisp/lint` 的 `runChecks()` 执行 70+ 检查规则（括号、参数数量、危险函数、命名约定、未使用变量）
+- **质量层**：同上，集成于同一次调用
+
+### 集成点
+
+| 位置 | 行为 |
+|------|------|
+| `eval_lisp` / `eval_lisp_with_result` 预检 | error → 阻止执行 |
+| `at_command` 预检 | error → 阻止执行 |
+| `analyze_lisp_code` 工具 | 独立调用分析，返回 JSON |
+| `format_lisp_code` 工具 | 格式化 AutoLISP 代码 |
+| `list_lint_rules` 工具 | 列出所有可用规则 |
+| `lint_project` 工具 | 批量分析目录中的文件 |
+
+### CLI 参数
+
+| 参数 | 作用 |
+|------|------|
+| `--lint-preset <preset>` | 选择预设: `recommended`/`strict`/`relaxed` |
+| `--lint-config <path>` | 指定 `atlisp-lint.json` 路径 |
+| `--lint-level <level>` | `error`/`warn`/`off` |
+| `--no-lint` / `--lint-off` | 跳过 lint 预检查 |
+
+### 常用规则
+
+| 规则名 | 默认级别 | 说明 |
+|--------|---------|------|
+| `parens` | error | 括号平衡 |
+| `quit_exit` | error | quit/exit 调用 |
+| `startapp` | error | 启动外部程序 |
+| `command_shell` | error | (command "shell" ...) |
+| `shadow_builtin` | error | 覆盖内建函数 |
+| `extra_parens` | error | 多余括号 |
+| `builtin_arg_count` | error | 内建函数参数数量 |
+
 ## 文件结构
 
 | 文件 | 职责 |
@@ -85,12 +127,14 @@ npx eslint src/ --ext .js             # lint (continue-on-error)
 | `src/handler-loader.js` | 懒加载：从 `handlers/` 目录自动发现 `*-handlers.js` 模块 |
 | `src/config.js` | 配置管理：三层合并、Zod 校验、热重载 |
 | `src/routes.js` | HTTP 路由：中间件链（auth/rate-limit/CORS）、MCP/SSE/调试面板 |
-| `src/tools/index.js` | 工具 Schema 聚合（38 个文件合并）及 readOnlyHint/destructiveHint 注解 |
+| `src/tools/index.js` | 工具 Schema 聚合（39 个文件合并）及 readOnlyHint/destructiveHint 注解 |
 | `src/handler-utils.js` | 工具函数：`validateFilePath`、`escapeLispString`、`parseLispList`、`ensureCadConnected` |
 | `src/errors.js` | 错误定义：`MCPError`、`createError`、10 个预定义错误码 |
 | `src/streaming.js` | 分页流式读取（`streamEntitiesByType`/`streamTextContent`/`streamBlockRefs`） |
+| `src/lint-analyzer.js` | Lint 分析：整合 `@atlisp/parser` + `@atlisp/lint`，提供 `analyzeLispCode()` |
 | `src/pipeline-engine.js` | 管道引擎：多步工具链编排，支持 `$ref:stepName.property` |
 | `src/repl-engine.js` | REPL 引擎：交互式 Lisp 会话，自动追踪 setq 变量 |
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
+| `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |

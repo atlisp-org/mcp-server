@@ -1,0 +1,32 @@
+{
+  "name": "workflow-block-manage",
+  "description": "块操作流程：列出块定义 → 查询块参照 → 获取/修改属性 → 插入/炸开块",
+  "arguments": [
+    { "name": "action", "description": "步骤: list/query/attr/insert/explode", "required": true, "default": "list" },
+    { "name": "blockName", "description": "块名称", "required": false },
+    { "name": "blockHandle", "description": "块参照句柄（attr/explode 时需要）", "required": false },
+    { "name": "insertPoint", "description": "插入点（insert 时需要）", "required": false }
+  ],
+  "templates": {
+    "list": {
+      "code": "",
+      "description": "1. 调用 get_blocks() 获取所有块定义\n2. 调用 stream_block_refs({ blockName }) 查看指定块的参照\n3. 或读取 atlisp://dwg/block-refs 资源"
+    },
+    "query": {
+      "code": "",
+      "description": "1. 调用 get_dynamic_block_properties({ blockHandle }）获取动态块属性\n2. 调用 get_block_parameters({ blockHandle }）获取块参数"
+    },
+    "attr": {
+      "code": "",
+      "description": "1. 调用 get_block_attributes({ blockHandle }）获取属性值\n2. 调用 set_block_attribute({ blockHandle, tag, value }）修改属性\n3. 批量操作: batch_get_block_attributes / batch_set_block_attributes"
+    },
+    "insert": {
+      "code": "(command \"_.INSERT\" \"{{blockName}}\" \"{{insertPoint}}\" 1 1 0)",
+      "description": "1. 调用 insert_block({ blockName, point: insertPoint, scale: 1, rotation: 0 }) 插入块"
+    },
+    "explode": {
+      "code": "",
+      "description": "1. 调用 explode_block({ handle: blockHandle }) 炸开块参照\n2. 炸开后可使用 select_last() 获取新生成的实体"
+    }
+  }
+}

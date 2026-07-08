@@ -34,6 +34,10 @@ const envSchema = z.object({
     LLM_MAX_TOKENS: z.string().optional().default('4096'),
     LLM_TEMPERATURE: z.string().optional().default('0.7'),
     WORKER_POOL_SIZE: z.string().optional().default('2'),
+    LINT_PRESET: z.string().optional().default(''),
+    LINT_CONFIG_PATH: z.string().optional().default(''),
+    LINT_LEVEL: z.string().optional().default(''),
+    NO_LINT: z.string().optional().default(''),
 });
 
 const configSchema = z.object({
@@ -73,6 +77,10 @@ const configSchema = z.object({
     llmTemperature: z.number().optional(),
     maxPoolSize: z.number().optional(),
     workerPoolSize: z.number().optional(),
+    lintPreset: z.string().optional(),
+    lintConfigPath: z.string().optional(),
+    lintLevel: z.string().optional(),
+    noLint: z.boolean().optional(),
 });
 
 function parseArgs() {
@@ -103,6 +111,17 @@ function parseArgs() {
             i++;
         } else if (args[i] === '--debug') {
             result.debug = true;
+        } else if (args[i] === '--lint-preset' && args[i + 1]) {
+            result.lintPreset = args[i + 1];
+            i++;
+        } else if (args[i] === '--lint-config' && args[i + 1]) {
+            result.lintConfigPath = args[i + 1];
+            i++;
+        } else if (args[i] === '--lint-level' && args[i + 1]) {
+            result.lintLevel = args[i + 1];
+            i++;
+        } else if (args[i] === '--no-lint' || args[i] === '--lint-off') {
+            result.noLint = true;
         }
     }
     return result;
@@ -174,7 +193,16 @@ const config = {
     llmTemperature: fileConfig?.llmTemperature || parseFloat(env.LLM_TEMPERATURE),
     maxPoolSize: fileConfig?.maxPoolSize || 3,
     workerPoolSize: fileConfig?.workerPoolSize || parseInt(env.WORKER_POOL_SIZE, 10),
+    lintPreset: fileConfig?.lintPreset || cliArgs.lintPreset || env.LINT_PRESET || undefined,
+    lintConfigPath: fileConfig?.lintConfigPath || cliArgs.lintConfigPath || env.LINT_CONFIG_PATH || undefined,
+    lintLevel: fileConfig?.lintLevel || cliArgs.lintLevel || env.LINT_LEVEL || undefined,
+    noLint: fileConfig?.noLint ?? cliArgs.noLint ?? (env.NO_LINT === 'true'),
 };
+
+if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;
+if (config.lintPreset) process.env.LINT_PRESET = config.lintPreset;
+if (config.lintLevel) process.env.LINT_LEVEL = config.lintLevel;
+if (config.noLint) process.env.NO_LINT = 'true';
 
 export function validateConfig() {
     const errors = [];

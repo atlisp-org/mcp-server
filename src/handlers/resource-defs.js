@@ -20,6 +20,8 @@ export const RESOURCES = [
   { uri: 'atlisp://platforms', name: 'Platforms', description: '支持的平台信息', mimeType: 'application/json', subscribable: false },
   { uri: 'atlisp://standards/drafting', name: 'Drafting Standards', description: 'CAD 制图规范', mimeType: 'application/json', subscribable: false },
   { uri: 'atlisp://standards/coding', name: 'Coding Standards', description: '@lisp 编码规范', mimeType: 'application/json', subscribable: false },
+  { uri: 'atlisp://dwg/context', name: 'DWG Context', description: '当前图纸上下文摘要。返回文档名/路径/布局/UCS/图层列表/实体统计/系统变量组合信息，帮助快速了解当前 CAD 状态', mimeType: 'application/json', subscribable: true },
+  { uri: 'atlisp://tools/relationships', name: 'Tool Relationships', description: '工具依赖关系图。描述工具间的调用链关系（如 select_entities → batch_delete），帮助理解工具组合使用方式', mimeType: 'application/json', subscribable: false },
 ];
 
 export const TBL_INFO = {

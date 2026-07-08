@@ -1,0 +1,28 @@
+{
+  "name": "workflow-plot-publish",
+  "description": "打印发布流程：创建页面设置 → 分配布局 → 批量打印/发布 PDF",
+  "arguments": [
+    { "name": "action", "description": "步骤: setup/assign/publish/plot", "required": true, "default": "publish" },
+    { "name": "pageSetupName", "description": "页面设置名称", "required": false, "default": "A4-PDF" },
+    { "name": "layout", "description": "布局名称", "required": false },
+    { "name": "outputDir", "description": "输出目录", "required": false }
+  ],
+  "templates": {
+    "setup": {
+      "code": "",
+      "description": "1. 调用 create_page_setup({ name: pageSetupName, printer: 'DWG To PDF.pc3', paperSize: 'A4' }）\n2. 或调用 list_page_setups() 查看已有的页面设置"
+    },
+    "assign": {
+      "code": "",
+      "description": "1. 调用 list_layouts() 查看所有布局\n2. 调用 set_page_setup({ layout, pageSetupName }）分配页面设置"
+    },
+    "publish": {
+      "code": "",
+      "description": "1. 调用 list_layouts() 获取所有布局列表\n2. 调用 publish_layouts({ layouts: ['布局1','布局2'], outputDir, merge: true }）批量发布"
+    },
+    "plot": {
+      "code": "",
+      "description": "单张打印:\n1. plot_to_pdf({ outputPath, layout, paperSize: 'A4' })\n2. 或 plot_to_printer({ printerName: '打印机名', layout })"
+    }
+  }
+}

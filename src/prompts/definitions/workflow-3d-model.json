@@ -1,0 +1,24 @@
+{
+  "name": "workflow-3d-model",
+  "description": "3D 建模流程：创建基本体 → 布尔运算 → 导出 STL。用于 3D 打印或模型展示",
+  "arguments": [
+    { "name": "action", "description": "步骤: create/boolean/export", "required": true, "default": "create" },
+    { "name": "shape", "description": "基本体类型: box/sphere/cylinder/cone/torus/wedge", "required": false },
+    { "name": "center", "description": "中心点坐标", "required": false },
+    { "name": "operation", "description": "布尔运算: union/subtract/intersect", "required": false }
+  ],
+  "templates": {
+    "create": {
+      "code": "",
+      "description": "创建基本体:\n- create_box({ center, length, width, height })\n- create_sphere({ center, radius })\n- create_cylinder({ center, radius, height })\n- create_cone({ center, radius, height })\n- create_torus({ center, majorRadius, minorRadius })"
+    },
+    "boolean": {
+      "code": "",
+      "description": "1. 用 select_entities 选择要操作的实体\n2. boolean_union({ handles }） — 并集\n3. boolean_subtract({ handles, subtractFromHandles }） — 差集\n4. boolean_intersect({ handles }） — 交集"
+    },
+    "export": {
+      "code": "",
+      "description": "1. 调用 export_stl({ outputPath, handle }）导出为 STL 文件\n2. 不传 handle 则导出所有实体"
+    }
+  }
+}

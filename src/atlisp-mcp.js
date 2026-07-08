@@ -59,6 +59,11 @@ Options:
    --ssl-key <path>     SSL key file path (enables HTTPS)
    --ssl-cert <path>    SSL certificate file path
    --debug               Enable debug mode
+   --lint-preset <type>  Lint preset: recommended, strict, or relaxed
+   --lint-config <path>  Path to atlisp-lint.json config file
+   --lint-level <level>  Lint level: error, warn, or off
+   --no-lint             Disable lint pre-check for eval_lisp
+   --lint-off            Same as --no-lint
 
 Environment Variables:
    TRANSPORT             Transport mode (http/stdio/ws)
@@ -107,6 +112,14 @@ For more info: https://atlisp.cn
             process.env.CONFIG_FILE = cliArgs[++i];
         } else if (arg === '--debug') {
             process.env.DEBUG = 'true';
+        } else if (arg === '--lint-preset' && cliArgs[i + 1]) {
+            process.env.LINT_PRESET = cliArgs[++i];
+        } else if (arg === '--lint-config' && cliArgs[i + 1]) {
+            process.env.LINT_CONFIG_PATH = cliArgs[++i];
+        } else if (arg === '--lint-level' && cliArgs[i + 1]) {
+            process.env.LINT_LEVEL = cliArgs[++i];
+        } else if (arg === '--no-lint' || arg === '--lint-off') {
+            process.env.NO_LINT = 'true';
         }
     }
 }

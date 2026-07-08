@@ -1,0 +1,29 @@
+{
+  "name": "workflow-sheetset",
+  "description": "图纸集操作流程：创建图纸集 → 添加图纸 → 发布/归档",
+  "arguments": [
+    { "name": "action", "description": "步骤: create/add/publish/archive", "required": true, "default": "create" },
+    { "name": "sheetSetName", "description": "图纸集名称", "required": false },
+    { "name": "sheetName", "description": "图纸名称", "required": false },
+    { "name": "layoutName", "description": "布局名称", "required": false },
+    { "name": "outputDir", "description": "输出目录", "required": false }
+  ],
+  "templates": {
+    "create": {
+      "code": "",
+      "description": "1. 调用 create_sheet_set({ name: sheetSetName, description: '...' }）创建图纸集\n2. 或调用 open_sheet_set({ filePath }) 打开已有 .dst 文件"
+    },
+    "add": {
+      "code": "",
+      "description": "1. 调用 add_sheet({ sheetSetName, sheetName, layoutName }）添加图纸\n2. 调用 add_sheet 添加更多图纸\n3. 创建子集: create_subset({ sheetSetName, subsetName }）"
+    },
+    "publish": {
+      "code": "",
+      "description": "1. 调用 list_sheets({ sheetSetName }）查看图纸列表\n2. 调用 publish_sheet_set({ sheetSetName, outputDir, format: 'PDF' }）发布"
+    },
+    "archive": {
+      "code": "",
+      "description": "1. 调用 create_sheet_set_archive({ sheetSetName, archivePath }）归档\n2. 或调用 sheet_set_transmit({ sheetSetName }）eTransmit 打包"
+    }
+  }
+}

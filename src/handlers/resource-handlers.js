@@ -1047,6 +1047,90 @@ async function getCadEvents(params) {
  * Fetches a lightweight snapshot of current CAD state.
  * Returns a flat object with entity count, layer names, DWG info, etc.
  */
+async function getDwgContext() {
+  const snapshot = await getCadSnapshot();
+  if (!snapshot || !snapshot.cadConnected) {
+    return { connected: false, message: 'CAD 未连接' };
+  }
+  try {
+    const code = `(progn
+  (vl-load-com)
+  (setq ctx nil)
+  (setq ctx (cons (cons "layout" (getvar "ctab")) ctx))
+  (setq ctx (cons (cons "ucs" (getvar "ucsname")) ctx))
+  (setq ctx (cons (cons "insunits" (getvar "insunits")) ctx))
+  (setq ctx (cons (cons "ltscale" (getvar "ltscale")) ctx))
+  (setq ctx (cons (cons "limmin" (vl-princ-to-string (getvar "limmin"))) ctx))
+  (setq ctx (cons (cons "limmax" (vl-princ-to-string (getvar "limmax"))) ctx))
+  (setq ctx (cons (cons "extmin" (vl-princ-to-string (getvar "extmin"))) ctx))
+  (setq ctx (cons (cons "extmax" (vl-princ-to-string (getvar "extmax"))) ctx))
+  (vl-prin1-to-string ctx))`;
+    const resultStr = await cad.sendCommandWithResult(code);
+    const parsed = parseLispRecursive(resultStr);
+    return {
+      connected: true,
+      docName: snapshot.dwgName,
+      docPath: snapshot.dwgPath,
+      platform: snapshot.platform,
+      entityCount: snapshot.entityCount,
+      layerCount: snapshot.layerCount,
+      layerNames: snapshot.layerNames,
+      extra: parsed && Array.isArray(parsed) ? Object.fromEntries(parsed) : {},
+    };
+  } catch {
+    return {
+      connected: true,
+      docName: snapshot.dwgName,
+      docPath: snapshot.dwgPath,
+      platform: snapshot.platform,
+      entityCount: snapshot.entityCount,
+      layerCount: snapshot.layerCount,
+      layerNames: snapshot.layerNames,
+    };
+  }
+}
+
+function getToolRelationships() {
+  return {
+    selection: {
+      tools: ['select_entities', 'select_all', 'select_last', 'select_by_color', 'find_entities_in_window', 'find_entities_near_point'],
+      next: ['batch_delete', 'batch_move', 'batch_copy', 'batch_set_layer', 'batch_set_color', 'batch_set_linetype', 'batch_rotate', 'batch_scale', 'batch_mirror', 'batch_explode', 'batch_match_properties'],
+    },
+    drawing: {
+      tools: ['draw_line', 'draw_circle', 'draw_arc', 'draw_rectangle', 'draw_polygon', 'draw_polyline', 'draw_spline', 'draw_text', 'draw_mtext', 'draw_ellipse'],
+      next: ['get_entity', 'set_entity', 'batch_match_properties', 'copy_entity', 'move_entity', 'rotate_entity', 'scale_entity'],
+    },
+    editing: {
+      tools: ['trim_entity', 'extend_entity', 'fillet', 'chamfer', 'break_entity', 'join_entities', 'stretch', 'offset_entity', 'mirror_entity'],
+      next: ['get_entity', 'set_entity'],
+    },
+    batch_ops: {
+      tools: ['batch_copy', 'batch_move', 'batch_delete', 'batch_set_layer', 'batch_set_color', 'batch_explode', 'batch_rotate', 'batch_scale'],
+      previous: ['select_entities', 'select_all'],
+      next: ['save_dwg'],
+    },
+    export: {
+      tools: ['export_pdf', 'export_dxf', 'export_dwf', 'export_svg', 'export_stl', 'export_bmp'],
+      previous: ['open_dwg', 'new_document', 'save_dwg'],
+      next: [],
+    },
+    layers: {
+      tools: ['create_layer', 'set_layer', 'layer_isolate', 'layer_freeze_all', 'layer_thaw_all', 'layer_lock_all', 'layer_unlock_all', 'layer_merge'],
+      next: ['set_current_layer', 'batch_set_layer'],
+    },
+    blocks: {
+      tools: ['get_blocks', 'insert_block', 'explode_block', 'get_block_attributes', 'set_block_attribute', 'get_dynamic_block_properties'],
+      previous: ['select_entities'],
+      next: ['save_dwg'],
+    },
+    analysis: {
+      tools: ['analyze_lisp_code', 'stream_entities', 'stream_text', 'stream_block_refs', 'get_entity_info', 'get_bounding_box', 'measure_distance', 'measure_area'],
+      previous: [],
+      next: [],
+    },
+  };
+}
+
 async function getCadSnapshot() {
   const cached = getCached('cad:snapshot');
   if (cached) return cached;
@@ -1235,6 +1319,15 @@ export async function listResources(subscribedUris = []) {
           entry.annotations = { layerCount: snapshot.layerCount };
           break;
 
+        case 'atlisp://dwg/context':
+          entry.description = `当前图纸上下文: ${snapshot.dwgName || '(未命名)'}，${snapshot.entityCount} 实体，${snapshot.layerCount} 图层`;
+          entry.annotations = {
+            dwgName: snapshot.dwgName,
+            entityCount: snapshot.entityCount,
+            layerCount: snapshot.layerCount,
+          };
+          break;
+
         default:
           break;
       }
@@ -1316,6 +1409,10 @@ export async function readResource(uri) {
       return getCodingStandards();
     case 'atlisp://cad/events':
       return await getCadEvents(params);
+    case 'atlisp://dwg/context':
+      return await getDwgContext();
+    case 'atlisp://tools/relationships':
+      return getToolRelationships();
     default:
       throw new Error(`资源不存在: ${uri}`);
   }

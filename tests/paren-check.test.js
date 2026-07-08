@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkParens } from '../src/cad-worker.js';
+import { checkParens } from '../src/lisp-security.js';
 
 describe('checkParens - 有效代码', () => {
   describe('空/无括号', () => {

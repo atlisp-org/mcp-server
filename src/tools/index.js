@@ -20,7 +20,7 @@ import { tools as xref_adv_tools } from './xref-adv-tools.js';
 import { tools as constraint_tools } from './constraint-tools.js';
 import { tools as parametric_tools } from './parametric-tools.js';
 import { tools as plot_adv_tools } from './plot-adv-tools.js';
-import { tools as pipeline_tools } from './pipeline-tools.js';
+
 import { tools as trigger_tools } from './trigger-tools.js';
 import { tools as repl_tools } from './repl-tools.js';
 import { tools as stream_tools } from './stream-tools.js';
@@ -38,6 +38,7 @@ import { tools as text_tools } from './text-tools.js';
 import { tools as skill_tools } from './skill-tools.js';
 import { tools as context_tools } from './context-tools.js';
 import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
+import { tools as lint_tools } from './lint-tools.js';
 
 const READ_ONLY_TOOLS = new Set([
   'get_cad_info', 'get_platform_info', 'get_system_status',
@@ -65,7 +66,7 @@ const READ_ONLY_TOOLS = new Set([
   'audit_log_query', 'audit_log_stats',
   'cad_pool_list', 'cad_pool_stats', 'cad_pool_health',
   'get_3d_solid_info',
-  'list_pipelines', 'list_watches', 'list_webhooks', 'webhook_log',
+  'list_watches', 'list_webhooks', 'webhook_log',
   'lisp_repl_list', 'lisp_repl_history',
   'agent_list_context', 'agent_get_context',
   'find_entities_near_point', 'find_entities_in_window',
@@ -74,9 +75,20 @@ const READ_ONLY_TOOLS = new Set([
   'find_text',
   'stream_entities', 'stream_text', 'stream_block_refs',
   'skill_search', 'skill_list_installed', 'skill_list_categories',
+  'analyze_lisp_code',
+  'format_lisp_code',
+  'list_lint_rules',
+  'lint_project',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
+]);
+
+const EXTRA_DESTRUCTIVE = new Set([
+  'overkill', 'batch_explode', 'explode_block', 'explode_text',
+  'boolean_union', 'boolean_subtract', 'boolean_intersect', 'slice_solid',
+  'batch_mirror', 'batch_rename', 'batch_offset', 'batch_rotate', 'batch_scale',
+  'batch_set_color', 'batch_set_linetype', 'stretch',
 ]);
 
 function addAnnotations(tool) {
@@ -86,7 +98,8 @@ function addAnnotations(tool) {
     ...(isDeprecated ? { deprecated: true, title: `${tool.name} (deprecated)` } : {}),
     annotations: {
       readOnlyHint: READ_ONLY_TOOLS.has(tool.name),
-      destructiveHint: tool.name.startsWith('delete_') || tool.name.startsWith('purge_') || tool.name === 'overkill',
+      destructiveHint: tool.name.startsWith('delete_') || tool.name.startsWith('purge_') ||
+        tool.name.startsWith('boolean_') || EXTRA_DESTRUCTIVE.has(tool.name),
       ...(isDeprecated ? { deprecatedReason: 'This tool has been superseded. Check documentation for alternatives.' } : {}),
     },
   };
@@ -116,7 +129,7 @@ export const tools = [
   ...constraint_tools,
   ...parametric_tools,
   ...plot_adv_tools,
-  ...pipeline_tools,
+
   ...trigger_tools,
   ...repl_tools,
   ...stream_tools,
@@ -128,6 +141,7 @@ export const tools = [
   ...draw_tools, ...edit_tools, ...viewport_tools, ...purge_tools, ...spatial_tools, ...text_tools, ...context_tools,
   ...batch_transaction_tools,
   ...skill_tools,
+  ...lint_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));

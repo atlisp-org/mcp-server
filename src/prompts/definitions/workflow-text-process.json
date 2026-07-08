@@ -1,0 +1,29 @@
+{
+  "name": "workflow-text-process",
+  "description": "文字处理流程：查找 → 替换 → 格式化。用于批量编辑图纸中的文字内容",
+  "arguments": [
+    { "name": "action", "description": "步骤: find/replace/format/convert", "required": true, "default": "find" },
+    { "name": "pattern", "description": "搜索文本模式（支持通配符）", "required": false },
+    { "name": "replacement", "description": "替换文本", "required": false },
+    { "name": "caseSensitive", "description": "是否区分大小写", "required": false, "default": "false" },
+    { "name": "handle", "description": "文字实体句柄", "required": false }
+  ],
+  "templates": {
+    "find": {
+      "code": "",
+      "description": "1. 调用 find_text({ pattern, caseSensitive }) 搜索文本\n2. 或读取 atlisp://dwg/text-content 获取所有文字内容"
+    },
+    "replace": {
+      "code": "",
+      "description": "1. 调用 replace_text({ pattern, replacement, caseSensitive }) 全文替换\n2. 如需精确控制，先用 find_text 找到句柄\n3. 再逐个调用 set_text_style_name 或 set_text_height 调整格式"
+    },
+    "format": {
+      "code": "",
+      "description": "1. 调用 set_text_height({ handle, height }) 调整文字高度\n2. 调用 set_text_style_name({ handle, styleName }) 修改文字样式\n3. 调用 justify_text({ handle, justification: 'MC' }) 修改对齐方式"
+    },
+    "convert": {
+      "code": "",
+      "description": "1. 调用 convert_text_to_mtext({ handles }）将单行文字转为多行文字\n2. 调用 explode_text({ handle }）将文字分解为线条"
+    }
+  }
+}

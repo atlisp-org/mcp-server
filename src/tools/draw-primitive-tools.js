@@ -146,5 +146,98 @@ export const tools = [
             },
             required: ['points']
         }
+    },
+  {
+    name: 'draw_helix',
+    description: '创建螺旋（Helix）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        center: { type: 'string', description: '中心点坐标，如 0,0,0' },
+        topRadius: { type: 'number', description: '顶部半径' },
+        bottomRadius: { type: 'number', description: '底部半径' },
+        height: { type: 'number', description: '高度' },
+        turns: { type: 'number', description: '圈数（默认 3）' }
+      },
+      required: ['center', 'topRadius', 'bottomRadius', 'height']
     }
+  },
+  {
+    name: 'draw_donut',
+    description: '绘制圆环',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        center: { type: 'string', description: '圆心坐标，如 50,50' },
+        innerRadius: { type: 'number', description: '内径' },
+        outerRadius: { type: 'number', description: '外径' }
+      },
+      required: ['center', 'innerRadius', 'outerRadius']
+    }
+  },
+  {
+    name: 'draw_2d_solid',
+    description: '创建 2D 填充实体（SOLID）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        p1: { type: 'string', description: '第一点坐标' },
+        p2: { type: 'string', description: '第二点坐标' },
+        p3: { type: 'string', description: '第三点坐标' },
+        p4: { type: 'string', description: '第四点坐标' }
+      },
+      required: ['p1', 'p2', 'p3', 'p4']
+    }
+  },
+  {
+    name: 'draw_xline',
+    description: '创建构造线（XLINE）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        point: { type: 'string', description: '经过点坐标' },
+        direction: { type: 'string', description: '方向向量，如 1,0,0' }
+      },
+      required: ['point', 'direction']
+    }
+  },
+  {
+    name: 'draw_ray',
+    description: '创建射线（RAY）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        point: { type: 'string', description: '起点坐标' },
+        direction: { type: 'string', description: '方向向量，如 1,0,0' }
+      },
+      required: ['point', 'direction']
+    }
+  },
+  {
+    name: 'draw_leader',
+    description: '创建引线标注',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        points: { type: 'string', description: '引线顶点坐标列表，如 0,0 10,0 20,0' },
+        annotation: { type: 'string', description: '注释文字（可选）' }
+      },
+      required: ['points']
+    }
+  },
+  {
+    name: 'draw_table',
+    description: '创建表格',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        insertionPoint: { type: 'string', description: '插入点坐标' },
+        rows: { type: 'integer', description: '行数' },
+        columns: { type: 'integer', description: '列数' },
+        rowHeight: { type: 'number', description: '行高（默认 10）' },
+        colWidth: { type: 'number', description: '列宽（默认 20）' }
+      },
+      required: ['insertionPoint', 'rows', 'columns']
+    }
+  }
 ];

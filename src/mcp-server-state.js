@@ -58,30 +58,30 @@ export function broadcastToAllSessions(uri) {
     }
 }
 
-function broadcast(method, ...args) {
-    for (const [sid, entry] of sessionServers) {
-        try {
-            entry.server[method](...args);
-        } catch (err) {
-            logError(`Failed to broadcast ${method} to session ${sid}: ${err.message}`, { sessionId: sid });
-        }
-    }
+function broadcast(server, method, ...args) {
+  try {
+    return server[method](...args);
+  } catch (err) {
+    logError(`Failed to broadcast ${method}: ${err.message}`);
+  }
 }
 
 export function broadcastToolListChanged() {
-    for (const [sid, entry] of sessionServers) {
-        entry.server.sendToolListChanged().catch(err => {
-            logError(`Failed to send tool list changed to session ${sid}: ${err.message}`, { sessionId: sid });
-        });
+    for (const [, entry] of sessionServers) {
+        broadcast(entry.server, 'sendToolListChanged');
     }
 }
 
 export function broadcastResourcesListChanged() {
-    broadcast('sendResourceListChanged');
+    for (const [, entry] of sessionServers) {
+        broadcast(entry.server, 'sendResourceListChanged');
+    }
 }
 
 export function broadcastPromptsListChanged() {
-    broadcast('sendPromptListChanged');
+    for (const [, entry] of sessionServers) {
+        broadcast(entry.server, 'sendPromptListChanged');
+    }
 }
 
 /**

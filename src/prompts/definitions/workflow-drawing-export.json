@@ -1,0 +1,23 @@
+{
+  "name": "workflow-drawing-export",
+  "description": "打开图纸 → 分析内容 → 导出为 PDF/DXF。端到端的图纸导出工作流",
+  "arguments": [
+    { "name": "action", "description": "步骤: open/analyze/export", "required": true, "default": "export" },
+    { "name": "filePath", "description": "DWG 文件路径（open 时需要）", "required": false },
+    { "name": "format", "description": "导出格式: pdf/dxf（export 时需要）", "required": false, "default": "pdf" }
+  ],
+  "templates": {
+    "open": {
+      "code": "",
+      "description": "1. 调用 open_dwg 打开文件\n2. 调用 get_cad_info 获取图纸信息\n3. 调用 stream_entities 获取实体概览"
+    },
+    "analyze": {
+      "code": "",
+      "description": "1. 调用 get_cad_info 获取 CAD 信息\n2. 调用 resource atlisp://dwg/context 获取图纸上下文\n3. 调用 stream_entities 查看实体列表\n4. 调用 get_bounding_box 了解图形范围"
+    },
+    "export": {
+      "code": "",
+      "description": "1. 先调用 get_cad_info 获取当前图纸名\n2. 调用 export_pdf（或 export_dxf）导出\n3. 如果需要所有布局，先调 list_layouts 获取布局列表\n4. 对每个布局调用 export_pdf"
+    }
+  }
+}

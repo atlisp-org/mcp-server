@@ -9,7 +9,6 @@ import {
     ListPromptsRequestSchema,
     GetPromptRequestSchema,
     CompleteRequestSchema,
-    SetLevelRequestSchema,
     CancelledNotificationSchema,
     RootsListChangedNotificationSchema,
     ProgressNotificationSchema,
@@ -29,6 +28,11 @@ import { tools } from './tools/index.js';
 
 const COMPLETIONS_CACHE_TTL = 300;
 const completionsCache = new Map(); // Map<refType, {values: string[], ts: number}>
+let clientRoots = [];
+
+export function getClientRoots() {
+    return clientRoots;
+}
 
 const RESOURCE_TEMPLATES = [
     {
@@ -153,9 +157,8 @@ export function createMcpServer(handlers = {}) {
             return { contents };
         } catch (e) {
             return {
-                contents: [],
+                contents: [{ uri, mimeType: 'text/plain', text: `错误: ${e.message}` }],
                 isError: true,
-                error: { code: -32603, message: e.message }
             };
         }
     });
@@ -213,7 +216,7 @@ export function createMcpServer(handlers = {}) {
                         }
                     }
                 }
-            } catch {}
+            } catch (e) { log(`Complete error: ${e.message}`); }
         } else if (ref?.type === 'ref/resource') {
             try {
                 const resources = await listResources([]);
@@ -225,7 +228,7 @@ export function createMcpServer(handlers = {}) {
                     if (t.name.toLowerCase().startsWith(prefix)) values.push(t.name);
                     if (t.uriTemplate.toLowerCase().startsWith(prefix)) values.push(t.uriTemplate);
                 }
-            } catch {}
+            } catch (e) { log(`Complete error: ${e.message}`); }
         } else if (ref?.type === 'layer') {
             const cached = completionsCache.get('layer');
             let layerItems = null;
@@ -240,9 +243,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             layerItems = JSON.parse(result);
                             completionsCache.set('layer', { values: layerItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (layerItems) {
                 for (const l of layerItems) {
@@ -263,9 +266,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             blockItems = JSON.parse(result);
                             completionsCache.set('block', { values: blockItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (blockItems) {
                 for (const b of blockItems) {
@@ -286,9 +289,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             ltypeItems = JSON.parse(result);
                             completionsCache.set('linetype', { values: ltypeItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (ltypeItems) {
                 for (const l of ltypeItems) {
@@ -309,9 +312,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             styleItems = JSON.parse(result);
                             completionsCache.set('textstyle', { values: styleItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (styleItems) {
                 for (const s of styleItems) {
@@ -332,9 +335,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             dimItems = JSON.parse(result);
                             completionsCache.set('dimstyle', { values: dimItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (dimItems) {
                 for (const s of dimItems) {
@@ -355,9 +358,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             ucsItems = JSON.parse(result);
                             completionsCache.set('ucs', { values: ucsItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (ucsItems) {
                 for (const s of ucsItems) {
@@ -378,9 +381,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             layoutItems = JSON.parse(result);
                             completionsCache.set('layout', { values: layoutItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (layoutItems) {
                 for (const s of layoutItems) {
@@ -401,9 +404,9 @@ export function createMcpServer(handlers = {}) {
                         try {
                             groupItems = JSON.parse(result);
                             completionsCache.set('group', { values: groupItems, ts: Date.now() });
-                        } catch {}
+                        } catch (e) { log(`Complete error: ${e.message}`); }
                     }
-                } catch {}
+                } catch (e) { log(`Complete error: ${e.message}`); }
             }
             if (groupItems) {
                 for (const s of groupItems) {
@@ -415,6 +418,21 @@ export function createMcpServer(handlers = {}) {
             for (const p of hatchPatterns) { if (p.toLowerCase().startsWith(prefix)) values.push(p); }
         } else if (ref?.type === 'tool') {
             for (const t of tools) { if (t.name.toLowerCase().startsWith(prefix)) values.push(t.name); }
+        } else if (ref?.type === 'ref/parameter') {
+            const toolDef = tools.find(t => t.name === ref.name);
+            if (toolDef?.inputSchema?.properties) {
+                const paramName = argument.name;
+                const paramDef = toolDef.inputSchema.properties[paramName];
+                if (paramDef?.enum) {
+                    for (const opt of paramDef.enum) {
+                        if (String(opt).toLowerCase().startsWith(prefix)) values.push(opt);
+                    }
+                }
+                if (paramDef?.type === 'string' && paramDef.description) {
+                    const hintWords = (paramDef.description || '').match(/[a-zA-Z\u4e00-\u9fff]+/g) || [];
+                    for (const w of hintWords) { if (w.toLowerCase().startsWith(prefix)) values.push(w); }
+                }
+            }
         }
         // Standard MCP ref types we don't support: return empty
 
@@ -436,10 +454,6 @@ export function createMcpServer(handlers = {}) {
         try { cad.sendCommand('(command "_.UCS" "")'); } catch (_) {}
     });
 
-    server.setNotificationHandler(RootsListChangedNotificationSchema, () => {
-        log('Client roots changed');
-    });
-
     server.setNotificationHandler(ProgressNotificationSchema, (notification) => {
         const { progressToken, progress, total, message } = notification.params;
         log(`Client progress: token=${progressToken} ${progress}/${total || '?'} ${message || ''}`);
@@ -457,10 +471,18 @@ export function createMcpServer(handlers = {}) {
         log('MCP client initialized, session ready');
         server.listRoots().then(roots => {
             if (roots?.length) {
+                clientRoots = roots;
                 log(`Client roots: ${roots.map(r => r.uri).join(', ')}`);
             }
         }).catch(() => {});
     };
+
+    server.setNotificationHandler(RootsListChangedNotificationSchema, () => {
+        log('Client roots changed');
+        server.listRoots().then(roots => {
+            clientRoots = roots || [];
+        }).catch(() => {});
+    });
 
     return server;
 }

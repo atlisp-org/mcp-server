@@ -1,6 +1,6 @@
 {
   "name": "@atlisp/mcp",
-  "version": "1.8.19",
+  "version": "1.8.20",
   "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
   "type": "module",
   "bin": {
@@ -18,7 +18,7 @@
     "start": "node src/atlisp-mcp.js",
     "build": "npm run build:main && npm run build:worker",
     "build:main": "esbuild src/atlisp-mcp.js --bundle --platform=node --target=node18 --format=esm --outdir=dist --external:edge-js --packages=external --banner:js=\"#!/usr/bin/env node\"",
-    "build:worker": "node -e \"const fs=require('fs');const path=require('path');for(const f of ['cad-worker.js','lisp-security.js','logger.js','config.js'])fs.copyFileSync('src/'+f,'dist/'+f);if(!fs.existsSync('dist/html'))fs.mkdirSync('dist/html');for(const f of fs.readdirSync('src/html'))fs.copyFileSync('src/html/'+f,'dist/html/'+f);if(!fs.existsSync('dist/handlers'))fs.mkdirSync('dist/handlers');for(const f of fs.readdirSync('src/handlers'))fs.copyFileSync('src/handlers/'+f,'dist/handlers/'+f)\"",
+    "build:worker": "node -e \"const fs=require('fs');const path=require('path');for(const f of ['cad-worker.js','lisp-security.js','logger.js','config.js'])fs.copyFileSync('src/'+f,'dist/'+f);if(!fs.existsSync('dist/html'))fs.mkdirSync('dist/html');for(const f of fs.readdirSync('src/html'))fs.copyFileSync('src/html/'+f,'dist/html/'+f);if(!fs.existsSync('dist/handlers'))fs.mkdirSync('dist/handlers');for(const f of fs.readdirSync('src/handlers'))fs.copyFileSync('src/handlers/'+f,'dist/handlers/'+f);if(!fs.existsSync('dist/prompts/definitions'))fs.mkdirSync('dist/prompts/definitions',{recursive:true});for(const f of fs.readdirSync('src/prompts/definitions'))fs.copyFileSync('src/prompts/definitions/'+f,'dist/prompts/definitions/'+f)\"",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -43,6 +43,8 @@
     "url": "https://gitee.com/organizations/atlisp/issues"
   },
   "dependencies": {
+    "@atlisp/lint": "^0.2.8",
+    "@atlisp/parser": "^0.1.6",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-prometheus": "^0.218.0",

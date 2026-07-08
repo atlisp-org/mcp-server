@@ -85,3 +85,44 @@ export const drawHatch = withCadConnection(async (points, pattern) => {
     await cad.sendCommand(`(command "_.HATCH" "${escapeLispString(pat)}" "" "")`);
     return mcpSuccess(`已创建图案填充: ${pat}`);
 });
+
+export const drawHelix = withCadConnection(async (center, topRadius, bottomRadius, height, turns = 3) => {
+    await cad.sendCommand(`(command "_.HELIX" "${escapeLispString(center)}" ${bottomRadius} ${topRadius} ${height} ${turns})`);
+    return mcpSuccess(`已创建螺旋: 中心 ${center}，半径 ${bottomRadius}→${topRadius}，高度 ${height}，${turns} 圈`);
+});
+
+export const drawDonut = withCadConnection(async (center, innerRadius, outerRadius) => {
+    await cad.sendCommand(`(command "_.DONUT" ${innerRadius} ${outerRadius} "${escapeLispString(center)}" "")`);
+    return mcpSuccess(`已绘制圆环: 中心 ${center}，内径 ${innerRadius}，外径 ${outerRadius}`);
+});
+
+export const draw2dSolid = withCadConnection(async (p1, p2, p3, p4) => {
+    await cad.sendCommand(`(command "_.SOLID" "${escapeLispString(p1)}" "${escapeLispString(p2)}" "${escapeLispString(p3)}" "${escapeLispString(p4)}" "")`);
+    return mcpSuccess(`已创建 2D 实体: ${p1} ${p2} ${p3} ${p4}`);
+});
+
+export const drawXline = withCadConnection(async (point, direction) => {
+    await cad.sendCommand(`(command "_.XLINE" "${escapeLispString(point)}" "${escapeLispString(direction)}")`);
+    return mcpSuccess(`已创建构造线: 经过 ${point}，方向 ${direction}`);
+});
+
+export const drawRay = withCadConnection(async (point, direction) => {
+    await cad.sendCommand(`(command "_.RAY" "${escapeLispString(point)}" "${escapeLispString(direction)}")`);
+    return mcpSuccess(`已创建射线: 起点 ${point}，方向 ${direction}`);
+});
+
+export const drawLeader = withCadConnection(async (points, annotation) => {
+    const pts = points.split(/\s+/).filter(Boolean);
+    const cmds = pts.map(p => `"${escapeLispString(p)}"`).join(' ');
+    if (annotation) {
+        await cad.sendCommand(`(command "_.LEADER" ${cmds} "" "${escapeLispString(annotation)}" "")`);
+    } else {
+        await cad.sendCommand(`(command "_.LEADER" ${cmds} "" "" "")`);
+    }
+    return mcpSuccess(`已创建引线标注: ${points}`);
+});
+
+export const drawTable = withCadConnection(async (insertionPoint, rows, columns, rowHeight = 10, colWidth = 20) => {
+    await cad.sendCommand(`(command "_.TABLE" "${escapeLispString(insertionPoint)}" ${columns} ${rows} ${rowHeight} ${colWidth})`);
+    return mcpSuccess(`已创建表格: ${insertionPoint}，${rows}×${columns}`);
+});
