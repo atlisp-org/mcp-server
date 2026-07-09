@@ -48,53 +48,65 @@ if (isMcpScript) {
 Usage: atlisp-mcp [options]
 
 Options:
-  -v, --version           Show version number
-  -h, --help             Show this help message
-   --transport <type>     Transport: http, stdio, or ws (default: http)
-  --port <port>         HTTP port (default: 8110)
-  --host <host>         HTTP host (default: 0.0.0.0)
-   --stdio                Shorthand for --transport stdio
-   --ws                   Shorthand for --transport ws
-   --config <path>       Path to config file (default: ~/.atlisp/atlisp.config.json)
-   --ssl-key <path>     SSL key file path (enables HTTPS)
-   --ssl-cert <path>    SSL certificate file path
-   --debug               Enable debug mode
-   --lint-preset <type>  Lint preset: recommended, strict, or relaxed
-   --lint-config <path>  Path to atlisp-lint.json config file
-   --lint-level <level>  Lint level: error, warn, or off
-   --no-lint             Disable lint pre-check for eval_lisp
-   --lint-off            Same as --no-lint
-   --security-level <type>  Security level: strict, standard, or relaxed (default: strict)
+  -v, --version                Show version number
+  -h, --help                   Show this help message
+  --transport <type>           Transport: http, stdio, ws (default: http)
+  --stdio                      Shorthand for --transport stdio
+  --ws                         Shorthand for --transport ws
+  --port <port>                HTTP port (default: 8110)
+  --host <host>                HTTP host (default: 0.0.0.0)
+  --config <path>              Path to config file (default: ~/.atlisp/atlisp.config.json)
+  --ssl-key <path>             SSL key file path (enables HTTPS)
+  --ssl-cert <path>            SSL certificate file path
+  --debug                      Enable debug mode
+  --metrics-enabled            Enable /metrics endpoint (true/false)
+  --lint-preset <type>         Lint preset: recommended, strict, relaxed
+  --lint-config <path>         Path to atlisp-lint.json config file
+  --lint-level <level>         Lint level: error, warn, off
+  --no-lint                    Disable lint pre-check for eval_lisp
+  --lint-off                   Same as --no-lint
+  --api-key <key>              API key for authentication
+  --security-level <type>      Security level: strict, standard, relaxed (default: strict)
 
 Environment Variables:
-   TRANSPORT             Transport mode (http/stdio/ws)
-   PORT                  HTTP port
-   HOST                  HTTP host
-   MCP_API_KEY           API key for authentication
-   ENABLE_SSE            Enable SSE (true/false)
-   DEBUG                 Enable debug logging (true/false)
-   METRICS_ENABLED      Enable /metrics endpoint (true/false)
-    SSL_KEY_PATH          SSL key file path
-    SSL_CERT_PATH         SSL certificate file path
-    SECURITY_LEVEL        Security level: strict, standard, or relaxed (default: strict)
+  TRANSPORT             Transport mode (http/stdio/ws)
+  PORT                  HTTP port (default: 8110)
+  HOST                  HTTP host (default: 0.0.0.0)
+  MCP_API_KEY           API key for authentication
+  ENABLE_SSE            Enable SSE (true/false, default: true)
+  DEBUG                 Enable debug logging (true/false)
+  DEBUG_FILE            Debug log file path
+  METRICS_ENABLED       Enable /metrics endpoint (true/false, default: true)
+  SSL_KEY_PATH          SSL key file path
+  SSL_CERT_PATH         SSL certificate file path
+  SECURITY_LEVEL        Security level: strict, standard, relaxed (default: strict)
+  CONFIG_FILE           Path to config file
+  LINT_PRESET           Lint preset (recommended/strict/relaxed)
+  LINT_CONFIG_PATH      Path to atlisp-lint.json
+  LINT_LEVEL            Lint level (error/warn/off)
+  NO_LINT               Disable lint (true/false)
+  REQUEST_LOG_ENABLED   Enable request logging (true/false, default: true)
+  CORS_ORIGIN           CORS origin (default: *)
+  RATE_LIMIT_WINDOW     Rate limit window in ms (default: 60000)
+  RATE_LIMIT_MAX        Max requests per window (default: 100)
 
 Examples:
-  atlisp-mcp                       Start HTTP server on port 8110
-  atlisp-mcp --port 3000          Start HTTP server on port 3000
-  atlisp-mcp --stdio               Start in stdio mode for MCP clients
-  atlisp-mcp --config ~/my.json   Use custom config file
-  atlisp-mcp --debug              Enable debug output
-  TRANSPORT=stdio atlisp-mcp      Via env var for stdio mode
-  atlisp-mcp --ws                 Start WebSocket server on port 8110
-  TRANSPORT=ws atlisp-mcp         Via env var for WebSocket mode
+  atlisp-mcp                           Start HTTP server on port 8110
+  atlisp-mcp --port 3000               Start HTTP server on port 3000
+  atlisp-mcp --stdio                   Start in stdio mode for MCP clients
+  atlisp-mcp --config ~/my.json        Use custom config file
+  atlisp-mcp --debug                   Enable debug output
+  atlisp-mcp --ssl-key key.pem --ssl-cert cert.pem  Start HTTPS server
+  TRANSPORT=stdio atlisp-mcp           Via env var for stdio mode
+  TRANSPORT=ws atlisp-mcp              Via env var for WebSocket mode
 
 API Endpoints:
-  GET  /health    Health check
-  GET  /metrics   Prometheus metrics (if enabled)
-  POST /mcp       MCP JSON-RPC endpoint
-  GET  /sse       Server-Sent Events endpoint
-  POST /message   SSE message endpoint
-  WS   /ws        WebSocket endpoint
+  GET  /health         Health check
+  GET  /metrics        Prometheus metrics (if enabled)
+  POST /mcp            MCP JSON-RPC endpoint
+  GET  /sse            Server-Sent Events endpoint
+  POST /message        SSE message endpoint
+  WS   /ws             WebSocket endpoint
   POST /config/reload  Reload configuration
 
 For more info: https://atlisp.cn
@@ -124,6 +136,14 @@ For more info: https://atlisp.cn
             process.env.NO_LINT = 'true';
         } else if (arg === '--security-level' && cliArgs[i + 1]) {
             process.env.SECURITY_LEVEL = cliArgs[++i];
+        } else if (arg === '--ssl-key' && cliArgs[i + 1]) {
+            process.env.SSL_KEY_PATH = cliArgs[++i];
+        } else if (arg === '--ssl-cert' && cliArgs[i + 1]) {
+            process.env.SSL_CERT_PATH = cliArgs[++i];
+        } else if (arg === '--api-key' && cliArgs[i + 1]) {
+            process.env.MCP_API_KEY = cliArgs[++i];
+        } else if (arg === '--metrics-enabled' && cliArgs[i + 1]) {
+            process.env.METRICS_ENABLED = cliArgs[++i];
         }
     }
 }

@@ -124,7 +124,7 @@ function parseArgs() {
             i++;
         } else if (args[i] === '--no-lint' || args[i] === '--lint-off') {
             result.noLint = true;
-        } else if (arg === '--security-level' && args[i + 1]) {
+        } else if (args[i] === '--security-level' && args[i + 1]) {
             result.securityLevel = args[i + 1];
             i++;
         }
