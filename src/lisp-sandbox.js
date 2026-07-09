@@ -1,5 +1,6 @@
 import { log, error as logError } from './logger.js';
-import { SECURITY_RULES, THREAT_BLOCK, THREAT_WARN, THREAT_ALLOW, stripStringsAndComments } from './lisp-security.js';
+import config from './config.js';
+import { SECURITY_RULES, THREAT_BLOCK, THREAT_WARN, THREAT_ALLOW, stripStringsAndComments, getEffectiveSeverity } from './lisp-security.js';
 
 export { THREAT_BLOCK, THREAT_WARN, THREAT_ALLOW };
 
@@ -30,6 +31,7 @@ export function clearSessionAllowlist(sessionId) {
 
 export function validateLispCode(code, sessionId = null) {
   const withoutComments = stripStringsAndComments(code);
+  const effectiveSeverity = getEffectiveSeverity();
 
   const results = [];
   let blocked = false;
@@ -38,15 +40,20 @@ export function validateLispCode(code, sessionId = null) {
     const rule = RULES[i];
     if (rule.re.test(withoutComments)) {
       const isAllowed = sessionId && getSessionAllowlist(sessionId).has(i);
+
+      const severity = effectiveSeverity === THREAT_ALLOW ? THREAT_ALLOW
+        : isAllowed ? THREAT_ALLOW
+        : effectiveSeverity;
+
       results.push({
         ruleIndex: i,
-        severity: rule.severity,
+        severity,
         message: rule.msg,
-        blocked: !isAllowed && rule.severity === THREAT_BLOCK,
-        warned: !isAllowed && rule.severity === THREAT_WARN,
-        allowed: isAllowed,
+        blocked: severity === THREAT_BLOCK,
+        warned: severity === THREAT_WARN,
+        allowed: severity === THREAT_ALLOW,
       });
-      if (!isAllowed && rule.severity === THREAT_BLOCK) {
+      if (severity === THREAT_BLOCK) {
         blocked = true;
       }
     }

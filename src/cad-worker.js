@@ -579,9 +579,12 @@ async function handleMessage(msg) {
     if (!parenCheck.valid) {
       return { success: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
     }
-    const injectionCheck = validateLispCodeWorker(msg.code);
-    if (!injectionCheck.valid) {
-      return { success: false, error: `安全限制: ${injectionCheck.error}` };
+    const securityLevel = process.env.SECURITY_LEVEL || 'strict';
+    if (securityLevel !== 'relaxed') {
+      const injectionCheck = validateLispCodeWorker(msg.code);
+      if (!injectionCheck.valid) {
+        return { success: false, error: `安全限制: ${injectionCheck.error}` };
+      }
     }
     if (msg.code.length > 255) {
       const cacheEnabled = process.env.LONG_CODE_CACHE === '1';

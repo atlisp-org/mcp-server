@@ -64,6 +64,7 @@ Options:
    --lint-level <level>  Lint level: error, warn, or off
    --no-lint             Disable lint pre-check for eval_lisp
    --lint-off            Same as --no-lint
+   --security-level <type>  Security level: strict, standard, or relaxed (default: strict)
 
 Environment Variables:
    TRANSPORT             Transport mode (http/stdio/ws)
@@ -73,8 +74,9 @@ Environment Variables:
    ENABLE_SSE            Enable SSE (true/false)
    DEBUG                 Enable debug logging (true/false)
    METRICS_ENABLED      Enable /metrics endpoint (true/false)
-   SSL_KEY_PATH          SSL key file path
-   SSL_CERT_PATH         SSL certificate file path
+    SSL_KEY_PATH          SSL key file path
+    SSL_CERT_PATH         SSL certificate file path
+    SECURITY_LEVEL        Security level: strict, standard, or relaxed (default: strict)
 
 Examples:
   atlisp-mcp                       Start HTTP server on port 8110
@@ -120,6 +122,8 @@ For more info: https://atlisp.cn
             process.env.LINT_LEVEL = cliArgs[++i];
         } else if (arg === '--no-lint' || arg === '--lint-off') {
             process.env.NO_LINT = 'true';
+        } else if (arg === '--security-level' && cliArgs[i + 1]) {
+            process.env.SECURITY_LEVEL = cliArgs[++i];
         }
     }
 }

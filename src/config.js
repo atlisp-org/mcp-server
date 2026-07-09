@@ -38,6 +38,7 @@ const envSchema = z.object({
     LINT_CONFIG_PATH: z.string().optional().default(''),
     LINT_LEVEL: z.string().optional().default(''),
     NO_LINT: z.string().optional().default(''),
+    SECURITY_LEVEL: z.string().optional().default('strict'),
 });
 
 const configSchema = z.object({
@@ -81,6 +82,7 @@ const configSchema = z.object({
     lintConfigPath: z.string().optional(),
     lintLevel: z.string().optional(),
     noLint: z.boolean().optional(),
+    securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
 });
 
 function parseArgs() {
@@ -122,6 +124,9 @@ function parseArgs() {
             i++;
         } else if (args[i] === '--no-lint' || args[i] === '--lint-off') {
             result.noLint = true;
+        } else if (arg === '--security-level' && args[i + 1]) {
+            result.securityLevel = args[i + 1];
+            i++;
         }
     }
     return result;
@@ -197,6 +202,7 @@ const config = {
     lintConfigPath: fileConfig?.lintConfigPath || cliArgs.lintConfigPath || env.LINT_CONFIG_PATH || undefined,
     lintLevel: fileConfig?.lintLevel || cliArgs.lintLevel || env.LINT_LEVEL || undefined,
     noLint: fileConfig?.noLint ?? cliArgs.noLint ?? (env.NO_LINT === 'true'),
+    securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'strict'),
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

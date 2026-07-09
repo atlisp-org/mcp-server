@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { URL } from 'url';
 import { runChecks } from '@atlisp/lint/dist/runner.js';
+import config from './config.js';
 
 const CUSTOM_RULES = [
   { rule: 'command_shell', severity: 'error', re: /\(\s*command\s+"\s*[_.]*\s*shell\s*"/i, msg: '(command "shell" ...) 会启动系统 Shell' },
@@ -64,20 +65,34 @@ export function analyzeLispCode(code, options = {}) {
     return { valid: true, errors: [], warnings: [], issues: [], summary: 'lint 已跳过' };
   }
 
+  const securityLevel = config?.securityLevel || 'strict';
+
+  if (securityLevel === 'relaxed' && !options.force) {
+    return { valid: true, errors: [], warnings: [], issues: [], summary: '安全限制已关闭 (relaxed)' };
+  }
+
   try {
-    const config = options.lintConfig
+    const lintConfig = options.lintConfig
       ? mergeConfig(getDefaultConfig(), options.lintConfig)
       : getDefaultConfig();
-    const lintIssues = runChecks(code, options.file || '<eval>', config);
+
+    if (securityLevel === 'standard') {
+      for (const key of Object.keys(REQUIRED_ERROR_CHECKS)) {
+        lintConfig.checks[key] = 'warn';
+      }
+    }
+
+    const lintIssues = runChecks(code, options.file || '<eval>', lintConfig);
 
     for (const rule of CUSTOM_RULES) {
+      const effectiveSeverity = securityLevel === 'standard' ? 'warn' : rule.severity;
       const match = code.match(rule.re);
       if (match) {
         const line = code.slice(0, match.index).split('\n').length;
         lintIssues.push({
           file: options.file || '<eval>',
           line,
-          severity: rule.severity,
+          severity: effectiveSeverity,
           rule: rule.rule,
           message: rule.msg,
         });
