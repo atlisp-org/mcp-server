@@ -532,6 +532,13 @@ export const TOOL_HANDLERS = {
         }
     },
 
+    // === Debug ===
+    debug_start: lazy('debug_start', (a) => a),
+    debug_step: lazy('debug_step', (a) => a),
+    debug_evaluate: lazy('debug_evaluate', (a) => a),
+    debug_get_state: lazy('debug_get_state', (a) => a),
+    debug_stop: lazy('debug_stop', (a) => a),
+
     // === Sandbox (Security) ===
     sandbox_validate: (a) => {
         const result = validateLispCode(a.code, a.sessionId || null);

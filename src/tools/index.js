@@ -39,6 +39,7 @@ import { tools as skill_tools } from './skill-tools.js';
 import { tools as context_tools } from './context-tools.js';
 import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 import { tools as lint_tools } from './lint-tools.js';
+import { tools as debug_tools } from './debug-tools.js';
 
 const READ_ONLY_TOOLS = new Set([
   'get_cad_info', 'get_platform_info', 'get_system_status',
@@ -79,6 +80,7 @@ const READ_ONLY_TOOLS = new Set([
   'format_lisp_code',
   'list_lint_rules',
   'lint_project',
+  'debug_get_state',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -170,6 +172,7 @@ export const tools = [
   ...batch_transaction_tools,
   ...skill_tools,
   ...lint_tools,
+  ...debug_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
