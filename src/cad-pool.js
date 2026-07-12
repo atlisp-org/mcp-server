@@ -1,6 +1,8 @@
 import { createCadConnection, setActiveConnection, getActiveConnection, cad } from './cad.js';
 import { log, error as logError } from './logger.js';
 import config from './config.js';
+import { discoverCadInstances } from './cad-rot-helper.js';
+import { setInstanceKey } from './handlers/resource-cache.js';
 
 const POOL_STRATEGIES = {
   ROUND_ROBIN: 'round-robin',
@@ -11,9 +13,8 @@ const POOL_STRATEGIES = {
 class CadConnectionPool {
   _instances = new Map();
   _maxPoolSize = 3;
-  _activeKey = 'default';
+  _activeKey = null;
   _strategy = POOL_STRATEGIES.MANUAL;
-  _rrIndex = 0;
   _reconnectTimers = new Map();
   _reconnectCounts = new Map();
   _maxReconnectAttempts = 10;
@@ -25,30 +26,7 @@ class CadConnectionPool {
   }
 
   getConnection(key) {
-    this._ensureDefault();
     return this._instances.get(key)?.connection || null;
-  }
-
-  /**
-   * Ensure the default entry exists. Created lazily to avoid
-   * calling getActiveConnection() at module import time (which
-   * breaks tests that mock cad.js).
-   */
-  _ensureDefault() {
-    if (!this._instances.has('default')) {
-      const defaultConn = getActiveConnection();
-      this._instances.set('default', {
-        key: 'default',
-        connection: defaultConn,
-        platform: null,
-        version: null,
-        connected: false,
-        lastPing: Date.now(),
-        createdAt: Date.now(),
-        label: '默认 CAD',
-        autoReconnect: true,
-      });
-    }
   }
 
   /**
@@ -58,14 +36,32 @@ class CadConnectionPool {
    * @param {object} [options] - Additional options
    * @param {string} [options.label] - Human-readable label
    * @param {boolean} [options.autoReconnect=true] - Auto-reconnect on failure
+   * @param {number} [options.pid] - Target process PID (find via ROT)
    * @param {boolean} [options.makeActive=true] - Set as active after connecting
    */
   async connect(key = 'default', platform = null, options = {}) {
-    this._ensureDefault();
-    const { label, autoReconnect = true, makeActive = true } = options || {};
+    const { label, autoReconnect = true, makeActive = true, pid } = options || {};
 
     if (this._instances.size >= this._maxPoolSize && !this._instances.has(key)) {
       throw new Error(`连接池已满 (${this._maxPoolSize})，无法添加新实例 "${key}"`);
+    }
+
+    // If pid given, resolve to moniker via ROT
+    if (pid != null) {
+      const instances = await discoverCadInstances();
+      const match = instances.find(i => i.pid === pid);
+      if (!match) {
+        logError(`连接池: 未找到 PID ${pid} 的 CAD 实例`);
+        return false;
+      }
+      platform = platform || match.platform;
+      if (key === 'default' || key === pid.toString()) {
+        key = match.key;
+      }
+      if (match.moniker) {
+        if (!options) options = {};
+        options._moniker = match.moniker;
+      }
     }
 
     let entry = this._instances.get(key);
@@ -73,7 +69,6 @@ class CadConnectionPool {
       return true;
     }
 
-    // Create a new connection if this is a new key or existing is disconnected
     if (!entry || entry.connection !== getActiveConnection()) {
       const conn = createCadConnection();
       entry = {
@@ -92,7 +87,9 @@ class CadConnectionPool {
 
     const conn = entry.connection;
     try {
-      const ok = await conn.connect(platform);
+      const moniker = options._moniker || entry.moniker;
+      const connectOpts = moniker ? { moniker, key } : {};
+      const ok = await conn.connect(platform, connectOpts);
       if (ok) {
         entry.connected = true;
         entry.platform = conn.getPlatform();
@@ -119,19 +116,6 @@ class CadConnectionPool {
    * Disconnect and remove an instance from the pool.
    */
   async disconnect(key) {
-    this._ensureDefault();
-    if (key === 'default') {
-      // Cannot remove default, but can disconnect it
-      const entry = this._instances.get('default');
-      if (entry) {
-        await entry.connection.disconnect();
-        entry.connected = false;
-        entry.platform = null;
-        entry.version = null;
-      }
-      return true;
-    }
-
     const entry = this._instances.get(key);
     if (!entry) return false;
 
@@ -145,9 +129,13 @@ class CadConnectionPool {
 
     this._instances.delete(key);
 
-    // If the active instance was removed, switch to default
     if (this._activeKey === key) {
-      this.setActive('default');
+      const remaining = Array.from(this._instances.keys());
+      if (remaining.length > 0) {
+        this.setActive(remaining[0]);
+      } else {
+        this._activeKey = null;
+      }
     }
 
     log(`连接池: 实例 "${key}" 已断开并移除`);
@@ -158,7 +146,6 @@ class CadConnectionPool {
    * Set the active instance. All cad.* calls will be routed here.
    */
   setActive(key) {
-    this._ensureDefault();
     const entry = this._instances.get(key);
     if (!entry) {
       logError(`连接池: 实例 "${key}" 不存在`);
@@ -167,53 +154,101 @@ class CadConnectionPool {
     this._activeKey = key;
     setActiveConnection(entry.connection);
 
-    // Sync the cad singleton's connected status
+    setInstanceKey(key);
+
     cad.connected = entry.connected;
 
     log(`连接池: 已切换到实例 "${key}"`);
+
+    if (this._onInstanceSwitch) {
+      try { this._onInstanceSwitch(key, entry); } catch (e) { logError(`切换回调用错误: ${e.message}`); }
+    }
+
     return true;
   }
 
   /**
+   * Register a callback invoked after every instance switch.
+   * @param {function} fn - (key, entry) => void
+   */
+  onInstanceSwitch(fn) {
+    this._onInstanceSwitch = fn;
+  }
+
+  /**
    * Discover and add all running CAD instances.
-   * Tries each platform to find running CAD processes.
+   * Uses ROT enumeration to find all instances (including multiple of the same platform).
+   * Falls back to GetActiveObject per platform when ROT is unavailable.
    */
   async discover() {
-    this._ensureDefault();
-    const platforms = ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD'];
-    let foundCount = 0;
+    const resultEntries = [];
 
-    for (const platform of platforms) {
-      const key = platform.toLowerCase();
+    const rotInstances = await discoverCadInstances();
+    const rotHadResults = rotInstances.length > 0;
+
+    for (const inst of rotInstances) {
+      const key = inst.key;
+
       if (this._instances.has(key) && this._instances.get(key).connected) {
-        foundCount++;
+        resultEntries.push(this._instances.get(key));
         continue;
       }
-      try {
-        const tempConn = createCadConnection();
-        const ok = await tempConn.connect(platform);
-        if (ok) {
-          const label = `${platform} ${tempConn.getVersion() || ''}`.trim();
-          this._instances.set(key, {
-            key,
-            connection: tempConn,
-            platform: tempConn.getPlatform(),
-            version: tempConn.getVersion(),
-            connected: true,
-            lastPing: Date.now(),
-            createdAt: Date.now(),
-            label,
-            autoReconnect: true,
-          });
-          foundCount++;
-          log(`连接池: 发现 ${label}`);
+
+      this._instances.set(key, {
+        key,
+        connection: null,
+        platform: inst.platform,
+        pid: inst.pid,
+        version: inst.version,
+        moniker: inst.moniker,
+        connected: false,
+        lastPing: Date.now(),
+        createdAt: Date.now(),
+        label: `${inst.platform} #${inst.pid} ${inst.version || ''}`.trim(),
+        autoReconnect: false,
+      });
+
+      log(`连接池: 发现 ${inst.platform} 实例 PID=${inst.pid}`);
+      resultEntries.push(this._instances.get(key));
+    }
+
+    if (!rotHadResults) {
+      const connectWithTimeout = (conn, platform, ms = 4000) =>
+        Promise.race([
+          conn.connect(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+        ]);
+
+      for (const platform of ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD']) {
+        const key = platform.toLowerCase();
+        if (this._instances.has(key) && this._instances.get(key).connected) continue;
+
+        try {
+          const tempConn = createCadConnection();
+          const ok = await connectWithTimeout(tempConn, platform);
+          if (ok) {
+            const label = `${platform} ${tempConn.getVersion() || ''}`.trim();
+            this._instances.set(key, {
+              key,
+              connection: tempConn,
+              platform: tempConn.getPlatform(),
+              version: tempConn.getVersion(),
+              connected: true,
+              lastPing: Date.now(),
+              createdAt: Date.now(),
+              label,
+              autoReconnect: true,
+            });
+            log(`连接池: 发现 ${label}`);
+            resultEntries.push(this._instances.get(key));
+          }
+        } catch (e) {
+          // Platform not available, skip
         }
-      } catch (e) {
-        // Platform not available, skip
       }
     }
 
-    return Array.from(this._instances.values()).map(e => ({
+    return resultEntries.map(e => ({
       key: e.key,
       connected: e.connected,
       platform: e.platform,
@@ -227,7 +262,6 @@ class CadConnectionPool {
    * Health check for all instances.
    */
   async healthCheck() {
-    this._ensureDefault();
     const results = [];
     for (const [key, entry] of this._instances) {
       try {
@@ -276,7 +310,6 @@ class CadConnectionPool {
    * Get the active instance.
    */
   getActive() {
-    this._ensureDefault();
     return this._instances.get(this._activeKey) || null;
   }
 
@@ -284,7 +317,15 @@ class CadConnectionPool {
    * Get stats for all instances.
    */
   getStats() {
-    this._ensureDefault();
+    if (this._instances.size === 0) {
+      return {
+        total: 0,
+        maxPoolSize: this._maxPoolSize,
+        active: null,
+        strategy: this._strategy,
+        instances: [],
+      };
+    }
     return {
       total: this._instances.size,
       maxPoolSize: this._maxPoolSize,
@@ -296,7 +337,7 @@ class CadConnectionPool {
         platform: i.platform,
         version: i.version,
         label: i.label,
-        queueSize: i.connection._getQueueSize ? i.connection._getQueueSize() : 0,
+        queueSize: i.connection?._getQueueSize ? i.connection._getQueueSize() : 0,
         lastPingAgo: Date.now() - (i.lastPing || 0),
         uptime: i.connected ? Math.round((Date.now() - i.createdAt) / 1000) : 0,
       })),
@@ -307,7 +348,7 @@ class CadConnectionPool {
    * List all instances.
    */
   listInstances() {
-    this._ensureDefault();
+    if (this._instances.size === 0) return [];
     return Array.from(this._instances.values()).map(i => ({
       key: i.key,
       connected: i.connected,
@@ -320,7 +361,7 @@ class CadConnectionPool {
   }
 
   /**
-   * Disconnect all instances.
+   * Disconnect all instances in parallel.
    */
   async disconnectAll() {
     this.stopHealthCheck();
@@ -330,28 +371,17 @@ class CadConnectionPool {
     this._reconnectTimers.clear();
     this._reconnectCounts.clear();
 
-    for (const [key, entry] of this._instances) {
+    const entries = Array.from(this._instances.entries());
+    this._instances.clear();
+    this._activeKey = null;
+
+    await Promise.allSettled(entries.map(async ([key, entry]) => {
       try {
         await entry.connection.disconnect();
       } catch (e) {
         logError(`连接池: 断开 "${key}" 出错: ${e.message}`);
       }
-    }
-    this._instances.clear();
-    this._activeKey = 'default';
-    // Re-initialize default entry (disconnected)
-    const defaultConn = getActiveConnection();
-    this._instances.set('default', {
-      key: 'default',
-      connection: defaultConn,
-      platform: null,
-      version: null,
-      connected: false,
-      lastPing: Date.now(),
-      createdAt: Date.now(),
-      label: '默认 CAD',
-      autoReconnect: true,
-    });
+    }));
     log('连接池: 所有实例已断开');
   }
 

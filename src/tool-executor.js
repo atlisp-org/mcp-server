@@ -6,49 +6,81 @@ import { checkToolRateLimit } from './rate-limiter.js';
 import { progressContext, mcpContext } from './mcp-server-state.js';
 import { setNotifyProgress, getNotifyProgress } from './handler-utils.js';
 import { error as logError } from './logger.js';
-import { cad } from './cad.js';
+import { cad, resolveCadConnection } from './cad.js';
 import { pool } from './cad-pool.js';
 import { writeAuditEntry } from './audit-log.js';
+import { mcpErrorResponse, ERROR_CODES, MCPError } from './errors.js';
 import { callCustomTool } from './tool-registry.js';
+
+function resolveConn(instance) {
+  if (instance) return pool.getConnection(instance) || resolveCadConnection();
+  return cad;
+}
+
+async function writeAuditSuccess(name, args, options) {
+  writeAuditEntry({
+    timestamp: new Date().toISOString(),
+    tool: name, args: args || {},
+    sessionId: options.sessionId || '',
+    result: 'success',
+  });
+}
+
+async function writeAuditError(name, args, options, error) {
+  writeAuditEntry({
+    timestamp: new Date().toISOString(),
+    tool: name, args: args || {},
+    sessionId: options.sessionId || '',
+    result: 'error', error: error.message,
+  });
+}
+
+async function beginUndo(instance) {
+  const conn = resolveConn(instance);
+  if (conn?.connected) {
+    try {
+      await conn.sendCommand('(command "_.UNDO" "_BEGIN")');
+      return true;
+    } catch (e) { logError(`UNDO_BEGIN failed: ${e.message}`); }
+  }
+  return false;
+}
+
+async function endUndo(instance) {
+  const conn = resolveConn(instance);
+  try { await conn.sendCommand('(command "_.UNDO" "_END")'); } catch (_) {}
+}
 
 export async function handleToolCall(name, args, options = {}) {
     const handler = TOOL_HANDLERS[name];
     if (!handler) {
         const customResult = callCustomTool(name, args);
         if (customResult !== null) return customResult;
-        return { content: [{ type: 'text', text: `未知工具: ${name}` }], isError: true };
+        return mcpErrorResponse(new MCPError(ERROR_CODES.HANDLER_NOT_FOUND, `未知工具: ${name}`));
     }
 
     const isReadOnly = READ_ONLY_TOOLS.has(name);
     const notifyProgress = options.notifyProgress || null;
 
-    // Tool-level rate limit: read tools get higher limit, write tools get lower
     const rateCheck = checkToolRateLimit(name, isReadOnly, options.sessionId);
     if (!rateCheck.allowed) {
-        return { content: [{ type: 'text', text: `工具调用频率超限 (${isReadOnly ? '读' : '写'}操作)，请 ${rateCheck.retryAfter} 秒后重试` }], isError: true };
+        return mcpErrorResponse(new MCPError(ERROR_CODES.RATE_LIMITED, `工具调用频率超限，请 ${rateCheck.retryAfter} 秒后重试`));
     }
 
     return progressContext.run({ notifyProgress }, async () => {
         setNotifyProgress(notifyProgress);
+        const instance = args?.instance || null;
         let undoBegun = false;
 
         try {
             validateToolArgs(name, args || {});
-
-            const instance = args?.instance || null;
             if (instance) {
                 const ctx = mcpContext.getStore();
                 ctx._toolInstance = instance;
             }
 
             if (!isReadOnly) {
-                const targetConn = instance ? pool.getConnection(instance) : cad;
-                if (targetConn?.connected) {
-                    try {
-                        await targetConn.sendCommand('(command "_.UNDO" "_BEGIN")');
-                        undoBegun = true;
-                    } catch (e) { logError(`UNDO_BEGIN failed: ${e.message}`); }
-                }
+                undoBegun = await beginUndo(instance);
             }
 
             const np = getNotifyProgress();
@@ -58,29 +90,20 @@ export async function handleToolCall(name, args, options = {}) {
 
             if (np) np(1, 1, `${name} 执行完成`);
 
-            writeAuditEntry({
-                timestamp: new Date().toISOString(),
-                tool: name, args: args || {},
-                sessionId: options.sessionId || '',
-                result: result?.isError ? 'error' : 'success',
-            });
+            await writeAuditSuccess(name, args, options);
             notifyResourceChanges(name);
             return result;
         } catch (e) {
             logError(`Tool call error [${name}]: ${e.message}`, { tool: name, args });
-            writeAuditEntry({
-                timestamp: new Date().toISOString(),
-                tool: name, args: args || {},
-                sessionId: options.sessionId || '',
-                result: 'error', error: e.message,
-            });
-            return { content: [{ type: 'text', text: `工具执行错误: ${e.message}` }], isError: true };
+            await writeAuditError(name, args, options, e);
+            if (e.message.startsWith('Missing required') || e.message.startsWith('Invalid type')) {
+                return mcpErrorResponse(new MCPError(ERROR_CODES.INVALID_ARGS, e.message));
+            }
+            return mcpErrorResponse(e);
         } finally {
             const ctx = mcpContext.getStore();
             if (ctx) ctx._toolInstance = null;
-            if (undoBegun) {
-                try { await cad.sendCommand('(command "_.UNDO" "_END")'); } catch (_) {}
-            }
+            if (undoBegun) await endUndo(instance);
         }
     });
 }

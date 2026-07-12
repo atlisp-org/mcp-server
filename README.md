@@ -49,7 +49,9 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 - **流式读取** — 分页流式读取实体/文字/块参照
 - **外部数据** — 查询/导入/导出 CSV/JSON 数据源
 - **审计日志** — 查询和统计工具调用历史
-- **CAD 连接池** — 发现/切换/健康检查多 CAD 实例
+- **CAD 连接池** — 发现/连接/切换/健康检查多 CAD 实例，支持 ROT 自动发现
+- **多实例并发** — `batch_concurrent_tasks` 跨实例并发执行任务
+- **会话实例绑定** — `session_pin_instance` 将会话绑定到指定 CAD 实例
 - **沙箱** — 验证 LISP 代码安全性
 - **资源订阅** — 实时推送 CAD/DWG/包变更
 - **LLM Sampling** — 通过配置的 LLM 提供采样能力
@@ -245,9 +247,39 @@ curl http://localhost:8110/metrics
 
 连接成功返回类似: `已连接到 AutoCAD 2025`
 
+### 多 CAD 实例管理
+
+支持同时连接多个 CAD 实例（包括同一平台的不同进程），通过连接池统一管理：
+
+```json
+{
+  "name": "cad_pool_connect",
+  "arguments": {
+    "key": "autocad-1",
+    "platform": "AutoCAD"
+  }
+}
+```
+
+可通过 `pid` 参数连接到指定进程的 CAD：
+
+```json
+{
+  "name": "cad_pool_connect",
+  "arguments": {
+    "key": "autocad-1234",
+    "pid": 1234
+  }
+}
+```
+
+**自动发现** — `cad_pool_discover` 使用 Windows ROT（Running Object Table）枚举所有运行中的 CAD 实例并自动加入连接池。
+
+**会话绑定** — 使用 `session_pin_instance` 将当前会话绑定到指定实例，后续所有工具调用自动路由到该实例，无需每次传入 `instance` 参数。
+
 ---
 
-## 工具列表 (220+)
+## 工具列表 (230+)
 
 ### 系统与 CAD 连接 (11)
 
@@ -622,14 +654,30 @@ curl http://localhost:8110/metrics
 | `audit_log_query` | 查询审计日志（支持分页和筛选） |
 | `audit_log_stats` | 获取审计日志统计 |
 
-### CAD 连接池 (4)
+### CAD 连接池 (7)
 
 | 工具 | 说明 |
 |------|------|
-| `cad_pool_discover` | 发现所有 CAD 实例 |
+| `cad_pool_discover` | 发现并连接所有运行的 CAD 实例（ROT 枚举） |
+| `cad_pool_list` | 列出所有已连接实例及状态 |
+| `cad_pool_connect` | 连接到指定 CAD 平台并加入连接池（支持 PID 指定进程） |
+| `cad_pool_disconnect` | 断开并移除指定 CAD 实例 |
 | `cad_pool_switch` | 切换活动 CAD 实例 |
 | `cad_pool_health` | 检查所有实例健康状态 |
 | `cad_pool_stats` | 获取连接池统计 |
+
+### 会话管理 (2)
+
+| 工具 | 说明 |
+|------|------|
+| `session_pin_instance` | 将会话绑定到指定 CAD 实例，后续调用自动路由到该实例 |
+| `session_unpin_instance` | 取消会话的实例绑定，恢复使用连接池的活动实例 |
+
+### 批量并发任务 (1)
+
+| 工具 | 说明 |
+|------|------|
+| `batch_concurrent_tasks` | 跨多个 CAD 实例并发执行不同的工具任务 |
 
 ---
 

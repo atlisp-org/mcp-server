@@ -21,11 +21,12 @@ export function mcpError(text) {
 }
 
 export async function ensureCadConnected() {
-  const { cad } = await import('./cad.js');
-  if (!cad.connected) {
-    await cad.connect();
+  const { cad, resolveCadConnection } = await import('./cad.js');
+  const conn = resolveCadConnection();
+  if (!conn.connected) {
+    await conn.connect();
   }
-  if (!cad.connected) {
+  if (!conn.connected) {
     throw createError(ERROR_CODES.CAD_NOT_CONNECTED);
   }
 }

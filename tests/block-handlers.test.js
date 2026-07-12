@@ -11,6 +11,7 @@ const mockCad = {
 
 vi.mock('../src/cad.js', () => ({
   cad: mockCad,
+  resolveCadConnection: () => mockCad,
 }));
 
 vi.mock('../src/logger.js', () => ({

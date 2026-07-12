@@ -14,7 +14,8 @@ const TOOL_PERMISSIONS = {
   'measure_*': 'read',
   'stream_*': 'read',
   'watch_list': 'read',
-  'pipeline_list': 'read',
+
+
   // Write tools
   'create_*': 'write',
   'set_*': 'write',
@@ -34,8 +35,7 @@ const TOOL_PERMISSIONS = {
   'import_*': 'import',
   // Admin
   'config_*': 'admin',
-  'pipeline_save': 'admin',
-  'pipeline_delete': 'admin',
+
   'webhook_*': 'admin',
   'watch_remove': 'admin',
 };

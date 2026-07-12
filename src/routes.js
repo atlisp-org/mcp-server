@@ -1,3 +1,4 @@
+import os from 'os';
 import express from 'express';
 import { randomUUID, createHash } from 'crypto';
 import fs from 'fs';
@@ -140,8 +141,14 @@ export function createCorsMiddleware() {
     return (req, res, next) => {
         if (!enableCors) return next();
         const origin = req.headers.origin;
+        const isPnaPreflight = req.method === 'OPTIONS' && req.headers['access-control-request-private-network'] === 'true';
         if (allowAll) {
-            res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+            if (isPnaPreflight && origin) {
+                res.setHeader('Access-Control-Allow-Origin', origin);
+                res.setHeader('Vary', 'Origin');
+            } else {
+                res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+            }
         } else if (origin && allowedOrigins.some(p => originMatches(p, origin))) {
             res.setHeader('Access-Control-Allow-Origin', origin);
             res.setHeader('Vary', 'Origin');
@@ -256,6 +263,12 @@ export function setupRoutes(app) {
                 instances: pool ? pool.getStats().instances : [],
             }
         });
+    });
+
+    app.get('/go', (req, res) => {
+        const remoteUrl = 'https://atlisp.cn/agent';
+        const cid = config.clientId || os.hostname();
+        res.redirect(302, `${remoteUrl}?clientId=${encodeURIComponent(cid)}`);
     });
 
     app.get('/health/full', async (req, res) => {

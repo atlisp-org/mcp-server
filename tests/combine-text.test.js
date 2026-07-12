@@ -11,7 +11,7 @@ const mockCad = {
   getVersion: vi.fn(),
 };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad }));
+vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), closeLog: vi.fn() }));
 vi.mock('../src/config.js', () => ({
   default: {

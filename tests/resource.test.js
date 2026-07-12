@@ -15,7 +15,7 @@ const mockCad = {
   getVersion: mockGetVersion,
 };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad }));
+vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), closeLog: vi.fn() }));
 vi.mock('../src/config.js', () => ({
   default: {
@@ -90,7 +90,7 @@ describe('resource-handlers', () => {
     });
 
     it('contains all expected resources', () => {
-      expect(RESOURCES).toHaveLength(16);
+      expect(RESOURCES).toHaveLength(19);
       const uris = RESOURCES.map(r => r.uri);
       expect(uris).toContain('atlisp://cad/info');
       expect(uris).toContain('atlisp://dwg/entities');
@@ -108,6 +108,9 @@ describe('resource-handlers', () => {
       expect(uris).toContain('atlisp://cad/events');
       expect(uris).toContain('atlisp://dwg/context');
       expect(uris).toContain('atlisp://tools/relationships');
+      expect(uris).toContain('atlisp://dwg/analysis');
+      expect(uris).toContain('atlisp://tools/categories');
+      expect(uris).toContain('atlisp://dwg/standards/check');
     });
   });
 

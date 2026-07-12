@@ -31,12 +31,12 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: '实例标识键名（如 autocad, zwcad, mycad）' },
+        key: { type: 'string', description: '实例标识键名（如 autocad, zwcad, mycad；不传时由 pid 自动派生）' },
         platform: { type: 'string', description: 'CAD 平台: AutoCAD, ZWCAD, GStarCAD, BricsCAD（可选，自动检测）' },
+        pid: { type: 'number', description: '目标进程 PID（可选，通过 ROT 查找后连接，可与 pid 自动派生 key）' },
         label: { type: 'string', description: '实例显示标签（可选）' },
         makeActive: { type: 'boolean', description: '连接后设为活动实例（默认 true）' }
-      },
-      required: ['key']
+      }
     }
   },
   {

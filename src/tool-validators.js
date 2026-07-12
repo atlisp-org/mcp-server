@@ -1,4 +1,9 @@
 import { toolsByName } from './tools/index.js';
+import { MCPError, ERROR_CODES } from './errors.js';
+
+function validationError(msg) {
+    return new MCPError(ERROR_CODES.INVALID_ARGS, msg);
+}
 
 function validateProps(args, props, required, path = '') {
   for (const [key, prop] of Object.entries(props)) {
@@ -8,7 +13,7 @@ function validateProps(args, props, required, path = '') {
 
     if (val === undefined || val === null) {
       if (isOptional) continue;
-      throw new Error(`Missing required argument: ${fullKey}`);
+      throw validationError(`Missing required argument: ${fullKey}`);
     }
 
     if (prop.type === 'object' && prop.properties && typeof val === 'object' && !Array.isArray(val)) {
@@ -27,39 +32,39 @@ function validateProps(args, props, required, path = '') {
     const expectedType = prop.type || 'string';
 
     if (expectedType === 'string' && actualType !== 'string' && actualType !== 'number') {
-      throw new Error(`Invalid type for argument ${fullKey}: expected string, got ${actualType}`);
+      throw validationError(`Invalid type for argument ${fullKey}: expected string, got ${actualType}`);
     }
     if ((expectedType === 'object' || expectedType === 'array') && (actualType !== 'object' || val === null)) {
-      throw new Error(`Invalid type for argument ${fullKey}: expected ${expectedType}, got ${actualType}`);
+      throw validationError(`Invalid type for argument ${fullKey}: expected ${expectedType}, got ${actualType}`);
     }
     if (expectedType === 'array' && !Array.isArray(val)) {
-      throw new Error(`Invalid type for argument ${fullKey}: expected array, got ${actualType}`);
+      throw validationError(`Invalid type for argument ${fullKey}: expected array, got ${actualType}`);
     }
     if (expectedType === 'object' && Array.isArray(val)) {
-      throw new Error(`Invalid type for argument ${fullKey}: expected object, got array`);
+      throw validationError(`Invalid type for argument ${fullKey}: expected object, got array`);
     }
     if ((expectedType === 'number' || expectedType === 'integer') && actualType !== 'number') {
       if (expectedType === 'integer' && !Number.isInteger(val)) {
-        throw new Error(`Invalid type for argument ${fullKey}: expected integer, got ${actualType}`);
+        throw validationError(`Invalid type for argument ${fullKey}: expected integer, got ${actualType}`);
       }
       if (expectedType === 'number') {
-        throw new Error(`Invalid type for argument ${fullKey}: expected number, got ${actualType}`);
+        throw validationError(`Invalid type for argument ${fullKey}: expected number, got ${actualType}`);
       }
     }
     if (expectedType === 'boolean' && actualType !== 'boolean') {
-      throw new Error(`Invalid type for argument ${fullKey}: expected boolean, got ${actualType}`);
+      throw validationError(`Invalid type for argument ${fullKey}: expected boolean, got ${actualType}`);
     }
     if (prop.enum && !prop.enum.includes(val)) {
-      throw new Error(`Invalid value for argument ${fullKey}: must be one of ${prop.enum.join(', ')}`);
+      throw validationError(`Invalid value for argument ${fullKey}: must be one of ${prop.enum.join(', ')}`);
     }
     if (expectedType === 'string' && typeof prop.maxLength === 'number' && String(val).length > prop.maxLength) {
-      throw new Error(`Argument ${fullKey} exceeds max length of ${prop.maxLength}`);
+      throw validationError(`Argument ${fullKey} exceeds max length of ${prop.maxLength}`);
     }
     if ((expectedType === 'number' || expectedType === 'integer') && prop.minimum != null && val < prop.minimum) {
-      throw new Error(`Argument ${fullKey} must be >= ${prop.minimum}`);
+      throw validationError(`Argument ${fullKey} must be >= ${prop.minimum}`);
     }
     if ((expectedType === 'number' || expectedType === 'integer') && prop.maximum != null && val > prop.maximum) {
-      throw new Error(`Argument ${fullKey} must be <= ${prop.maximum}`);
+      throw validationError(`Argument ${fullKey} must be <= ${prop.maximum}`);
     }
   }
 }
@@ -67,7 +72,7 @@ function validateProps(args, props, required, path = '') {
 export function validateToolArgs(name, args) {
   const toolDef = toolsByName.get(name);
   if (!toolDef) {
-    throw new Error(`Unknown tool: ${name}`);
+    throw validationError(`Unknown tool: ${name}`);
   }
   const schema = toolDef.inputSchema;
   if (!schema || !schema.properties) return true;
@@ -77,7 +82,7 @@ export function validateToolArgs(name, args) {
 
   for (const req of required) {
     if (!(req in (args || {}))) {
-      throw new Error(`Missing required argument: ${req}`);
+      throw validationError(`Missing required argument: ${req}`);
     }
   }
 

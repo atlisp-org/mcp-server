@@ -5,9 +5,14 @@ export const ERROR_CODES = {
     LISP_PAREN_MISMATCH: 'LISP_PAREN_MISMATCH',
     TIMEOUT: 'TIMEOUT',
     INVALID_PARAMS: 'INVALID_PARAMS',
+    INVALID_ARGS: 'INVALID_ARGS',
     METHOD_NOT_FOUND: 'METHOD_NOT_FOUND',
+    HANDLER_NOT_FOUND: 'HANDLER_NOT_FOUND',
     RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
     PACKAGE_NOT_FOUND: 'PACKAGE_NOT_FOUND',
+    OPERATION_FAILED: 'OPERATION_FAILED',
+    RATE_LIMITED: 'RATE_LIMITED',
+    SESSION_NOT_FOUND: 'SESSION_NOT_FOUND',
     INTERNAL_ERROR: 'INTERNAL_ERROR',
 };
 
@@ -41,6 +46,31 @@ export const ERROR_DEFS = {
         message: '无效的参数',
         hint: '请检查工具参数格式是否正确。使用 search_tools 或 list_tools_by_category 查看工具参数要求',
         tools: ['search_tools', 'list_tools_by_category'],
+    },
+    [ERROR_CODES.INVALID_ARGS]: {
+        message: '参数校验失败',
+        hint: '工具所需参数缺失或格式错误。请检查参数类型和必填字段，使用 search_tools 查看工具参数要求',
+        tools: ['search_tools', 'list_tools_by_category'],
+    },
+    [ERROR_CODES.HANDLER_NOT_FOUND]: {
+        message: '工具未找到',
+        hint: '工具名称不存在。使用 search_tools 搜索可用工具，或 list_tools_by_category 浏览全部分类',
+        tools: ['search_tools', 'list_tools_by_category'],
+    },
+    [ERROR_CODES.OPERATION_FAILED]: {
+        message: '操作执行失败',
+        hint: '工具执行过程中发生错误。可重试操作，或检查日志获取详细信息',
+        tools: ['get_system_status', 'get_cad_info'],
+    },
+    [ERROR_CODES.RATE_LIMITED]: {
+        message: '调用频率超限',
+        hint: '工具调用过于频繁。请等待一段时间后再试',
+        tools: [],
+    },
+    [ERROR_CODES.SESSION_NOT_FOUND]: {
+        message: '会话未找到',
+        hint: '指定 ID 的会话不存在。请检查 sessionId 参数是否正确',
+        tools: ['lisp_repl_list'],
     },
     [ERROR_CODES.METHOD_NOT_FOUND]: {
         message: '方法不存在',

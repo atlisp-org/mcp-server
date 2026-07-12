@@ -4,14 +4,19 @@ const STREAM_CHUNK_SIZE = 100;
 const MAX_ENTITY_LIMIT = 20000;
 const UNFILTERED_WARN_THRESHOLD = 5000;
 
-export async function streamEntitiesByType({ type = null, layer = null, chunk = STREAM_CHUNK_SIZE, offset = 0 }) {
-  const hasFilter = type || layer;
-  const filters = [];
-  if (type) filters.push(`(cons 0 "${type}")`);
-  if (layer) filters.push(`(cons 8 "${layer}")`);
-  const ssgetExpr = filters.length > 0
-    ? `(ssget "_X" (list ${filters.join(' ')}))`
+function escapeLispStr(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+async function streamEntities({ filterExpr, extractFields, itemMapper, offset, limit, hasFilter, warnThreshold, overLimitMsg, resultProp }) {
+  const ssgetExpr = filterExpr
+    ? `(ssget "_X" ${filterExpr})`
     : `(ssget "_X")`;
+
+  const extractCode = extractFields.length === 1
+    ? `(list ${extractFields.join(' ')})`
+    : `(list ${extractFields.join(' ')})`;
 
   const lisp = `(progn
     (setq ss ${ssgetExpr})
@@ -24,10 +29,10 @@ export async function streamEntitiesByType({ type = null, layer = null, chunk = 
           (setq result (list total))
           (setq i ${offset})
           (setq count 0)
-          (while (and (< i total) (< count ${chunk}))
+          (while (and (< i total) (< count ${limit}))
             (setq e (ssname ss i))
             (setq elist (entget e))
-            (setq result (cons (list (cdr (assoc 0 elist)) (cdr (assoc 5 elist)) (cdr (assoc 8 elist))) result))
+            (setq result (cons ${extractCode} result))
             (setq i (1+ i))
             (setq count (1+ count)))
           (reverse result)))))`;
@@ -37,99 +42,69 @@ export async function streamEntitiesByType({ type = null, layer = null, chunk = 
     const parsed = JSON.parse(raw);
     const total = parsed[0] || 0;
     if (total === -1) {
-      return { total: parsed[1] || 0, offset: 0, count: 0, hasMore: false, entities: [],
-        error: `实体数量 (${parsed[1]}) 超过最大限制 (${MAX_ENTITY_LIMIT})，请使用 type/layer 过滤` };
+      return { total: parsed[1] || 0, offset: 0, count: 0, hasMore: false,
+        [resultProp]: [],
+        error: `实体数量 (${parsed[1]}) 超过最大限制 (${MAX_ENTITY_LIMIT})，${overLimitMsg}` };
     }
-    const entities = parsed.slice(1);
-    const result = {
-      total,
-      offset,
-      count: entities.length,
-      hasMore: (offset + entities.length) < total,
-      entities
-    };
-    if (!hasFilter && total > UNFILTERED_WARN_THRESHOLD) {
-      result.warning = `未提供 type/layer 过滤，全图扫描了 ${total} 个实体。建议添加 type 或 layer 参数以大幅提升性能和降低内存占用。`;
+    const items = parsed.slice(1).map(itemMapper);
+    const result = { total, offset, count: items.length, hasMore: (offset + items.length) < total, [resultProp]: items };
+    if (!hasFilter && total > warnThreshold) {
+      result.warning = `未提供过滤条件，全图扫描了 ${total} 个实体。建议添加过滤参数以提升性能。`;
     }
     return result;
   } catch {
-    return { total: 0, offset: 0, count: 0, hasMore: false, entities: [] };
+    return { total: 0, offset: 0, count: 0, hasMore: false, [resultProp]: [] };
   }
+}
+
+export async function streamEntitiesByType({ type = null, layer = null, chunk = STREAM_CHUNK_SIZE, offset = 0 }) {
+  const filters = [];
+  if (type) filters.push(`(cons 0 "${escapeLispStr(type)}")`);
+  if (layer) filters.push(`(cons 8 "${escapeLispStr(layer)}")`);
+  const filterExpr = filters.length > 0 ? `(list ${filters.join(' ')})` : null;
+
+  return streamEntities({
+    filterExpr,
+    extractFields: ['(list (cdr (assoc 0 elist)) (cdr (assoc 5 elist)) (cdr (assoc 8 elist)))'],
+    itemMapper: (item) => ({ type: item[0], handle: item[1], layer: item[2] }),
+    offset, limit: chunk,
+    hasFilter: !!(type || layer),
+    warnThreshold: UNFILTERED_WARN_THRESHOLD,
+    overLimitMsg: '请使用 type/layer 过滤',
+    resultProp: 'entities',
+  });
 }
 
 export async function streamTextContent({ layer = null, bbox = null, offset = 0, limit = 100 }) {
   const textFilters = [`(cons 0 "TEXT")`, `(cons 0 "MTEXT")`];
-  if (layer) textFilters.push(`(cons 8 "${layer}")`);
+  if (layer) textFilters.push(`(cons 8 "${escapeLispStr(layer)}")`);
+  const filterExpr = `(list '(-4 . "<OR") ${textFilters.join(' ')} '(-4 . "OR>"))`;
 
-  const lisp = `(progn
-    (setq ss (ssget "_X" (list '(-4 . "<OR") ${textFilters.join(' ')} '(-4 . "OR>"))))
-    (setq total (if ss (sslength ss) 0))
-    (if (> total ${MAX_ENTITY_LIMIT})
-      (list -1 total)
-      (if (>= ${offset} total)
-        (list total)
-        (progn
-          (setq result (list total))
-          (setq i ${offset})
-          (setq count 0)
-          (while (and (< i total) (< count ${limit}))
-            (setq e (ssname ss i))
-            (setq elist (entget e))
-            (setq txt (cdr (assoc 1 elist)))
-            (setq result (cons (list (cdr (assoc 5 elist)) txt (cdr (assoc 10 elist))) result))
-            (setq i (1+ i))
-            (setq count (1+ count)))
-          (reverse result)))))`;
-
-  const raw = await cad.sendCommandWithResult(lisp);
-  try {
-    const parsed = JSON.parse(raw);
-    const total = parsed[0] || 0;
-    if (total === -1) {
-      return { total: parsed[1] || 0, offset: 0, count: 0, hasMore: false, texts: [],
-        error: `文本实体数量 (${parsed[1]}) 超过最大限制 (${MAX_ENTITY_LIMIT})，请使用 layer 过滤` };
-    }
-    const texts = parsed.slice(1).map(t => ({ handle: t[0], text: t[1], point: t[2] }));
-    return { total, offset, count: texts.length, hasMore: (offset + texts.length) < total, texts };
-  } catch {
-    return { total: 0, offset: 0, count: 0, hasMore: false, texts: [] };
-  }
+  return streamEntities({
+    filterExpr,
+    extractFields: ['(list (cdr (assoc 5 elist)) (cdr (assoc 1 elist)) (cdr (assoc 10 elist)))'],
+    itemMapper: (item) => ({ handle: item[0], text: item[1], point: item[2] }),
+    offset, limit,
+    hasFilter: !!layer,
+    warnThreshold: UNFILTERED_WARN_THRESHOLD,
+    overLimitMsg: '请使用 layer 过滤',
+    resultProp: 'texts',
+  });
 }
 
 export async function streamBlockRefs({ blockName = null, offset = 0, limit = 100 }) {
   const filters = [`(cons 0 "INSERT")`];
-  if (blockName) filters.push(`(cons 2 "${blockName}")`);
+  if (blockName) filters.push(`(cons 2 "${escapeLispStr(blockName)}")`);
+  const filterExpr = filters.length > 0 ? `(list ${filters.join(' ')})` : null;
 
-  const lisp = `(progn
-    (setq ss (ssget "_X" (list ${filters.join(' ')})))
-    (setq total (if ss (sslength ss) 0))
-    (if (> total ${MAX_ENTITY_LIMIT})
-      (list -1 total)
-      (if (>= ${offset} total)
-        (list total)
-        (progn
-          (setq result (list total))
-          (setq i ${offset})
-          (setq count 0)
-          (while (and (< i total) (< count ${limit}))
-            (setq e (ssname ss i))
-            (setq elist (entget e))
-            (setq result (cons (list (cdr (assoc 2 elist)) (cdr (assoc 5 elist)) (cdr (assoc 10 elist))) result))
-            (setq i (1+ i))
-            (setq count (1+ count)))
-          (reverse result)))))`;
-
-  const raw = await cad.sendCommandWithResult(lisp);
-  try {
-    const parsed = JSON.parse(raw);
-    const total = parsed[0] || 0;
-    if (total === -1) {
-      return { total: parsed[1] || 0, offset: 0, count: 0, hasMore: false, refs: [],
-        error: `块参照数量 (${parsed[1]}) 超过最大限制 (${MAX_ENTITY_LIMIT})，请使用 blockName 过滤` };
-    }
-    const refs = parsed.slice(1).map(r => ({ blockName: r[0], handle: r[1], insertionPoint: r[2] }));
-    return { total, offset, count: refs.length, hasMore: (offset + refs.length) < total, refs };
-  } catch {
-    return { total: 0, offset: 0, count: 0, hasMore: false, refs: [] };
-  }
+  return streamEntities({
+    filterExpr,
+    extractFields: ['(list (cdr (assoc 2 elist)) (cdr (assoc 5 elist)) (cdr (assoc 10 elist)))'],
+    itemMapper: (item) => ({ blockName: item[0], handle: item[1], insertionPoint: item[2] }),
+    offset, limit,
+    hasFilter: !!blockName,
+    warnThreshold: UNFILTERED_WARN_THRESHOLD,
+    overLimitMsg: '请使用 blockName 过滤',
+    resultProp: 'refs',
+  });
 }

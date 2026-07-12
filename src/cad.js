@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import config from './config.js';
 import { setCadConnected } from './metrics.js';
+import { CircuitBreaker } from './cad-circuit-breaker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
@@ -12,12 +13,6 @@ const MESSAGE_TIMEOUT = config.messageTimeout;
 const HEARTBEAT_INTERVAL = config.heartbeatInterval;
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_BACKOFF_BASE = 1000;
-
-const CB_CLOSED = 0;
-const CB_OPEN = 1;
-const CB_HALF_OPEN = 2;
-const CB_FAILURE_THRESHOLD = 5;
-const CB_RESET_TIMEOUT = 10000;
 
 const MAX_BUFFER_SIZE = 1024 * 1024;
 
@@ -39,7 +34,6 @@ function isReadCommand(code) {
   return false;
 }
 
-// --- Module-level document change callbacks (shared across all instances) ---
 const _docChangeCallbacks = [];
 
 export function onDocumentChanged(callback) {
@@ -52,7 +46,6 @@ function emitDocumentChanged(info) {
   }
 }
 
-// --- ReadBatcher (instance-aware) ---
 class ReadBatcher {
   constructor(connection, maxDelayMs = 50, maxBatchSize = 10) {
     this._conn = connection;
@@ -118,7 +111,6 @@ class ReadBatcher {
   }
 }
 
-// --- CommandQueue (instance-aware) ---
 class CommandQueue {
   constructor(connection) {
     this._conn = connection;
@@ -220,7 +212,6 @@ class CommandQueue {
   }
 }
 
-// --- CadConnection instance ---
 class CadConnection {
   _primaryWorker = null;
   _readWorkers = [];
@@ -234,11 +225,6 @@ class CadConnection {
   _pendingRequests = new Map();
   _commandQueue = null;
 
-  _cbState = CB_CLOSED;
-  _cbFailureCount = 0;
-  _cbLastFailureTime = 0;
-  _cbTimer = null;
-
   _restartCount = 0;
   _restartTimer = null;
   _activeDocName = null;
@@ -249,6 +235,11 @@ class CadConnection {
   constructor() {
     this._connectionId = randomUUID().slice(0, 8);
     this._commandQueue = new CommandQueue(this);
+    this._cb = new CircuitBreaker(
+      this._connectionId,
+      (id) => console.error(`[${id}] Circuit breaker OPEN`),
+      (id) => console.error(`[${id}] Circuit breaker HALF_OPEN, allowing trial request`)
+    );
   }
 
   get _workerPoolSize() {
@@ -259,11 +250,15 @@ class CadConnection {
     return process.platform === 'win32';
   }
 
-  async connect(platform = null) {
+  async connect(platform = null, options = {}) {
     if (!this.isAvailable()) return false;
-    this._cbSuccess();
+    this._cb.recordSuccess();
     try {
       const msg = platform ? { type: 'connect', platform } : { type: 'connect' };
+      if (options.moniker) {
+        msg.moniker = options.moniker;
+        msg.monikerKey = options.key || 'moniker';
+      }
       const result = await this._sendMessage(msg);
       if (result && result.success) {
         this._version = result.version;
@@ -371,18 +366,8 @@ class CadConnection {
   }
 
   async disconnect() {
-    this.connected = false;
-    setCadConnected(false);
-    this._version = null;
-    this._product = null;
-    this._platform = null;
-    this._activeDocName = null;
-    this._monitorStarted = false;
-    this._commandQueue.clear();
-    this._cbState = CB_CLOSED;
-    this._cbFailureCount = 0;
-    if (this._cbTimer) { clearTimeout(this._cbTimer); this._cbTimer = null; }
-    this._resetWorker();
+    this._reset();
+    this._cb.reset();
   }
 
   async ping() {
@@ -403,53 +388,11 @@ class CadConnection {
     this._activeDocName = null;
     this._monitorStarted = false;
     this._commandQueue.clear();
-    this._cbState = CB_CLOSED;
-    this._cbFailureCount = 0;
-    if (this._cbTimer) { clearTimeout(this._cbTimer); this._cbTimer = null; }
     this._resetWorker();
   }
 
   _getQueueSize() { return this._commandQueue.size(); }
   _getRestartCount() { return this._restartCount; }
-
-  // --- Circuit breaker ---
-  _cbSuccess() {
-    this._cbState = CB_CLOSED;
-    this._cbFailureCount = 0;
-    if (this._cbTimer) { clearTimeout(this._cbTimer); this._cbTimer = null; }
-  }
-
-  _cbFailure() {
-    this._cbFailureCount++;
-    this._cbLastFailureTime = Date.now();
-    if (this._cbFailureCount >= CB_FAILURE_THRESHOLD && this._cbState !== CB_OPEN) {
-      this._cbState = CB_OPEN;
-      console.error(`[${this._connectionId}] Circuit breaker OPEN after ${this._cbFailureCount} failures`);
-      this._cbTimer = setTimeout(() => {
-        this._cbState = CB_HALF_OPEN;
-        console.error(`[${this._connectionId}] Circuit breaker HALF_OPEN, allowing trial request`);
-      }, CB_RESET_TIMEOUT);
-    }
-  }
-
-  _cbAllowRequest() {
-    if (this._cbState === CB_OPEN) {
-      const elapsed = Date.now() - this._cbLastFailureTime;
-      if (elapsed >= CB_RESET_TIMEOUT) {
-        this._cbState = CB_HALF_OPEN;
-        console.error(`[${this._connectionId}] Circuit breaker auto-transition to HALF_OPEN`);
-      } else {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  // --- Worker management ---
-  _isReadOnlyMessage(msg) {
-    if (msg.code) return isReadCommand(msg.code);
-    return false;
-  }
 
   _spawnWorker(type) {
     const w = spawn('node', [workerPath], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -464,7 +407,7 @@ class CadConnection {
 
       if (type === 'primary') {
         if (w !== this._primaryWorker) return;
-        this._cbFailure();
+        this._cb.recordFailure();
         const exitError = new Error(`Primary worker exited with code ${code}`);
         for (const [id, entry] of this._pendingRequests) {
           clearTimeout(entry.timeout);
@@ -501,7 +444,7 @@ class CadConnection {
         this._primaryWorker = null;
       }
       this._primaryWorker = this._spawnWorker('primary');
-      this._cbSuccess();
+      this._cb.recordSuccess();
       if (!this._heartbeatTimer) this._startHeartbeat();
       this._restartCount = 0;
     }
@@ -647,11 +590,9 @@ class CadConnection {
   }
 
   async _sendMessage(msg) {
-    if (!this._cbAllowRequest()) {
+    if (!this._cb.allowRequest()) {
       console.error(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
-      this._cbState = CB_CLOSED;
-      this._cbFailureCount = 0;
-      if (this._cbTimer) { clearTimeout(this._cbTimer); this._cbTimer = null; }
+      this._cb.reset();
       await this._resetWorker();
       await this._getWorker(false);
     }
@@ -669,14 +610,14 @@ class CadConnection {
         const p = self._pendingRequests.get(requestId);
         if (p) {
           self._pendingRequests.delete(requestId);
-          if (!noCircuitBreaker) self._cbFailure();
+          if (!noCircuitBreaker) self._cb.recordFailure();
           reject(new Error('Timeout waiting for worker'));
         }
       }, MESSAGE_TIMEOUT);
 
       const entry = {
-        resolve: (v) => { if (!noCircuitBreaker && !entry._skipCb) self._cbSuccess(); resolve(v); },
-        reject: (e) => { if (!noCircuitBreaker && !entry._skipCb) self._cbFailure(); reject(e); },
+        resolve: (v) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); resolve(v); },
+        reject: (e) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); reject(e); },
         timeout,
       };
       self._pendingRequests.set(requestId, entry);
@@ -685,19 +626,22 @@ class CadConnection {
       } catch (e) {
         clearTimeout(timeout);
         self._pendingRequests.delete(requestId);
-        if (!noCircuitBreaker) self._cbFailure();
+        if (!noCircuitBreaker) self._cb.recordFailure();
         reject(new Error(`Failed to write to worker: ${e.message}`));
       }
     });
   }
+
+  _isReadOnlyMessage(msg) {
+    if (msg.code) return isReadCommand(msg.code);
+    return false;
+  }
 }
 
-// --- Factory ---
 export function createCadConnection() {
   return new CadConnection();
 }
 
-// --- Default singleton + active connection delegation ---
 let _activeConnection = new CadConnection();
 
 export function setActiveConnection(conn) {
@@ -708,7 +652,6 @@ export function getActiveConnection() {
   return _activeConnection;
 }
 
-// Hook for instance routing; set by cad-router.js
 let _resolveInstanceConn = null;
 export function _setInstanceResolver(fn) {
   _resolveInstanceConn = fn;
@@ -722,35 +665,40 @@ function _resolveConn() {
   return _activeConnection;
 }
 
+export function resolveCadConnection() {
+  return _resolveConn();
+}
+
 export const cad = {
   get connected() { return _resolveConn().connected; },
-  set connected(v) { _activeConnection.connected = v; },
+  set connected(v) { _resolveConn().connected = v; },
 
-  get version() { return _activeConnection._version; },
-  set version(v) { _activeConnection._version = v; },
-  get product() { return _activeConnection._product; },
-  set product(v) { _activeConnection._product = v; },
-  get _platform() { return _activeConnection._platform; },
-  set _platform(v) { _activeConnection._platform = v; },
+  get version() { return _resolveConn()._version; },
+  set version(v) { _resolveConn()._version = v; },
+  get product() { return _resolveConn()._product; },
+  set product(v) { _resolveConn()._product = v; },
+  get _platform() { return _resolveConn()._platform; },
+  set _platform(v) { _resolveConn()._platform = v; },
 
-  async connect(platform) { return _activeConnection.connect(platform); },
+  async connect(platform) { return _resolveConn().connect(platform); },
   async sendCommand(code) { return _resolveConn().sendCommand(code); },
   async sendCommandWithResult(code, encoding) { return _resolveConn().sendCommandWithResult(code, encoding); },
-  getVersion() { return _activeConnection.getVersion(); },
-  getPlatform() { return _activeConnection.getPlatform(); },
-  getConnectionId() { return _activeConnection.getConnectionId(); },
-  isAvailable() { return _activeConnection.isAvailable(); },
-  async isBusy() { return _activeConnection.isBusy(); },
-  async hasDoc() { return _activeConnection.hasDoc(); },
-  async newDoc() { return _activeConnection.newDoc(); },
-  async bringToFront() { return _activeConnection.bringToFront(); },
-  async getActiveDocInfo() { return _activeConnection.getActiveDocInfo(); },
-  async getInfo() { return _activeConnection.getInfo(); },
-  async disconnect() { return _activeConnection.disconnect(); },
-  async ping() { return _activeConnection.ping(); },
-  _reset() { return _activeConnection._reset(); },
-  _getQueueSize() { return _activeConnection._getQueueSize(); },
-  _getRestartCount() { return _activeConnection._getRestartCount(); },
+  getVersion() { return _resolveConn().getVersion(); },
+  getPlatform() { return _resolveConn().getPlatform(); },
+  getConnectionId() { return _resolveConn().getConnectionId(); },
+  isAvailable() { return _resolveConn().isAvailable(); },
+  async isBusy() { return _resolveConn().isBusy(); },
+  async hasDoc() { return _resolveConn().hasDoc(); },
+  async newDoc() { return _resolveConn().newDoc(); },
+  async bringToFront() { return _resolveConn().bringToFront(); },
+  async getActiveDocInfo() { return _resolveConn().getActiveDocInfo(); },
+  async getInfo() { return _resolveConn().getInfo(); },
+  async disconnect() { return _resolveConn().disconnect(); },
+  async ping() { return _resolveConn().ping(); },
+  _reset() { return _resolveConn()._reset(); },
+  _getQueueSize() { return _resolveConn()._getQueueSize(); },
+  _getRestartCount() { return _resolveConn()._getRestartCount(); },
 };
 
+export { ReadBatcher, isReadCommand, CommandQueue };
 export default CadConnection;

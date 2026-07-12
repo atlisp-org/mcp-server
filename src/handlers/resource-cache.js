@@ -1,18 +1,36 @@
 import config from '../config.js';
 
-const CACHE_TTL = config.resourceCacheTtl;
-const resourceCache = new Map();
 const CLEANUP_INTERVAL = 60000;
 
 let cleanupTimer = null;
+let _instanceKey = null;
+
+// instance -> Map(key -> {data, timestamp})
+const _instanceCaches = new Map();
+const _defaultKey = '__default__';
+
+function _getCache() {
+  const key = _instanceKey || _defaultKey;
+  if (!_instanceCaches.has(key)) {
+    _instanceCaches.set(key, new Map());
+  }
+  return _instanceCaches.get(key);
+}
+
+function _ttl() {
+  return config.resourceCacheTtl;
+}
 
 function ensureCleanup() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
     const now = Date.now();
-    for (const [key, entry] of resourceCache) {
-      if (now - entry.timestamp >= CACHE_TTL) {
-        resourceCache.delete(key);
+    const ttl = _ttl();
+    for (const cache of _instanceCaches.values()) {
+      for (const [key, entry] of cache) {
+        if (now - entry.timestamp >= ttl) {
+          cache.delete(key);
+        }
       }
     }
   }, CLEANUP_INTERVAL);
@@ -21,7 +39,17 @@ function ensureCleanup() {
 
 ensureCleanup();
 
-// 每个资源 URI 对应的 cache key 前缀映射
+export function stopCleanup() {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
+}
+
+export function setInstanceKey(key) {
+  _instanceKey = key || null;
+}
+
 const URI_CACHE_PREFIX = {
   'atlisp://cad/info': 'cad:info',
   'atlisp://dwg/entities': 'dwg:entities',
@@ -35,28 +63,32 @@ const URI_CACHE_PREFIX = {
 };
 
 function getCached(key) {
-  const entry = resourceCache.get(key);
-  if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+  const cache = _getCache();
+  const entry = cache.get(key);
+  if (entry && Date.now() - entry.timestamp < _ttl()) {
     return entry.data;
   }
-  resourceCache.delete(key);
+  cache.delete(key);
   return null;
 }
 
 function setCache(key, data) {
-  resourceCache.set(key, { data, timestamp: Date.now() });
+  _getCache().set(key, { data, timestamp: Date.now() });
 }
 
 export function clearCache(uri) {
-  const prefix = URI_CACHE_PREFIX[uri];
-  if (prefix) {
-    for (const key of resourceCache.keys()) {
-      if (key === prefix || key.startsWith(prefix + ':')) {
-        resourceCache.delete(key);
+  const basePrefix = URI_CACHE_PREFIX[uri];
+  if (basePrefix) {
+    const cache = _getCache();
+    for (const key of cache.keys()) {
+      if (key === basePrefix || key.startsWith(basePrefix + ':')) {
+        cache.delete(key);
       }
     }
   } else if (!uri) {
-    resourceCache.clear();
+    const key = _instanceKey || _defaultKey;
+    _instanceCaches.delete(key);
+    _instanceCaches.set(key, new Map());
   }
 }
 

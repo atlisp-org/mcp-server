@@ -29,3 +29,10 @@ export const SERVER_CAPABILITIES = {
 
 /** @deprecated Use actual package system via list_packages/search_packages tools instead */
 export const MOCK_PACKAGES = [];
+
+/** Resource URIs used for subscription notifications across instance switches */
+export const CAD_RESOURCE_URIS = [
+    'atlisp://cad/info', 'atlisp://dwg/name', 'atlisp://dwg/path',
+    'atlisp://dwg/entities', 'atlisp://dwg/tbl', 'atlisp://dwg/block-refs',
+    'atlisp://dwg/text-content', 'atlisp://cad/dwgs', 'atlisp://packages'
+];

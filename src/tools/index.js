@@ -9,6 +9,7 @@ import { tools as dim_hatch_tools } from './dim-hatch-tools.js';
 import { tools as ucs_layout_tools } from './ucs-layout-tools.js';
 import { tools as query_print_tools } from './query-print-tools.js';
 import { tools as batch_tools } from './batch-tools.js';
+
 import { tools as xdata_tools } from './xdata-tools.js';
 import { tools as sheetset_tools } from './sheetset-tools.js';
 import { tools as sheetset_adv_tools } from './sheetset-adv-tools.js';
@@ -40,6 +41,7 @@ import { tools as context_tools } from './context-tools.js';
 import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 import { tools as lint_tools } from './lint-tools.js';
 import { tools as debug_tools } from './debug-tools.js';
+import { tools as concurrent_tools } from './concurrent-tools.js';
 
 const READ_ONLY_TOOLS = new Set([
   'get_cad_info', 'get_platform_info', 'get_system_status',
@@ -110,6 +112,34 @@ const OPEN_WORLD_TOOLS = new Set([
   'load_linetype',
 ]);
 
+function getToolCategory(name) {
+  const n = name;
+  if (/^(draw_|create_3d_|create_box|create_cone|create_cylinder|create_sphere|create_torus|create_wedge|extrude_|revolve_|boolean_|slice_solid|thicken_|offset_surface|create_loft_|create_region)/.test(n)) return '绘图与3D';
+  if (/^(move_|copy_|rotate_|scale_|mirror_|offset_|array_|batch_)/.test(n)) return '修改';
+  if (/^(trim_|extend_|fillet|chamfer|break_|join_|stretch)/.test(n)) return '编辑';
+  if (/^(create_layer|delete_layer|set_layer|layer_)/.test(n)) return '图层';
+  if (/^(create_block|insert_block|explode_block|get_block|set_block|batch_get_block|batch_set_block)/.test(n)) return '块';
+  if (/^(create_dim|list_dim|set_dim|create_hatch|set_hatch)/.test(n)) return '标注与填充';
+  if (/^(create_ucs|set_ucs|delete_ucs|list_ucs|get_current_ucs|create_layout|delete_layout|rename_layout|set_layout|list_layouts|get_current_layout)/.test(n)) return '坐标系与布局';
+  if (/^(create_viewport|set_viewport|lock_viewport|unlock_viewport|maximize_viewport)/.test(n)) return '视口';
+  if (/^find_/.test(n)) return '空间查询';
+  if (/^(select_|get_entity|set_entity|delete_entity|get_bounding_box)/.test(n)) return '选择与属性';
+  if (/^(open_dwg|save_dwg|export_|import_|close_dwg|publish_)/.test(n)) return '文件';
+  if (/^(plot_|save_pdf|batch_plot|publish_layouts)/.test(n)) return '打印';
+  if (/^(get_xdata|set_xdata|delete_xdata|list_xdata|copxy_xdata|search_by_xdata|export_xdata|import_xdata)/.test(n)) return '扩展数据';
+  if (/^(create_sheet|open_sheet|list_sheet|add_sheet|delete_sheet|publish_sheet|sheet_|reorder_sheet|create_subset|list_subset|set_sheet)/.test(n)) return '图纸集';
+  if (/^(attach_|detach_|reload_|list_attached|get_pdf|create_dgn|create_dwf|import_dxf|import_dgn|export_dgn|create_hyper|remove_hyper|xref|bind_xref|clip_xref|path_xref)/.test(n)) return '参照与底图';
+  if (/^(create_text|create_mleader|create_linetype|list_text|list_linetype|list_mleader|load_linetype|create_dimension_style|set_dimstyle|list_dimension_styles|set_mleader_style)/.test(n)) return '样式';
+  if (/^(purge_|drawing_audit|drawing_recover|overkill)/.test(n)) return '清理';
+  if (/^(find_text|replace_text|set_text_|justify_|convert_text|explode_text)/.test(n)) return '文字';
+  if (/^(eval_lisp|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status)/.test(n)) return '系统';
+  if (/^(list_packages|search_packages|install_package|get_function_usage|list_symbols|import_funlib)/.test(n)) return '包与函数';
+  if (/^(watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|external_|list_data|export_to|import_external)/.test(n)) return '高级';
+  if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|get_tool_info)/.test(n)) return '元工具';
+  if (/^(agent_)/.test(n)) return 'Agent上下文';
+  return '其他';
+}
+
 function addAnnotations(tool) {
   const isDeprecated = DEPRECATED_TOOLS.has(tool.name);
   const isPoolTool = tool.name.startsWith('cad_pool_') || tool.name === 'session_pin_instance' || tool.name === 'session_unpin_instance';
@@ -130,6 +160,7 @@ function addAnnotations(tool) {
         tool.name.startsWith('boolean_') || EXTRA_DESTRUCTIVE.has(tool.name),
       idempotentHint: READ_ONLY_TOOLS.has(tool.name) || IDEMPOTENT_WRITE_TOOLS.has(tool.name),
       openWorldHint: OPEN_WORLD_TOOLS.has(tool.name),
+      category: getToolCategory(tool.name),
       ...(isDeprecated ? { deprecatedReason: 'This tool has been superseded. Check documentation for alternatives.' } : {}),
     },
   };
@@ -148,6 +179,7 @@ export const tools = [
   ...ucs_layout_tools,
   ...query_print_tools,
   ...batch_tools,
+
   ...xdata_tools,
   ...sheetset_tools,
   ...sheetset_adv_tools,
@@ -173,6 +205,7 @@ export const tools = [
   ...skill_tools,
   ...lint_tools,
   ...debug_tools,
+  ...concurrent_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));

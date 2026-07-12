@@ -5,7 +5,7 @@ const mockSendCommand = vi.fn();
 const mockConnect = vi.fn();
 const mockCad = { connected: false, connect: mockConnect, sendCommandWithResult: mockSendCommandWithResult, sendCommand: mockSendCommand };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad }));
+vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), closeLog: vi.fn() }));
 
 const { createSheetSet, openSheetSet, listSheetSets, addSheet, listSheets, deleteSheet, publishSheetSet, getSheetSetProperty, createSheetSetArchive } = await import('../src/handlers/sheetset-handlers.js');

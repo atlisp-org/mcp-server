@@ -20,6 +20,7 @@ const mockCad = vi.hoisted(() => ({
 vi.mock('../src/cad.js', () => ({
   cad: mockCad,
   onDocumentChanged: vi.fn(),
+  resolveCadConnection: () => mockCad,
 }));
 
 const { handleToolCall } = await import('../src/atlisp-mcp.js');

@@ -31,6 +31,7 @@ const mockCad = {
 vi.mock('../src/cad.js', () => ({
   cad: mockCad,
   onDocumentChanged: vi.fn(),
+  resolveCadConnection: () => mockCad,
 }));
 
 const originalFetch = globalThis.fetch;

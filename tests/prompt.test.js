@@ -4,7 +4,8 @@ vi.mock('../src/cad.js', () => ({
   cad: {
     connected: true,
     sendCommandWithResult: vi.fn().mockResolvedValue('((("LINE" . 10) ("CIRCLE" . 5)))'),
-  }
+  },
+  resolveCadConnection: vi.fn(),
 }));
 
 vi.mock('../src/logger.js', () => ({ log: vi.fn() }));

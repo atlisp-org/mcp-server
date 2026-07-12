@@ -50,4 +50,5 @@ export const tools = [
     },
 { name: 'search_tools', description: '按关键词搜索可用工具', inputSchema: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词(匹配名称和描述)' } }, required: ['query'] } },
 { name: 'list_tools_by_category', description: '按分类列出工具', inputSchema: { type: 'object', properties: { category: { type: 'string', description: '分类名称(可选,不传则列出所有分类)' } } } },
+{ name: 'get_tool_info', description: '获取工具的详细信息（参数、分类、只读/破坏性标记等）', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '工具名称' } }, required: ['name'] } },
 ];

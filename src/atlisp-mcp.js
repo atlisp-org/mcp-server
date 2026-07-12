@@ -27,6 +27,7 @@ import { createWebSocketServer } from './websocket-transport.js';
 import { loadPlugins, initPlugins, getPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher } from './plugin-loader.js';
 import { registerTool, callCustomTool, getCustomHandlers } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
+import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 
@@ -66,6 +67,7 @@ Options:
   --no-lint                    Disable lint pre-check for eval_lisp
   --lint-off                   Same as --no-lint
   --api-key <key>              API key for authentication
+  --client-id <id>             Client identifier for remote health report
   --security-level <type>      Security level: strict, standard, relaxed (default: strict)
 
 Environment Variables:
@@ -86,7 +88,8 @@ Environment Variables:
   LINT_LEVEL            Lint level (error/warn/off)
   NO_LINT               Disable lint (true/false)
   REQUEST_LOG_ENABLED   Enable request logging (true/false, default: true)
-  CORS_ORIGIN           CORS origin (default: *)
+  CORS_ORIGIN           CORS origin (default: https://atlisp.cn)
+  CLIENT_ID             Client identifier for remote health report
   RATE_LIMIT_WINDOW     Rate limit window in ms (default: 60000)
   RATE_LIMIT_MAX        Max requests per window (default: 100)
 
@@ -142,6 +145,8 @@ For more info: https://atlisp.cn
             process.env.SSL_CERT_PATH = cliArgs[++i];
         } else if (arg === '--api-key' && cliArgs[i + 1]) {
             process.env.MCP_API_KEY = cliArgs[++i];
+        } else if (arg === '--client-id' && cliArgs[i + 1]) {
+            process.env.CLIENT_ID = cliArgs[++i];
         } else if (arg === '--metrics-enabled' && cliArgs[i + 1]) {
             process.env.METRICS_ENABLED = cliArgs[++i];
         }
@@ -250,10 +255,12 @@ export async function startServer() {
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
             console.error(`@lisp MCP Server 启动 - ${proto}://${config.host}:${config.port} (${mode}模式)`);
+            startHealthReporter();
         });
 
         async function shutdown(signal) {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
+            stopHealthReporter();
             stopPluginWatcher();
             if (promptsWatcher) { promptsWatcher.close(); promptsWatcher = null; }
             sessionManager.closeAll();

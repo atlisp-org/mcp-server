@@ -22,25 +22,22 @@ describe('CadConnectionPool', () => {
     await pool.disconnectAll();
   });
 
-  it('should have default instance registered', () => {
+  it('should start empty', () => {
     const stats = pool.getStats();
-    expect(stats.total).toBe(1);
-    expect(stats.active).toBe('default');
+    expect(stats.total).toBe(0);
+    expect(stats.active).toBeNull();
     expect(stats.maxPoolSize).toBe(3);
   });
 
   it('should reject setting active to non-existent key', () => {
     const result = pool.setActive('nonexistent');
     expect(result).toBe(false);
-    // Active key should still be default
-    expect(pool.getStats().active).toBe('default');
+    expect(pool.getStats().active).toBeNull();
   });
 
-  it('should list instances', () => {
+  it('should list instances when empty', () => {
     const instances = pool.listInstances();
-    expect(instances.length).toBe(1);
-    expect(instances[0].key).toBe('default');
-    expect(instances[0].isActive).toBe(true);
+    expect(instances.length).toBe(0);
   });
 
   it('should return stats with correct structure', () => {
@@ -49,14 +46,10 @@ describe('CadConnectionPool', () => {
     expect(stats).toHaveProperty('maxPoolSize');
     expect(stats).toHaveProperty('active');
     expect(stats).toHaveProperty('instances');
-    expect(stats.instances[0]).toHaveProperty('key');
-    expect(stats.instances[0]).toHaveProperty('connected');
-    expect(stats.instances[0]).toHaveProperty('queueSize');
-    expect(stats.instances[0]).toHaveProperty('uptime');
+    expect(Array.isArray(stats.instances)).toBe(true);
   });
 
-  it('should set active to default after removing active key', async () => {
-    // Add a temp instance
+  it('should fall back to null active key after removing the only instance', async () => {
     const conn = createCadConnection();
     pool['_instances'].set('temp', {
       key: 'temp',
@@ -71,27 +64,42 @@ describe('CadConnectionPool', () => {
     expect(pool.getStats().active).toBe('temp');
 
     await pool.disconnect('temp');
-    expect(pool.getStats().active).toBe('default');
+    expect(pool.getStats().active).toBeNull();
+    expect(pool.listInstances().length).toBe(0);
+  });
+
+  it('should fall back to next instance after removing the active key', async () => {
+    const conn1 = createCadConnection();
+    const conn2 = createCadConnection();
+    pool['_instances'].set('a', {
+      key: 'a', connection: conn1, connected: false, lastPing: Date.now(), createdAt: Date.now(), label: 'a', autoReconnect: false,
+    });
+    pool['_instances'].set('b', {
+      key: 'b', connection: conn2, connected: false, lastPing: Date.now(), createdAt: Date.now(), label: 'b', autoReconnect: false,
+    });
+    pool.setActive('a');
+    expect(pool.getStats().active).toBe('a');
+    expect(pool.listInstances().length).toBe(2);
+
+    await pool.disconnect('a');
+    expect(pool.getStats().active).toBe('b');
     expect(pool.listInstances().length).toBe(1);
   });
 
   it('should not allow connecting beyond maxPoolSize when adding new keys', async () => {
-    // Fill the pool to max
-    pool['_maxPoolSize'] = 2;
+    pool['_maxPoolSize'] = 1;
 
-    // We already have 'default', try to add one more
-    const conn1 = createCadConnection();
-    pool['_instances'].set('extra', {
-      key: 'extra',
-      connection: conn1,
+    pool['_instances'].set('existing', {
+      key: 'existing',
+      connection: createCadConnection(),
       connected: false,
       lastPing: Date.now(),
       createdAt: Date.now(),
-      label: 'extra',
+      label: 'existing',
       autoReconnect: false,
     });
 
-    expect(pool['_instances'].size).toBe(2);
+    expect(pool['_instances'].size).toBe(1);
 
     // Now try to connect a new key (would exceed limit)
     await expect(pool.connect('overflow', null, { makeActive: false })).rejects.toThrow('连接池已满');

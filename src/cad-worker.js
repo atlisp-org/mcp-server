@@ -4,15 +4,55 @@ import process from 'process';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 import { validateLispCodeWorker, checkParens } from './lisp-security.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const _dllPath = path.join(__dirname, '..', 'dist', 'cad-rothelper.dll');
+
+function _loadDll(methodName) {
+  try {
+    return edge.func({
+      assemblyFile: _dllPath,
+      typeName: 'CadRotHelper.ConnectionManager',
+      methodName,
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+function _loadEnum() {
+  try {
+    return edge.func({
+      assemblyFile: _dllPath,
+      typeName: 'CadRotHelper.RotEnumerator',
+      methodName: 'EnumerateAll',
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+const _rotConnect = _loadDll('RotConnect');
+const _rotDisconnect = _loadDll('RotDisconnect');
+const _rotSendCmd = _loadDll('RotSendCommand');
+const _rotSendResult = _loadDll('RotSendWithResult');
+const _rotIsBusy = _loadDll('RotIsBusy');
+const _rotHasDoc = _loadDll('RotHasDoc');
+const _rotDocInfo = _loadDll('RotGetActiveDocInfo');
+const _rotBringToFront = _loadDll('RotBringToFront');
+const _rotNewDoc = _loadDll('RotNewDoc');
+const _rotEnum = _loadEnum();
+
+let _monikerSession = null;
 
 const BUSY_RETRIES = parseInt(process.env.BUSY_RETRIES || '10', 10);
 const BUSY_DELAY = parseInt(process.env.BUSY_DELAY || '500', 10);
 
-// Lisp expression cache (hash -> compiled Lisp code)
 const LISP_CACHE = new Map();
 const LISP_CACHE_MAX = parseInt(process.env.LISP_CACHE_MAX || '500', 10);
-
 const CACHE_TTL = parseInt(process.env.LISP_CACHE_TTL || '300000', 10);
 
 function getCachedLisp(code) {
@@ -123,7 +163,7 @@ const cadLaunch = edge.func(function() {/*
               }
           } catch (Exception ex) {
                System.Diagnostics.Debug.WriteLine("cadLaunch create " + progIds[i] + " error: " + ex.Message);
-           }
+          }
       }
 
       return new { success = false, error = "No CAD found" };
@@ -135,14 +175,14 @@ const cadSend = edge.func(function() {/*
       try {
           dynamic d = input;
 string code = d.code.ToString();
-           string platform = d.platform.ToString();
-           string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          string platform = d.platform.ToString();
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
           dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
           if (cad != null) {
               dynamic doc = cad.ActiveDocument;
-               if (doc != null) {
-                    doc.SendCommand(code);
-                   return new { success = true };
+              if (doc != null) {
+                  doc.SendCommand(code);
+                  return new { success = true };
               }
           }
       } catch (Exception ex) {
@@ -165,18 +205,16 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
           string codeHash = d.codeHash != null ? d.codeHash.ToString() : "";
           bool cacheEnabled = d.cacheEnabled != null && d.cacheEnabled.ToString() == "True";
           bool hasCacheKey = cacheEnabled && !string.IsNullOrEmpty(codeHash);
-           string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
-           string tempDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "@lisp", "tmp");
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          string tempDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "@lisp", "tmp");
           System.IO.Directory.CreateDirectory(tempDir);
-          
-          // 结果文件始终使用 GUID 命名（每次调用唯一）
+
           tempFile = System.IO.Path.Combine(tempDir, "atlisp_result_" + System.Guid.NewGuid().ToString("N") + ".txt");
-          
-          // 代码文件：启用缓存时使用 hash 命名，否则使用 GUID 命名
+
           string fileKey = hasCacheKey ? codeHash : System.Guid.NewGuid().ToString("N");
           userCodeFile = System.IO.Path.Combine(tempDir, "atlisp_user_" + fileKey + ".lsp");
           lispFile = System.IO.Path.Combine(tempDir, "atlisp_code_" + fileKey + ".lsp");
-          
+
           bool useCachedUserCode = false;
           if (hasCacheKey) {
               if (System.IO.File.Exists(userCodeFile)) {
@@ -186,11 +224,11 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                   }
               }
           }
-          
+
           if (!useCachedUserCode) {
               System.IO.File.WriteAllText(userCodeFile, code, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
           }
-          
+
           string lispCode = "(progn"
               + "(setq f(open \"" + tempFile.Replace("\\", "\\\\") + "\" \"w\"))"
               + "(setq r(vl-catch-all-apply '(lambda ()(load \"" + userCodeFile.Replace("\\", "\\\\") + "\"))))"
@@ -199,15 +237,15 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
               + "(princ r f))"
               + "(close f)"
               + "(princ))";
-            
-            System.IO.File.WriteAllText(lispFile, lispCode, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
-          
+
+          System.IO.File.WriteAllText(lispFile, lispCode, System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
+
           dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
           if (cad != null) {
               dynamic doc = cad.ActiveDocument;
-               if (doc != null) {
-                    doc.SendCommand("(load \"" + lispFile.Replace("\\", "\\\\") + "\")\n");
-                  
+              if (doc != null) {
+                  doc.SendCommand("(load \"" + lispFile.Replace("\\", "\\\\") + "\")\n");
+
                   int retries = 10;
                   string result = "";
                   while (retries > 0 && !System.IO.File.Exists(tempFile)) {
@@ -220,7 +258,7 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                           try {
                               byte[] bytes = System.IO.File.ReadAllBytes(tempFile);
                               System.Text.Encoding enc;
-                              
+
                               if (!string.IsNullOrEmpty(encoding)) {
                                   enc = System.Text.Encoding.GetEncoding(encoding);
                               } else {
@@ -239,13 +277,13 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                                       }
                                   }
                               }
-                              
+
                               result = enc.GetString(bytes).Trim();
-                              
+
                               if (result.StartsWith("ERROR:")) {
                                   return new { success = false, error = result.Substring(6).Trim() };
                               }
-                              
+
                               try { System.IO.File.Delete(tempFile); } catch {}
                               try { System.IO.File.Delete(lispFile); } catch {}
                               if (!hasCacheKey) { try { if (System.IO.File.Exists(userCodeFile)) System.IO.File.Delete(userCodeFile); } catch {} }
@@ -512,11 +550,132 @@ function computeCodeHash(code, cacheEnabled) {
   return '';
 }
 
-async function handleMessage(msg) {
-  if (msg.type === 'ping') {
-    return { pong: true };
+function dllCall(fn, args) {
+  return new Promise((resolve, reject) => {
+    if (!fn) return resolve({ success: false, error: 'DLL method not available' });
+    fn(args, (e, r) => {
+      if (e) reject(e);
+      else resolve(r);
+    });
+  });
+}
+
+async function monikerOrEdge(rotFn, edgeFn, args, platform) {
+  if (_monikerSession && rotFn) return await dllCall(rotFn, { key: _monikerSession, ...args });
+  return new Promise((resolve, reject) => {
+    edgeFn(platform || 'AutoCAD', (e, r) => {
+      if (e) reject(e);
+      else resolve(r);
+    });
+  });
+}
+
+function validateCode(code) {
+  const parenCheck = checkParens(code);
+  if (!parenCheck.valid) {
+    return { valid: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
   }
-  if (msg.type === 'connect') {
+  const securityLevel = process.env.SECURITY_LEVEL || 'strict';
+  if (securityLevel !== 'relaxed') {
+    const injectionCheck = validateLispCodeWorker(code);
+    if (!injectionCheck.valid) {
+      return { valid: false, error: `安全限制: ${injectionCheck.error}` };
+    }
+  }
+  return { valid: true };
+}
+
+async function ensureDocument(platform) {
+  if (_monikerSession) return true;
+  const docCheck = await new Promise((resolve, reject) => {
+    cadHasDoc(platform || 'AutoCAD', (e, r) => {
+      if (e) reject(e);
+      else resolve(r);
+    });
+  });
+  return docCheck.hasDoc;
+}
+
+async function executeWithRetry(fn, label) {
+  const maxRetries = 3;
+  let lastError = null;
+  for (let i = 0; i < maxRetries; i++) {
+    const isBusy = await waitForIdle();
+    if (isBusy) {
+      try {
+        return await fn();
+      } catch (e) {
+        log(`${label} error: ${e.message}`);
+        lastError = e;
+      }
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return { success: false, error: lastError?.message || '发送失败' };
+}
+
+async function executeLisp(msg, withResult) {
+  if (!msg.code.endsWith('\n')) {
+    msg.code += '\n';
+  }
+
+  const validation = validateCode(msg.code);
+  if (!validation.valid) return validation;
+
+  if (!await ensureDocument(msg.platform)) {
+    return { success: false, error: 'No open document' };
+  }
+
+  if (_monikerSession) {
+    if (withResult || msg.code.length > 240) {
+      return await dllCall(_rotSendResult, { key: _monikerSession, code: msg.code, encoding: msg.encoding || '' });
+    }
+    return await dllCall(_rotSendCmd, { key: _monikerSession, code: msg.code });
+  }
+
+  if (withResult || msg.code.length > 255) {
+    const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
+    const codeHash = computeCodeHash(msg.code, cacheEnabled);
+    log(`sendResult (${msg.code.length} chars, cache=${cacheEnabled}): ${msg.code.substring(0, 80)}...`);
+    return await executeWithRetry(async () => {
+      const r = await new Promise((resolve, reject) => {
+        cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '', codeHash, cacheEnabled }, (e, r) => {
+          if (e) reject(e);
+          else resolve(r);
+        });
+      });
+      log(`sendResult result: ${JSON.stringify(r)}`);
+      return r;
+    }, 'sendResult');
+  }
+
+  log(`send: ${msg.code}`);
+  return await executeWithRetry(async () => {
+    const r = await new Promise((resolve, reject) => {
+      cadSend({ code: msg.code, platform: msg.platform }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+    log(`send result: ${JSON.stringify(r)}`);
+    return r;
+  }, 'send');
+}
+
+const MESSAGE_HANDLERS = {
+  ping() {
+    return { pong: true };
+  },
+
+  async connect(msg) {
+    if (msg.moniker && _rotConnect) {
+      const result = await dllCall(_rotConnect, { key: msg.monikerKey, moniker: msg.moniker });
+      if (result && result.success) {
+        _monikerSession = msg.monikerKey;
+        return result;
+      }
+      return result;
+    }
     if (msg.platform) {
       return await connectToPlatform(msg.platform);
     }
@@ -537,159 +696,62 @@ async function handleMessage(msg) {
         else resolve(r);
       });
     });
-  }
-  if (msg.type === 'hasdoc') {
-    return new Promise((resolve, reject) => {
-      cadHasDoc(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-  }
-  if (msg.type === 'newdoc') {
-    return new Promise((resolve, reject) => {
-      cadNewDoc(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-  }
-  if (msg.type === 'bringToFront') {
-    return new Promise((resolve, reject) => {
-      cadBringToFront(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-  }
-  if (msg.type === 'send') {
-    if (!msg.code.endsWith('\n')) {
-      msg.code += '\n';
+  },
+
+  async disconnect() {
+    if (_monikerSession && _rotDisconnect) {
+      await dllCall(_rotDisconnect, { key: _monikerSession });
     }
-    const docCheck = await new Promise((resolve, reject) => {
-      cadHasDoc(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-    if (!docCheck.hasDoc) {
-      return { success: false, error: 'No open document' };
+    _monikerSession = null;
+    return { success: true };
+  },
+
+  async hasdoc(msg) {
+    return await monikerOrEdge(_rotHasDoc, cadHasDoc, {}, msg.platform);
+  },
+
+  async newdoc(msg) {
+    return await monikerOrEdge(_rotNewDoc, cadNewDoc, {}, msg.platform);
+  },
+
+  async bringToFront(msg) {
+    return await monikerOrEdge(_rotBringToFront, cadBringToFront, {}, msg.platform);
+  },
+
+  async send(msg) {
+    return await executeLisp(msg, false);
+  },
+
+  async sendResult(msg) {
+    return await executeLisp(msg, true);
+  },
+
+  async isBusy(msg) {
+    return await monikerOrEdge(_rotIsBusy, cadIsBusy, {}, msg.platform);
+  },
+
+  async getActiveDocInfo(msg) {
+    return await monikerOrEdge(_rotDocInfo, cadGetActiveDocInfo, {}, msg.platform);
+  },
+
+  async startMonitor(msg) {
+    if (_monikerSession) {
+      return { success: false, error: 'startMonitor not supported for moniker connections' };
     }
-    const parenCheck = checkParens(msg.code);
-    if (!parenCheck.valid) {
-      return { success: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
-    }
-    const securityLevel = process.env.SECURITY_LEVEL || 'strict';
-    if (securityLevel !== 'relaxed') {
-      const injectionCheck = validateLispCodeWorker(msg.code);
-      if (!injectionCheck.valid) {
-        return { success: false, error: `安全限制: ${injectionCheck.error}` };
-      }
-    }
-    if (msg.code.length > 255) {
-      const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
-      const codeHash = computeCodeHash(msg.code, cacheEnabled);
-      log(`send (long code ${msg.code.length} chars, fallback to sendResult, cache=${cacheEnabled}): ${msg.code.substring(0, 80)}...`);
-      const r = await new Promise((resolve, reject) => {
-        cadSendWithResult({ code: msg.code, platform: msg.platform || 'AutoCAD', encoding: '', codeHash, cacheEnabled }, (e, r) => {
-          if (e) reject(e);
-          else resolve(r);
-        });
-      });
-      log(`send result (long code): ${JSON.stringify(r)}`);
-      return r;
-    }
-    const maxRetries = 3;
-    let lastError = null;
-    for (let i = 0; i < maxRetries; i++) {
-      const isBusy = await waitForIdle(msg.platform || 'AutoCAD');
-      if (isBusy) {
-        log(`send: ${msg.code}`);
-        try {
-          const r = await new Promise((resolve, reject) => {
-            cadSend({ code: msg.code, platform: msg.platform }, (e, r) => {
-              if (e) reject(e);
-              else resolve(r);
-            });
-          });
-          log(`send result: ${JSON.stringify(r)}`);
-          return r;
-        } catch (e) {
-          log(`send error: ${e.message}`);
-          lastError = e;
-        }
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-    return { success: false, error: lastError?.message || '发送失败' };
-  }
-  if (msg.type === 'sendResult') {
-    const docCheck = await new Promise((resolve, reject) => {
-      cadHasDoc(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-    if (!docCheck.hasDoc) {
-      return { success: false, error: 'No open document' };
-    }
-    const parenCheck = checkParens(msg.code);
-    if (!parenCheck.valid) {
-      return { success: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
-    }
-    const injectionCheck = validateLispCodeWorker(msg.code);
-    if (!injectionCheck.valid) {
-      return { success: false, error: `安全限制: ${injectionCheck.error}` };
-    }
-    const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
-    const codeHash = computeCodeHash(msg.code, cacheEnabled);
-    const maxRetriesResult = 3;
-    let lastErrorResult = null;
-    for (let i = 0; i < maxRetriesResult; i++) {
-      const isBusy = await waitForIdle(msg.platform);
-      if (isBusy) {
-        log(`sendResult: ${msg.code}`);
-        try {
-          const r = await new Promise((resolve, reject) => {
-            cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '', codeHash, cacheEnabled }, (e, r) => {
-              if (e) reject(e);
-              else resolve(r);
-            });
-          });
-          log(`sendResult result: ${JSON.stringify(r)}`);
-          return r;
-        } catch (e) {
-          log(`sendResult error: ${e.message}`);
-          lastErrorResult = e;
-        }
-      }
-      await new Promise(r => setTimeout(r, 500));
-    }
-    return { success: false, error: lastErrorResult?.message || '发送失败' };
-  }
-  if (msg.type === 'isBusy') {
-    return new Promise((resolve, reject) => {
-      cadIsBusy(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-  }
-  if (msg.type === 'getActiveDocInfo') {
-    return new Promise((resolve, reject) => {
-      cadGetActiveDocInfo(msg.platform || 'AutoCAD', (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-  }
-  if (msg.type === 'startMonitor') {
     return new Promise((resolve, reject) => {
       cadStartMonitor(msg.platform || 'AutoCAD', (e, r) => {
         if (e) reject(e);
         else resolve(r);
       });
     });
-  }
-  return { error: 'unknown message type' };
+  },
+};
+
+export async function handleMessage(msg) {
+  const handler = MESSAGE_HANDLERS[msg.type];
+  if (!handler) return { error: 'unknown message type' };
+  return await handler(msg);
 }
+
+// Exported for testing
+export { validateCode, computeCodeHash, getCachedLisp, setCachedLisp, MESSAGE_HANDLERS, executeLisp };

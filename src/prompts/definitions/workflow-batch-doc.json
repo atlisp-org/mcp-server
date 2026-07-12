@@ -1,0 +1,27 @@
+{
+  "name": "workflow-batch-doc",
+  "description": "批量文档处理工作流：打开多个 DWG → 执行操作 → 保存/导出 → 关闭。适用于批量清理、替换文字、统一修改",
+  "arguments": [
+    { "name": "action", "description": "步骤: open/process/save/report", "required": true, "default": "process" },
+    { "name": "operation", "description": "操作类型: cleanup/find-replace/check-standards/export-pdf", "required": false, "default": "cleanup" },
+    { "name": "files", "description": "DWG 文件路径列表，用逗号分隔", "required": false }
+  ],
+  "templates": {
+    "open": {
+      "code": "",
+      "description": "1. 确定目标文件列表\n2. 对每个文件，循环调用 open_dwg({ filePath }) → 执行操作 → save_dwg/export_pdf → close_dwg\n\n示例流程：\n```\n文件列表 = [\"project/a.dwg\", \"project/b.dwg\"]\nfor each file in 文件列表:\n  open_dwg({ filePath })\n  ... 执行操作 ...\n  save_dwg()\n  close_dwg()\n```"
+    },
+    "process": {
+      "code": "",
+      "description": "选择 operation:\n- cleanup: 打开文件 → 执行 eval_lisp({ code: '(command \"_.PURGE\" \"_B\" \"*\" \"_N\")(command \"_.AUDIT\" \"_Y\")' }) → save_dwg → close_dwg\n- find-replace: 打开文件 → replace_text({ pattern, replacement }) → save_dwg → close_dwg\n- check-standards: 打开文件 → eval_lisp_with_result 检查图层/样式 → 记录结果 → close_dwg (不保存)\n- export-pdf: 打开文件 → export_pdf({ outputPath, layout: \"Model\" }) → close_dwg (不保存)\n\n对每个文件重复此流程，收集结果。"
+    },
+    "save": {
+      "code": "",
+      "description": "使用 save_dwg() 保存当前文件。如需另存为不同路径，传入 filePath 参数。\n完成后用 close_dwg({ save: false }) 关闭。"
+    },
+    "report": {
+      "code": "",
+      "description": "汇总所有文件的操作结果:\n- 已处理文件数\n- 每个文件的执行结果（成功/失败）\n- 失败原因\n\n使用 get_system_status 检查 CAD 最终状态。"
+    }
+  }
+}

@@ -88,6 +88,7 @@ export async function initHandlerModules() {
       handlerModules[name] = () => import(`./handlers/${name}-handlers.js`);
     }
   }
+  watchHandlers();
 }
 
 export async function getHandler(toolName) {
@@ -97,3 +98,42 @@ export async function getHandler(toolName) {
   if (!mod || typeof mod[resolved.funcName] !== 'function') return null;
   return mod[resolved.funcName];
 }
+
+// === Hot Reload ===
+
+let _watcherInitialized = false;
+
+export function watchHandlers() {
+  if (_watcherInitialized) return;
+  _watcherInitialized = true;
+
+  const handlerDir = path.join(__dirname, 'handlers');
+  let debounceTimer = null;
+
+  try {
+    if (!fs.existsSync(handlerDir)) return;
+    fs.watch(handlerDir, (eventType, filename) => {
+      if (!filename || !filename.endsWith('-handlers.js')) return;
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        const name = filename.replace('-handlers.js', '');
+        moduleCache.delete(name);
+        resolvedCache.clear();
+        _handlerNameMapInit = false;
+        _handlerModulesInit = false;
+
+        try {
+          await initHandlerModules();
+          log(`Handler hot-reloaded: ${filename}`);
+        } catch (e) {
+          log(`Handler reload failed for ${filename}: ${e.message}`);
+        }
+      }, 300);
+    });
+  } catch (e) {
+    log(`Handler watch error: ${e.message}`);
+  }
+}
+
+

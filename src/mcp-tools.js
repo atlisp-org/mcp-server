@@ -1,17 +1,13 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import { getHandler, getHandlerModule } from './handler-loader.js';
-import { listPrompts, getPrompt } from './handlers/prompt-handlers.js';
 import { streamEntitiesByType, streamTextContent, streamBlockRefs } from './streaming.js';
-import { CAD_PLATFORMS } from './constants.js';
+import { CAD_PLATFORMS, CAD_RESOURCE_URIS } from './constants.js';
 import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
 import { tools } from './tools/index.js';
 import { mcpContext } from './mcp-server-state.js';
 
 import { registerWatch, removeWatch, listWatches, waitForWatch, createAndWait } from './trigger-engine.js';
-import { validateLispCode, addToAllowlist, clearSessionAllowlist } from './lisp-sandbox.js';
+import { validateLispCode, addToAllowlist, clearSessionAllowlist } from './lisp-security.js';
 import { analyzeLispCode } from './lint-analyzer.js';
 import { formatCode } from '@atlisp/lint/dist/formatter.js';
 import { lintProject } from '@atlisp/lint/dist/project.js';
@@ -21,6 +17,21 @@ import { executeInSession, getHistory, listSessions, closeSession } from './repl
 import { registerWebhook, removeWebhook, listWebhooks, getWebhookLog } from './webhook-engine.js';
 import { queryAuditLog, getAuditStats } from './audit-log.js';
 import { setContext, getContext, listContext, deleteContext, clearContext } from './agent-context.js';
+import { clearCache } from './handlers/resource-handlers.js';
+import * as subMgr from './subscription-manager.js';
+
+import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
+import { search_tools, list_tools_by_category, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
+
+// 注册实例切换回调：通知已订阅客户端刷新资源
+// 缓存已在 cad-pool.setActive() 中通过 setInstanceKey() 自动隔离
+pool.onInstanceSwitch(() => {
+  for (const uri of CAD_RESOURCE_URIS) {
+    if (subMgr.isSubscribed(uri)) {
+      subMgr.notify(uri, null);
+    }
+  }
+});
 
 // Re-export handleToolCall from the executor module
 export { handleToolCall } from './tool-executor.js';
@@ -74,14 +85,8 @@ export const TOOL_HANDLERS = {
     },
 
     // === Prompts ===
-    list_prompts: async () => {
-        const prompts = await listPrompts();
-        return { content: [{ type: 'text', text: JSON.stringify(prompts) }] };
-    },
-    get_prompt: async (a) => {
-        const prompt = await getPrompt(a.name, a.args || {});
-        return { content: prompt.messages.map(m => ({ type: 'text', text: m.content.text || m.content })) };
-    },
+    list_prompts: list_prompts_handler,
+    get_prompt: get_prompt_handler,
 
     // === Entity Operations ===
     get_entity:           lazy('get_entity', (a) => a?.handle),
@@ -404,8 +409,45 @@ export const TOOL_HANDLERS = {
     draw_leader: lazy('draw_leader', (a) => [a.points, a.annotation]),
     draw_table: lazy('draw_table', (a) => [a.insertionPoint, a.rows, a.columns, a.rowHeight, a.colWidth]),
 
+    // === Batch Concurrent ===
+    batch_concurrent_tasks: async (a) => {
+        if (!a.tasks || !Array.isArray(a.tasks) || a.tasks.length === 0) {
+            return { content: [{ type: 'text', text: '需要 tasks 数组' }], isError: true };
+        }
+        if (a.tasks.length > 50) {
+            return { content: [{ type: 'text', text: '最多支持 50 个并发任务' }], isError: true };
+        }
+
+        const results = await Promise.allSettled(a.tasks.map(async (task, idx) => {
+            const handler = TOOL_HANDLERS[task.tool];
+            if (!handler) return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: `未知工具: ${task.tool}` };
+
+            const ctx = mcpContext.getStore();
+            const prevInstance = ctx?._toolInstance || null;
+            if (ctx && task.instance) ctx._toolInstance = task.instance;
+
+            try {
+                const result = await handler(task.args || {});
+                return { index: idx, tool: task.tool, instance: task.instance, ok: !result.isError, data: result.content?.[0]?.text || result };
+            } catch (e) {
+                return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: e.message };
+            } finally {
+                if (ctx) ctx._toolInstance = prevInstance;
+            }
+        }));
+
+        const output = results.map((r, idx) => {
+            if (r.status === 'fulfilled') return r.value;
+            return { index: idx, tool: a.tasks[idx].tool, instance: a.tasks[idx].instance, ok: false, error: r.reason?.message || 'Unknown error' };
+        });
+
+        return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };
+    },
+
     // === Batch Transaction ===
     batch_transaction:      lazy('batch_transaction'),
+
+
 
     // === Watch / Trigger ===
     watch_register: (a) => {
@@ -570,6 +612,14 @@ export const TOOL_HANDLERS = {
     },
     cad_pool_switch: (a) => {
         const ok = pool.setActive(a.key);
+        if (ok) {
+            clearCache();
+            for (const uri of CAD_RESOURCE_URIS) {
+                if (subMgr.isSubscribed(uri)) {
+                    subMgr.notify(uri, null);
+                }
+            }
+        }
         return { content: [{ type: 'text', text: ok ? `已切换到实例 ${a.key}` : `实例 ${a.key} 不存在` }] };
     },
     cad_pool_health: async () => {
@@ -581,8 +631,9 @@ export const TOOL_HANDLERS = {
         return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
     },
     cad_pool_connect: async (a) => {
-        const ok = await pool.connect(a.key, a.platform, { label: a.label, makeActive: a.makeActive !== false });
-        return { content: [{ type: 'text', text: ok ? `实例 "${a.key}" 已连接` : `实例 "${a.key}" 连接失败` }] };
+        const ok = await pool.connect(a.key, a.platform, { label: a.label, pid: a.pid, makeActive: a.makeActive !== false });
+        const label = a.key || (a.pid != null ? `PID ${a.pid}` : 'default');
+        return { content: [{ type: 'text', text: ok ? `实例 "${label}" 已连接` : `实例 "${label}" 连接失败` }] };
     },
     cad_pool_disconnect: async (a) => {
         const ok = await pool.disconnect(a.key);
@@ -634,217 +685,16 @@ export const TOOL_HANDLERS = {
     },
 
     // === Meta Tools ===
-    search_tools: async (a) => {
-        const q = (a.query || '').toLowerCase();
-        const results = tools.filter(t => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
-        const text = results.length ? `找到 ${results.length} 个工具:\n${results.map(t => `${t.name}: ${t.description}`).join('\n')}` : `未找到包含 "${a.query}" 的工具`;
-        return { content: [{ type: 'text', text }] };
-    },
-    list_tools_by_category: async (a) => {
-        const categories = {};
-        for (const t of tools) {
-            let cat = '其他';
-            const n = t.name;
-            if (/^(draw_|create_3d_|create_box|create_cone|create_cylinder|create_sphere|create_torus|create_wedge|extrude_|revolve_|boolean_|slice_solid|thicken_|offset_surface|create_loft_|create_region)/.test(n)) cat = '绘图与3D';
-            else if (/^(move_|copy_|rotate_|scale_|mirror_|offset_|array_|batch_)/.test(n)) cat = '修改';
-            else if (/^(trim_|extend_|fillet|chamfer|break_|join_|stretch)/.test(n)) cat = '编辑';
-            else if (/^(create_layer|delete_layer|set_layer|layer_)/.test(n)) cat = '图层';
-            else if (/^(create_block|insert_block|explode_block|get_block|set_block|batch_get_block|batch_set_block)/.test(n)) cat = '块';
-            else if (/^(create_dim|list_dim|set_dim|create_hatch|set_hatch)/.test(n)) cat = '标注与填充';
-            else if (/^(create_ucs|set_ucs|delete_ucs|list_ucs|get_current_ucs|create_layout|delete_layout|rename_layout|set_layout|list_layouts|get_current_layout)/.test(n)) cat = '坐标系与布局';
-            else if (/^(create_viewport|set_viewport|lock_viewport|unlock_viewport|maximize_viewport)/.test(n)) cat = '视口';
-            else if (/^find_/.test(n)) cat = '空间查询';
-            else if (/^(select_|get_entity|set_entity|delete_entity|get_bounding_box)/.test(n)) cat = '选择与属性';
-            else if (/^(open_dwg|save_dwg|export_|import_|close_dwg|publish_)/.test(n)) cat = '文件';
-            else if (/^(plot_|save_pdf|batch_plot|publish_layouts)/.test(n)) cat = '打印';
-            else if (/^(get_xdata|set_xdata|delete_xdata|list_xdata|copxy_xdata|search_by_xdata|export_xdata|import_xdata)/.test(n)) cat = '扩展数据';
-            else if (/^(create_sheet|open_sheet|list_sheet|add_sheet|delete_sheet|publish_sheet|sheet_|reorder_sheet|create_subset|list_subset|set_sheet)/.test(n)) cat = '图纸集';
-            else if (/^(attach_|detach_|reload_|list_attached|get_pdf|create_dgn|create_dwf|import_dxf|import_dgn|export_dgn|create_hyper|remove_hyper|xref|bind_xref|clip_xref|path_xref)/.test(n)) cat = '参照与底图';
-            else if (/^(create_text|create_mleader|create_linetype|list_text|list_linetype|list_mleader|load_linetype|create_dimension_style|set_dimstyle|list_dimension_styles|set_mleader_style)/.test(n)) cat = '样式';
-            else if (/^(purge_|drawing_audit|drawing_recover|overkill)/.test(n)) cat = '清理';
-            else if (/^(find_text|replace_text|set_text_|justify_|convert_text|explode_text)/.test(n)) cat = '文字';
-            else if (/^(eval_lisp|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status)/.test(n)) cat = '系统';
-            else if (/^(list_packages|search_packages|install_package|get_function_usage|list_symbols|import_funlib)/.test(n)) cat = '包与函数';
-            else if (/^(pipeline_|watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|external_|list_data|export_to|import_external)/.test(n)) cat = '高级';
-            else if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category)/.test(n)) cat = '元工具';
-            else if (/^(agent_)/.test(n)) cat = 'Agent上下文';
-            if (!categories[cat]) categories[cat] = [];
-            categories[cat].push(t.name);
-        }
-        if (a.category) {
-            const names = categories[a.category];
-            return { content: [{ type: 'text', text: names ? `${a.category} (${names.length}):\n${names.join('\n')}` : `未找到分类: ${a.category}` }] };
-        }
-        const lines = [];
-        for (const [cat, names] of Object.entries(categories)) {
-            lines.push(`## ${cat} (${names.length})`);
-        }
-        lines.push(`\n共 ${Object.keys(categories).length} 个分类`);
-        return { content: [{ type: 'text', text: lines.join('\n') }] };
-    },
+    search_tools,
+    list_tools_by_category,
+    get_tool_info,
 
     // === Skill Management ===
-    skill_search: async (a) => {
-        const registryUrl = process.env.SKILL_REGISTRY_URL || 'https://raw.githubusercontent.com/atlisp/skill-registry/main/index.json';
-        const cachePath = path.join(os.homedir(), '.atlisp', 'skill-registry-cache.json');
-        let cache = null;
-        try { if (fs.existsSync(cachePath)) cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
-        let index = cache && (Date.now() - cache.fetchedAt < 3600000) ? cache : null;
-        if (!index) {
-            try {
-                const resp = await fetch(registryUrl, { headers: { 'User-Agent': 'atlisp-mcp' } });
-                if (resp.ok) {
-                    index = await resp.json();
-                    index.fetchedAt = Date.now();
-                    try { fs.writeFileSync(cachePath, JSON.stringify(index, null, 2), 'utf-8'); } catch {}
-                }
-            } catch {}
-        }
-        if (!index || !index.skills) return { content: [{ type: 'text', text: '无法获取 skill 注册表索引' }], isError: true };
-        const q = (a.query || '').toLowerCase();
-        const results = index.skills.filter(s =>
-            s.name.toLowerCase().includes(q) ||
-            (s.description || '').toLowerCase().includes(q) ||
-            (s.tags || []).some(t => t.toLowerCase().includes(q))
-        );
-        if (!results.length) return { content: [{ type: 'text', text: `未找到匹配 "${a.query}" 的 skill` }] };
-        const lines = [`找到 ${results.length} 个 skill:\n`];
-        for (const s of results) {
-            lines.push(`**${s.name}**`);
-            if (s.description) lines.push(`  描述: ${s.description}`);
-            if (s.tags?.length) lines.push(`  标签: ${s.tags.join(', ')}`);
-            if (s.version) lines.push(`  版本: ${s.version}`);
-            lines.push('');
-        }
-        return { content: [{ type: 'text', text: lines.join('\n') }] };
-    },
-    skill_install: async (a) => {
-        if (!a.name) return { content: [{ type: 'text', text: '需要 skill 名称' }], isError: true };
-        const registryUrl = process.env.SKILL_REGISTRY_URL || 'https://raw.githubusercontent.com/atlisp/skill-registry/main/index.json';
-        const cachePath = path.join(os.homedir(), '.atlisp', 'skill-registry-cache.json');
-        let cache = null;
-        try { if (fs.existsSync(cachePath)) cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
-        let index = cache;
-        if (!index || (Date.now() - index.fetchedAt > 3600000)) {
-            try {
-                const resp = await fetch(registryUrl, { headers: { 'User-Agent': 'atlisp-mcp' } });
-                if (resp.ok) {
-                    index = await resp.json();
-                    index.fetchedAt = Date.now();
-                    try { fs.writeFileSync(cachePath, JSON.stringify(index, null, 2), 'utf-8'); } catch {}
-                }
-            } catch {}
-        }
-        if (!index || !index.skills) return { content: [{ type: 'text', text: '无法获取 skill 注册表索引' }], isError: true };
-        const skill = index.skills.find(s => s.name === a.name);
-        if (!skill) return { content: [{ type: 'text', text: `未找到 skill: ${a.name}` }], isError: true };
-        const downloadUrl = skill.download_url || skill.url;
-        if (!downloadUrl) return { content: [{ type: 'text', text: `Skill "${a.name}" 没有下载地址` }], isError: true };
-        let content;
-        try {
-            const resp = await fetch(downloadUrl, { headers: { 'User-Agent': 'atlisp-mcp' } });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            content = await resp.text();
-        } catch (e) {
-            return { content: [{ type: 'text', text: `下载失败: ${e.message}` }], isError: true };
-        }
-        const skillsDir = path.join(os.homedir(), '.atlisp', 'skills');
-        try { fs.mkdirSync(skillsDir, { recursive: true }); } catch {}
-        const safeName = a.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '-').substring(0, 40);
-        const skillFile = path.join(skillsDir, `skill-${safeName}.md`);
-        if (fs.existsSync(skillFile)) {
-            return { content: [{ type: 'text', text: `Skill "${a.name}" 已安装 (${skillFile})` }], isError: true };
-        }
-        let finalContent = content;
-        if (!content.match(/^---\n/)) {
-            const tags = (skill.tags || []).join(', ');
-            finalContent = `---\nname: ${a.name}\ndescription: ${skill.description || ''}\ntags: ${tags}\n---\n\n${content}`;
-        }
-        fs.writeFileSync(skillFile, finalContent, 'utf-8');
-        return { content: [{ type: 'text', text: `✅ ${skill.name} 安装成功\n文件: ${skillFile}${skill.version ? `\n版本: ${skill.version}` : ''}` }] };
-    },
-    skill_list_installed: async () => {
-        const skillsDir = path.join(os.homedir(), '.atlisp', 'skills');
-        if (!fs.existsSync(skillsDir)) return { content: [{ type: 'text', text: '暂无已安装的 skill' }] };
-        const results = [];
-        try {
-            const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (entry.isFile() && entry.name.endsWith('.md')) {
-                    const fullPath = path.join(skillsDir, entry.name);
-                    try {
-                        const raw = fs.readFileSync(fullPath, 'utf-8');
-                        const match = raw.match(/^---\n([\s\S]*?)\n---/);
-                        if (match) {
-                            const fm = {};
-                            for (const line of match[1].split('\n')) {
-                                const sep = line.indexOf(':');
-                                if (sep > 0) fm[line.slice(0, sep).trim()] = line.slice(sep + 1).trim();
-                            }
-                            results.push({ name: fm.name || entry.name.replace('.md', ''), description: fm.description || '', tags: fm.tags || '' });
-                        } else {
-                            results.push({ name: entry.name.replace('.md', ''), description: '', tags: '' });
-                        }
-                    } catch {}
-                }
-            }
-        } catch {}
-        if (!results.length) return { content: [{ type: 'text', text: '暂无已安装的 skill' }] };
-        const lines = [`已安装 ${results.length} 个 skill:\n`];
-        for (const s of results) {
-            lines.push(`**${s.name}**${s.description ? ` — ${s.description}` : ''}`);
-            if (s.tags) lines.push(`  标签: ${s.tags}`);
-        }
-        return { content: [{ type: 'text', text: lines.join('\n') }] };
-    },
-    skill_uninstall: async (a) => {
-        if (!a.name) return { content: [{ type: 'text', text: '需要 skill 名称' }], isError: true };
-        const skillsDir = path.join(os.homedir(), '.atlisp', 'skills');
-        if (!fs.existsSync(skillsDir)) return { content: [{ type: 'text', text: `未安装 skill: ${a.name}` }], isError: true };
-        let found = null;
-        try {
-            const entries = fs.readdirSync(skillsDir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (entry.isFile() && entry.name.endsWith('.md')) {
-                    const fullPath = path.join(skillsDir, entry.name);
-                    try {
-                        const raw = fs.readFileSync(fullPath, 'utf-8');
-                        const match = raw.match(/^---\n([\s\S]*?)\n---/);
-                        if (match) {
-                            for (const line of match[1].split('\n')) {
-                                if (line.startsWith('name:') && line.slice(5).trim() === a.name) { found = fullPath; break; }
-                            }
-                        } else if (entry.name.replace('.md', '') === a.name) { found = fullPath; }
-                    } catch {}
-                    if (found) break;
-                }
-            }
-        } catch {}
-        if (!found) return { content: [{ type: 'text', text: `未安装 skill: ${a.name}` }], isError: true };
-        fs.unlinkSync(found);
-        return { content: [{ type: 'text', text: `✅ ${a.name} 已卸载` }] };
-    },
-    skill_list_categories: async () => {
-        const registryUrl = process.env.SKILL_REGISTRY_URL || 'https://raw.githubusercontent.com/atlisp/skill-registry/main/index.json';
-        const cachePath = path.join(os.homedir(), '.atlisp', 'skill-registry-cache.json');
-        let cache = null;
-        try { if (fs.existsSync(cachePath)) cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
-        let index = cache && (Date.now() - cache.fetchedAt < 3600000) ? cache : null;
-        if (!index) {
-            try {
-                const resp = await fetch(registryUrl, { headers: { 'User-Agent': 'atlisp-mcp' } });
-                if (resp.ok) {
-                    index = await resp.json();
-                    try { fs.writeFileSync(cachePath, JSON.stringify(index, null, 2), 'utf-8'); } catch {}
-                }
-            } catch {}
-        }
-        if (!index || !index.skills) return { content: [{ type: 'text', text: '无法获取 skill 注册表索引' }], isError: true };
-        const cats = new Set();
-        for (const s of index.skills) for (const t of (s.tags || [])) cats.add(t);
-        const sorted = Array.from(cats).sort();
-        return { content: [{ type: 'text', text: sorted.length ? `注册表分类 (${sorted.length}):\n${sorted.join('\n')}` : '暂无分类' }] };
-    },
+    skill_search,
+    skill_install,
+    skill_list_installed,
+    skill_uninstall,
+    skill_list_categories,
 };
 
 export { tools };

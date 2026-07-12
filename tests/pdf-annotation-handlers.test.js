@@ -5,7 +5,7 @@ const mockSendCommand = vi.fn();
 const mockConnect = vi.fn();
 const mockCad = { connected: false, connect: mockConnect, sendCommandWithResult: mockSendCommandWithResult, sendCommand: mockSendCommand };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad }));
+vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), closeLog: vi.fn() }));
 
 const { attachPdf, listAttachedPdfs, reloadPdf, detachPdf, getPdfInfo, createDgnUnderlay, createDwfUnderlay, importDxf, importDgn, exportDgn, createHyperlink, removeHyperlink, batchAttachPdfs, savePdfLayout } = await import('../src/handlers/pdf-annotation-handlers.js');

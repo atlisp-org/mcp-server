@@ -14,7 +14,7 @@ npm run test:watch   # 监视模式测试
 npm start            # node src/atlisp-mcp.js 开发模式
 ```
 
-- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`
+- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows only，需要 csc.exe）
 - CI 在 `tools/mcp-server` 目录下运行（本仓库在 monorepo 中位于 `tools/mcp-server/`，但当前检出已为根目录）
 
 ## 架构要点
@@ -28,11 +28,12 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
-- **工具定义**：`src/tools/` 下 38 个文件定义工具 Schema，`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint` 注解
-- **调度**：`src/mcp-tools.js` 的 `TOOL_HANDLERS` 映射工具名到处理函数，参数运行时校验（类型/enum/范围/必填）
-- **处理器**：`src/handlers/` 下 31 个文件实现具体 LISP 代码生成和 CAD 调用
-- **安全**：`lisp-security.js` 是共享安全模块，21 条规则覆盖 eval/load/startapp/文件I/O/危险命令。同时被 `cad-worker.js`（执行层）和 `lisp-sandbox.js`（校验层，支持 session allowlist）使用
-- **配置**：env var → `~/.atlisp/atlisp.config.json` → CLI args 三层优先级，`CONFIG_FILE` env var 可指定配置文件路径
+- **工具定义**：`src/tools/` 下 39+ 个文件定义工具 Schema，`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解
+- **调度**：`src/mcp-tools.js` 的 `TOOL_HANDLERS` 映射工具名到处理函数，参数运行时校验（类型/enum/范围/必填）。skill 管理函数（5 个）已抽取到 `handlers/skill-handlers.js`，元工具（list_tools_by_category/search_tools/get_tool_info/prompts）抽取到 `handlers/meta-handlers.js`
+- **处理器**：`src/handlers/` 下 33 个文件实现具体 LISP 代码生成和 CAD 调用
+- **安全**：`lisp-security.js` 是统一安全模块（已合并原 lisp-sandbox.js），21 条规则 + session allowlist + 威胁分级（block/warn/allow），同时被 `cad-worker.js`（执行层）和 `mcp-tools.js`（校验层）使用
+- **配置**：env var → `~/.atlisp/atlisp.config.json` → CLI args 三层优先级，使用 Zod.coerce 做类型转换，支持热重载
+- **熔断器**：`src/cad-circuit-breaker.js` 独立管理 CAD 连接熔断逻辑（从 cad.js 提取）
 
 ## 添加新工具
 
@@ -56,12 +57,11 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 ## 测试
 
 ```bash
-npm test              # 运行全部 vitest 测试 (30 个测试文件)
+npm test              # 运行全部 vitest 测试 (41 个测试文件, 558+ 测试)
 npm run test:watch    # 监视模式
 ```
 
 - 测试 mock CAD 连接（不依赖真实 CAD），`fetch` 全局 mock 为拒绝状态
-- `tests/resource.test.js` 中 4 个测试在无 CAD 环境下会失败（~27/31 通过），这是**预期行为**；本地连接 CAD 后全部 31 个通过
 - 不支持 `node --experimental-vm-modules`
 
 ## CI
@@ -120,21 +120,31 @@ npx eslint src/ --ext .js             # lint (continue-on-error)
 | `src/atlisp-mcp.js` | 入口：CLI 解析、Express 服务器、MCP 初始化 |
 | `src/mcp-tools.js` | 工具调度：TOOL_HANDLERS 映射、参数校验、审计、资源变更通知 |
 | `src/mcp-handlers.js` | MCP 协议处理器（initialize/tools/list/call） |
-| `src/cad.js` | CAD 连接：熔断器、命令队列、读批处理、心跳、Worker 管理 |
+| `src/tool-executor.js` | 工具执行引擎：参数校验/限速检查/Undo 包装/审计写入/错误统一处理 |
+| `src/tool-validators.js` | 参数运行时校验（类型/enum/范围/必填），抛出 MCPError |
+| `src/cad.js` | CAD 连接：命令队列、读批处理、心跳、Worker 管理、连接代理 |
 | `src/cad-worker.js` | Worker 进程：edge-js COM 调用、LISP 代码缓存（SHA256）、安全检查、长代码降级 |
-| `src/lisp-security.js` | 共享安全模块：21 条规则、括号检查、字符串剥离 |
-| `src/lisp-sandbox.js` | 沙箱校验：session allowlist、威胁分级（block/warn/allow） |
-| `src/handler-loader.js` | 懒加载：从 `handlers/` 目录自动发现 `*-handlers.js` 模块 |
-| `src/config.js` | 配置管理：三层合并、Zod 校验、热重载 |
+| `src/cad-circuit-breaker.js` | 熔断器独立模块（从 cad.js 提取） |
+| `src/cad-pool.js` | 连接池管理：多 CAD 实例连接/切换/健康检查/自动重连 |
+| `src/cad-router.js` | 会话级实例路由：按 sessionId 绑定 CAD 实例 |
+| `src/lisp-security.js` | 统一安全模块：21 条规则、括号检查、字符串剥离、session allowlist |
+| `src/lisp-sandbox.js` | 重导出 shim——所有逻辑已迁移到 lisp-security.js |
+| `src/handler-loader.js` | 懒加载 + 热重载（fs.watch 监听 handlers/ 目录变化） |
+| `src/config.js` | 配置管理：三层合并、Zod coerce 类型转换、热重载 |
 | `src/routes.js` | HTTP 路由：中间件链（auth/rate-limit/CORS）、MCP/SSE/调试面板 |
-| `src/tools/index.js` | 工具 Schema 聚合（39 个文件合并）及 readOnlyHint/destructiveHint 注解 |
+| `src/errors.js` | 错误定义：`MCPError`、`createError`、15 个预定义错误码 |
 | `src/handler-utils.js` | 工具函数：`validateFilePath`、`escapeLispString`、`parseLispList`、`ensureCadConnected` |
-| `src/errors.js` | 错误定义：`MCPError`、`createError`、10 个预定义错误码 |
-| `src/streaming.js` | 分页流式读取（`streamEntitiesByType`/`streamTextContent`/`streamBlockRefs`） |
-| `src/lint-analyzer.js` | Lint 分析：整合 `@atlisp/parser` + `@atlisp/lint`，提供 `analyzeLispCode()` |
-| `src/pipeline-engine.js` | 管道引擎：多步工具链编排，支持 `$ref:stepName.property` |
+| `src/tools/index.js` | 工具 Schema 聚合（39+ 文件合并）及 readOnlyHint/destructiveHint + category 注解 |
+| `src/streaming.js` | 分页流式读取（单 `streamEntities()` 替代原先 3 个函数） |
+| `src/handlers/meta-handlers.js` | 元工具处理器：search_tools / list_tools_by_category / get_tool_info |
+| `src/handlers/skill-handlers.js` | Skill 管理器注册/搜索/安装/卸载 |
+| `src/handlers/resource-handlers.js` | 资源读取器：16+ 个 URI 的读写逻辑 |
+| `src/handlers/resource-defs.js` | 资源定义和表查询配置 |
+| `src/handlers/resource-cache.js` | 资源缓存（per-instance 隔离 + TTL） |
+| `src/prompts/loader.js` | Prompt 加载器（内置定义 + 外部文件 + 处理函数） |
+| `src/prompts/renderer.js` | Prompt 模板渲染引擎 |
+| `src/prompts/definitions/*.json` | 27 个内置 Prompt 模板定义 |
 | `src/repl-engine.js` | REPL 引擎：交互式 Lisp 会话，自动追踪 setq 变量 |
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
-| `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
