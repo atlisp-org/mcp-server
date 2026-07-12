@@ -121,15 +121,40 @@ export function createAuthMiddleware() {
     };
 }
 
+function originMatches(pattern, origin) {
+    if (pattern === '*') return true;
+    if (!origin) return false;
+    const getHost = s => s.replace(/^https?:\/\//, '').replace(/:\d+$/, '').toLowerCase();
+    const oHost = getHost(origin);
+    let pHost = getHost(pattern);
+    if (pHost.startsWith('*.')) {
+        const suffix = pHost.slice(1);
+        return oHost === suffix.slice(1) || oHost.endsWith(suffix);
+    }
+    return oHost === pHost;
+}
+
 export function createCorsMiddleware() {
+    const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
+    const allowAll = allowedOrigins.includes('*');
     return (req, res, next) => {
         if (!enableCors) return next();
-        res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+        const origin = req.headers.origin;
+        if (allowAll) {
+            res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+        } else if (origin && allowedOrigins.some(p => originMatches(p, origin))) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+            res.setHeader('Vary', 'Origin');
+        } else if (!origin) {
+            res.setHeader('Access-Control-Allow-Origin', allowedOrigins[0] || '*');
+        } else {
+            return res.status(403).json({ error: 'Origin not allowed' });
+        }
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, CONNECT');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, mcp-session-id, last-event-id');
         res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, content-type, x-accel-buffering');
         res.setHeader('Access-Control-Max-Age', '86400');
-        res.setHeader('Vary', 'Accept');
+        res.setHeader('Access-Control-Allow-Private-Network', 'true');
         if (req.method === 'OPTIONS') return res.status(204).end();
         next();
     };
