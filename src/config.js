@@ -9,7 +9,7 @@ const envSchema = z.object({
     TRANSPORT: z.enum(['http', 'stdio', 'ws']).optional().default('http'),
     MCP_API_KEY: z.string().optional().default(''),
     ENABLE_SSE: z.coerce.boolean().optional().default(true),
-    MESSAGE_TIMEOUT: z.coerce.number().optional().default(60000),
+    MESSAGE_TIMEOUT: z.coerce.number().optional().default(300000),
     HEARTBEAT_INTERVAL: z.coerce.number().optional().default(30000),
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),

@@ -65,10 +65,16 @@ export async function getHandlerModule(name) {
   await initHandlerModules();
   const loader = handlerModules[name];
   if (!loader) return null;
-  const mod = await loader();
-  moduleCache.set(name, mod);
-  log(`Handler module loaded: ${name}`);
-  return mod;
+  try {
+    const mod = await loader();
+    moduleCache.set(name, mod);
+    log(`Handler module loaded: ${name}`);
+    return mod;
+  } catch (e) {
+    log(`Handler module load failed: ${name} - ${e.message}`);
+    moduleCache.set(name, null);
+    return null;
+  }
 }
 
 export async function initHandlerModules() {

@@ -248,6 +248,7 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
 
                   int retries = 10;
                   string result = "";
+                  string rawBase64 = "";
                   while (retries > 0 && !System.IO.File.Exists(tempFile)) {
                       System.Threading.Thread.Sleep(200);
                       retries--;
@@ -257,7 +258,7 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                       while (retries > 0) {
                           try {
                               byte[] bytes = System.IO.File.ReadAllBytes(tempFile);
-                              string rawBase64 = System.Convert.ToBase64String(bytes);
+                              rawBase64 = System.Convert.ToBase64String(bytes);
                               System.Text.Encoding enc;
 
                               if (!string.IsNullOrEmpty(encoding)) {
