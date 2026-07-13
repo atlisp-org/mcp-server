@@ -257,6 +257,7 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                       while (retries > 0) {
                           try {
                               byte[] bytes = System.IO.File.ReadAllBytes(tempFile);
+                              string rawBase64 = System.Convert.ToBase64String(bytes);
                               System.Text.Encoding enc;
 
                               if (!string.IsNullOrEmpty(encoding)) {
@@ -294,9 +295,9 @@ string encoding = d.encoding != null ? d.encoding.ToString() : "";
                           }
                       }
                       if (!string.IsNullOrEmpty(result)) {
-                          return new { success = true, result = result };
+                          return new { success = true, result = result, rawBase64 = rawBase64 };
                       }
-                      return new { success = true, result = "" };
+                      return new { success = true, result = "", rawBase64 = rawBase64 };
                   }
                   return new { success = true, result = "" };
               }

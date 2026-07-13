@@ -293,7 +293,7 @@ class CadConnection {
     });
   }
 
-  async sendCommandWithResult(code, encoding = null) {
+  async sendCommandWithResult(code, encoding = null, raw = false) {
     if (!this.connected) throw new Error('未连接 CAD');
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
@@ -301,7 +301,12 @@ class CadConnection {
         resolve, reject
       }, PRIORITY_NORMAL);
     }).then(result => {
-      if (result.success) return result.result || '';
+      if (result.success) {
+        if (raw && result.rawBase64 !== undefined) {
+          return { text: result.result || '', rawBase64: result.rawBase64 };
+        }
+        return result.result || '';
+      }
       throw new Error(result.error || '发送失败');
     });
   }
@@ -682,7 +687,7 @@ export const cad = {
 
   async connect(platform) { return _resolveConn().connect(platform); },
   async sendCommand(code) { return _resolveConn().sendCommand(code); },
-  async sendCommandWithResult(code, encoding) { return _resolveConn().sendCommandWithResult(code, encoding); },
+  async sendCommandWithResult(code, encoding, raw) { return _resolveConn().sendCommandWithResult(code, encoding, raw); },
   getVersion() { return _resolveConn().getVersion(); },
   getPlatform() { return _resolveConn().getPlatform(); },
   getConnectionId() { return _resolveConn().getConnectionId(); },

@@ -1,3 +1,4 @@
+import iconv from 'iconv-lite';
 import { cad } from '../cad.js';
 import { log } from '../logger.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
@@ -32,9 +33,15 @@ export const evalLisp = withCadConnection(async (code, withResult = false, encod
     }
 
     if (withResult) {
-        const result = await cad.sendCommandWithResult(trimmed, encoding);
-        if (result !== null) {
-            return mcpSuccess(result);
+        const useRaw = encoding ? true : false;
+        const resp = await cad.sendCommandWithResult(trimmed, encoding, useRaw);
+        if (resp !== null) {
+            if (useRaw && resp.rawBase64) {
+                const buf = Buffer.from(resp.rawBase64, 'base64');
+                const decoded = iconv.decode(buf, encoding);
+                return mcpSuccess(decoded);
+            }
+            return mcpSuccess(resp);
         }
         return mcpError('执行失败或无返回值');
     }
