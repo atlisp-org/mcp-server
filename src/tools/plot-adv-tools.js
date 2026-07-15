@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'batch_plot_wizard',
-    description: '批量打印向导 - 支持多布局、PDF/DWF、页面设置、命名规则和预览模式',
+    description: '批量打印向导。选择多个布局输出为PDF/DWF。支持预览模式preview=true只查看不打印',
     inputSchema: {
       type: 'object',
       properties: {
@@ -17,7 +17,7 @@ export const tools = [
   },
   {
     name: 'plot_device_management',
-    description: '打印设备管理 - 列出/获取/设置/测试打印设备',
+    description: '打印设备管理。action=list列出所有打印机,get查看详情,set设为当前,test测试打印',
     inputSchema: {
       type: 'object',
       properties: {
@@ -29,7 +29,7 @@ export const tools = [
   },
   {
     name: 'plot_log',
-    description: '查询打印作业历史记录（从 ~/.atlisp/plot-log.json 读取）',
+    description: '查询打印历史记录。可按日期和状态(success/error)过滤',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,7 +41,7 @@ export const tools = [
   },
   {
     name: 'plot_from_file_list',
-    description: '根据文件列表批量打印 - 支持直接传入文件列表或从文本文件读取',
+    description: '直接从DWG文件列表批量打印。支持传入数组或从文本文件读取',
     inputSchema: {
       type: 'object',
       properties: {

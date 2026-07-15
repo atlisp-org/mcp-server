@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_dimension',
-        description: '创建标注 (ALIGNED/LINEAR/ORDINATE/RADIAL/DIAMETER/ANGULAR)',
+        description: '创建尺寸标注。支持类型: ALIGNED(对齐)/LINEAR(线性)/ORDINATE(坐标)/RADIAL(半径)/DIAMETER(直径)/ANGULAR(角度)。先选类型再给点坐标',
         inputSchema: {
             type: 'object',
             properties: {
@@ -14,7 +14,7 @@ export const tools = [
     },
 {
         name: 'get_dimension',
-        description: '获取标注值',
+        description: '读取标注实体的测量值。用户问"这个标了多少"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -25,7 +25,7 @@ export const tools = [
     },
 {
         name: 'create_hatch',
-        description: '创建图案填充',
+        description: '创建图案填充。填充图案如 ANSI31(斜线), ANSI32(交叉斜线), BRICK(砖), DOTS(点), AR-CONC(混凝土), SOLID(实心)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -39,7 +39,7 @@ export const tools = [
     },
 {
         name: 'set_hatch',
-        description: '设置填充属性',
+        description: '修改填充属性：pattern(图案名)、scale(比例)、angle(角度)、color(颜色号)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -51,7 +51,7 @@ export const tools = [
     },
 {
         name: 'get_block_attributes',
-        description: '获取块属性',
+        description: '获取单个块参照的所有属性标签和值。对比 batch_get_block_attributes 只查单个',
         inputSchema: {
             type: 'object',
             properties: {
@@ -62,7 +62,7 @@ export const tools = [
     },
 {
         name: 'set_block_attribute',
-        description: '设置块属性值',
+        description: '修改单个块参照的指定属性标签的值。对比 batch_set_block_attributes 只改单个',
         inputSchema: {
             type: 'object',
             properties: {
@@ -75,12 +75,12 @@ export const tools = [
     },
 {
         name: 'zoom_extents',
-        description: '缩放到图形范围',
+        description: '缩放至所有实体的整体范围（显示全部图形）。用户说"全屏/缩放全部/看全部"时调用',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'zoom_window',
-        description: '缩放到窗口',
+        description: '缩放至指定窗口区域。用户说"放大某区域/看这里"时调用。p1,p2为对角点',
         inputSchema: {
             type: 'object',
             properties: {
@@ -92,7 +92,7 @@ export const tools = [
     },
 {
         name: 'create_named_view',
-        description: '创建命名视图',
+        description: '保存当前视图为命名视图，方便之后快速恢复',
         inputSchema: {
             type: 'object',
             properties: {
@@ -104,7 +104,7 @@ export const tools = [
     },
 {
         name: 'restore_named_view',
-        description: '恢复命名视图',
+        description: '切换到之前保存的命名视图。用户说"切换到XX视图"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -115,12 +115,12 @@ export const tools = [
     },
 {
         name: 'list_named_views',
-        description: '列出所有命名视图',
+        description: '列出当前 DWG 中所有命名视图的名称列表',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'export_dxf',
-        description: '导出 DXF 文件',
+        description: '导出为 DXF 交换文件。version 可选 R2000/R2004/R2007/R2010/R2015/R2018',
         inputSchema: {
             type: 'object',
             properties: {
@@ -132,7 +132,7 @@ export const tools = [
     },
 {
         name: 'export_dwf',
-        description: '导出 DWF 文件',
+        description: '导出为 DWF 三维/web 发布格式',
         inputSchema: {
             type: 'object',
             properties: {
@@ -143,7 +143,7 @@ export const tools = [
     },
 {
         name: 'batch_set_layer',
-        description: '批量设置实体图层',
+        description: '批量移动多个实体到指定图层。传入句柄数组和目标图层名。用户说"把这些移到XX图层"时调用',
         inputSchema: {
             type: 'object',
             properties: {

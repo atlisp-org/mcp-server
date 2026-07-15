@@ -1,7 +1,7 @@
 export const tools = [
     {
         name: 'watch_register',
-        description: '注册 CAD 变更触发器。当条件满足时触发，支持实体数量/图层/文档等事件',
+        description: '注册CAD变更事件触发器。类型: entity_count(实体数变化), layer_exists(图层创建), layer_count(图层数), doc_name(文档名匹配), custom_lisp(自定义Lisp条件)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -40,7 +40,7 @@ export const tools = [
     },
     {
         name: 'watch_wait',
-        description: '等待指定触发器触发（阻塞直到条件满足或超时）',
+        description: '等待指定触发器触发，超时返回。timeout默认30秒',
         inputSchema: {
             type: 'object',
             properties: {
@@ -52,7 +52,7 @@ export const tools = [
     },
     {
         name: 'watch_create_and_wait',
-        description: '注册触发器并等待触发（合并操作）',
+        description: '一步完成注册触发器并等待触发',
         inputSchema: {
             type: 'object',
             properties: {

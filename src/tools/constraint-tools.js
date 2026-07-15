@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'add_geom_constraint',
-    description: '添加几何约束（平行/垂直/相切/共线/同心/水平/竖直/固定/对称/相等）',
+    description: '在两个实体间添加几何约束(平行/垂直/相切/共线/同心/水平/竖直/固定/对称/相等)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -16,7 +16,7 @@ export const tools = [
   },
   {
     name: 'add_dim_constraint',
-    description: '添加标注约束（对齐/水平/垂直/半径/直径/角度）',
+    description: '添加标注约束(尺寸驱动)，指定类型、值和约束点',
     inputSchema: {
       type: 'object',
       properties: {
@@ -31,7 +31,7 @@ export const tools = [
   },
   {
     name: 'del_constraint',
-    description: '删除实体上的所有约束',
+    description: '删除实体上的所有几何和标注约束',
     inputSchema: {
       type: 'object',
       properties: {
@@ -42,7 +42,7 @@ export const tools = [
   },
   {
     name: 'list_constraints',
-    description: '列出当前图形的所有约束',
+    description: '列出当前DWG中所有已定义的约束',
     inputSchema: { type: 'object', properties: {} }
   }
 ];

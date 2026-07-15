@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'attach_xref',
-    description: '附着外部参照',
+    description: '附着外部参照(DWG引用)。用户可以选附着型(attach)或覆盖型(overlay)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -16,7 +16,7 @@ export const tools = [
   },
   {
     name: 'detach_xref',
-    description: '拆离外部参照',
+    description: '拆离指定外部参照',
     inputSchema: {
       type: 'object',
       properties: {
@@ -27,7 +27,7 @@ export const tools = [
   },
   {
     name: 'reload_xref',
-    description: '重载外部参照',
+    description: '重新加载外部参照（源文件变更后刷新显示）',
     inputSchema: {
       type: 'object',
       properties: {
@@ -38,7 +38,7 @@ export const tools = [
   },
   {
     name: 'unload_xref',
-    description: '卸载外部参照',
+    description: '临时卸载外部参照（不删除，可重新加载）',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,12 +49,12 @@ export const tools = [
   },
   {
     name: 'list_xrefs',
-    description: '列出所有外部参照',
+    description: '列出当前DWG中所有外部参照及其状态',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'bind_xref',
-    description: '绑定外部参照',
+    description: '将外部参照绑定到当前图形成为块定义。bind=绑定符号表, insert=插入方式',
     inputSchema: {
       type: 'object',
       properties: {
@@ -66,7 +66,7 @@ export const tools = [
   },
   {
     name: 'clip_xref',
-    description: '裁剪外部参照',
+    description: '用多边形裁剪边界裁剪外部参照的显示范围',
     inputSchema: {
       type: 'object',
       properties: {
@@ -78,7 +78,7 @@ export const tools = [
   },
   {
     name: 'path_xref',
-    description: '修改外部参照路径',
+    description: '修改外部参照的路径（文件位置变更时使用）',
     inputSchema: {
       type: 'object',
       properties: {

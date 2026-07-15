@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_dimension_style',
-        description: '创建标注样式',
+        description: '创建标注样式(DimStyle)，控制箭头、颜色、文字样式等',
         inputSchema: {
             type: 'object',
             properties: {
@@ -15,7 +15,7 @@ export const tools = [
     },
 {
         name: 'set_dimstyle_var',
-        description: '设置标注样式变量',
+        description: '修改标注样式的系统变量(如DIMTXT,DIMSCALE等)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -28,12 +28,12 @@ export const tools = [
     },
 {
         name: 'list_dimension_styles',
-        description: '列出所有标注样式',
+        description: '列出所有已定义的标注样式名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'create_text_style',
-        description: '创建文字样式',
+        description: '创建文字样式(TextStyle)。指定字体文件、字高、宽度因子和倾斜角',
         inputSchema: {
             type: 'object',
             properties: {
@@ -48,12 +48,12 @@ export const tools = [
     },
 {
         name: 'list_text_styles',
-        description: '列出所有文字样式',
+        description: '列出所有已定义的文字样式名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'create_linetype',
-        description: '创建线型',
+        description: '创建自定义线型。需提供描述和图案定义',
         inputSchema: {
             type: 'object',
             properties: {
@@ -66,7 +66,7 @@ export const tools = [
     },
 {
         name: 'load_linetype',
-        description: '加载线型文件',
+        description: '从 .lin 线型定义文件加载线型到图形',
         inputSchema: {
             type: 'object',
             properties: {
@@ -78,12 +78,12 @@ export const tools = [
     },
 {
         name: 'list_linetypes',
-        description: '列出所有线型',
+        description: '列出当前图形中所有已加载的线型名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'create_mleader_style',
-        description: '创建多重引线样式',
+        description: '创建多重引线样式(MLeaderStyle)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -94,7 +94,7 @@ export const tools = [
     },
 {
         name: 'set_mleader_style_prop',
-        description: '设置多重引线样式属性',
+        description: '修改多重引线样式的属性',
         inputSchema: {
             type: 'object',
             properties: {
@@ -107,12 +107,12 @@ export const tools = [
     },
 {
         name: 'list_mleader_styles',
-        description: '列出所有多重引线样式',
+        description: '列出所有已定义的多重引线样式名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'create_cloud_line',
-        description: '创建修订云线',
+        description: '创建修订云线(CloudLine)。指定起点终点和凸度/弧长',
         inputSchema: {
             type: 'object',
             properties: {
@@ -126,7 +126,7 @@ export const tools = [
     },
 {
         name: 'convert_to_cloud_line',
-        description: '将实体转换为修订云线',
+        description: '将已有实体(圆/多段线等)转换为修订云线',
         inputSchema: {
             type: 'object',
             properties: {

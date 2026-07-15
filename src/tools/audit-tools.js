@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'audit_log_query',
-    description: '查询审计日志历史记录。支持按工具名、时间范围、结果状态、用户和会话 ID 筛选，支持分页',
+    description: '查询审计日志。支持按工具名、时间范围、结果状态、用户、会话ID筛选，支持分页',
     inputSchema: {
       type: 'object',
       properties: {
@@ -18,7 +18,7 @@ export const tools = [
   },
   {
     name: 'audit_log_stats',
-    description: '获取审计日志统计信息，包括总条目数、各工具调用次数、错误数和日志文件大小',
+    description: '获取审计日志统计：总条目、各工具调用次数、错误数、日志文件大小',
     inputSchema: {
       type: 'object',
       properties: {}

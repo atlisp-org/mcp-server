@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'find_entities_near_point',
-        description: '查找点附近的实体',
+        description: '查找某点附近指定半径内的所有实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'find_entities_in_window',
-        description: '窗口选择实体',
+        description: '窗口选择(Window)：完全在窗口内的实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -25,7 +25,7 @@ export const tools = [
     },
 {
         name: 'find_entities_crossing',
-        description: '交叉选择实体',
+        description: '交叉选择(Crossing)：窗口内及与窗口相交的实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -37,7 +37,7 @@ export const tools = [
     },
 {
         name: 'find_entities_intersecting',
-        description: '栏选实体',
+        description: '栏选(Fence)：与折线相交的所有实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -48,7 +48,7 @@ export const tools = [
     },
 {
         name: 'find_entities_in_polygon',
-        description: '多边形选择实体',
+        description: '多边形选择(WPolygon)：完全在多边形内的实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -59,7 +59,7 @@ export const tools = [
     },
 {
         name: 'get_bounding_box',
-        description: '获取实体包围盒',
+        description: '获取实体的包围盒(最小外接矩形)左下角和右上角坐标',
         inputSchema: {
             type: 'object',
             properties: {

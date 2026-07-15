@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_box',
-        description: '创建长方体 3D 实体',
+        description: '创建立方体/长方体3D实体。指定中心点和长宽高',
         inputSchema: {
             type: 'object',
             properties: {
@@ -15,7 +15,7 @@ export const tools = [
     },
 {
         name: 'create_sphere',
-        description: '创建球体 3D 实体',
+        description: '创建球体3D实体。指定中心点和半径',
         inputSchema: {
             type: 'object',
             properties: {
@@ -27,7 +27,7 @@ export const tools = [
     },
 {
         name: 'create_cylinder',
-        description: '创建圆柱体 3D 实体',
+        description: '创建圆柱体3D实体。指定中心点、半径和高度',
         inputSchema: {
             type: 'object',
             properties: {
@@ -40,7 +40,7 @@ export const tools = [
     },
 {
         name: 'create_cone',
-        description: '创建圆锥体 3D 实体',
+        description: '创建圆锥体3D实体。指定中心点、底面半径和高度',
         inputSchema: {
             type: 'object',
             properties: {
@@ -53,7 +53,7 @@ export const tools = [
     },
 {
         name: 'create_torus',
-        description: '创建圆环体 3D 实体',
+        description: '创建圆环体3D实体。指定中心点、主半径(环)和次半径(管)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -66,7 +66,7 @@ export const tools = [
     },
 {
         name: 'create_wedge',
-        description: '创建楔体 3D 实体',
+        description: '创建楔形体3D实体。指定中心点和长宽高',
         inputSchema: {
             type: 'object',
             properties: {
@@ -80,7 +80,7 @@ export const tools = [
     },
 {
         name: 'create_3d_face',
-        description: '创建 3D 面',
+        description: '创建3D面(三个或四个顶点)。用户说"建3D面"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -91,7 +91,7 @@ export const tools = [
     },
 {
         name: 'create_mesh',
-        description: '创建网格',
+        description: '创建网格(Mesh)。指定行列数和顶点坐标',
         inputSchema: {
             type: 'object',
             properties: {
@@ -104,7 +104,7 @@ export const tools = [
     },
 {
         name: 'extrude_solid',
-        description: '拉伸成实体',
+        description: '将闭合轮廓(面域/多段线)拉伸为3D实体。可带锥度角',
         inputSchema: {
             type: 'object',
             properties: {
@@ -117,7 +117,7 @@ export const tools = [
     },
 {
         name: 'revolve_solid',
-        description: '旋转成实体',
+        description: '将轮廓绕轴旋转生成3D实体。默认360度',
         inputSchema: {
             type: 'object',
             properties: {
@@ -131,7 +131,7 @@ export const tools = [
     },
 {
         name: 'create_3d_polyline',
-        description: '创建 3D 多段线',
+        description: '创建3D多段线(顶点可含Z坐标)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -142,7 +142,7 @@ export const tools = [
     },
 {
         name: 'create_region',
-        description: '创建面域',
+        description: '将闭合曲线转换为面域(Region)，用于布尔运算或拉伸',
         inputSchema: {
             type: 'object',
             properties: {
@@ -153,7 +153,7 @@ export const tools = [
     },
 {
         name: 'boolean_union',
-        description: '布尔运算 - 并集',
+        description: '多个实体合并(并集)，融为一个整体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -164,7 +164,7 @@ export const tools = [
     },
 {
         name: 'boolean_subtract',
-        description: '布尔运算 - 差集',
+        description: '从一组实体中减去另一组(差集)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -176,7 +176,7 @@ export const tools = [
     },
 {
         name: 'boolean_intersect',
-        description: '布尔运算 - 交集',
+        description: '只保留多个实体的重叠部分(交集)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -187,7 +187,7 @@ export const tools = [
     },
 {
         name: 'slice_solid',
-        description: '剖切实体',
+        description: '用一个平面剖切实体。可保留一侧或两侧',
         inputSchema: {
             type: 'object',
             properties: {
@@ -201,7 +201,7 @@ export const tools = [
     },
 {
         name: 'create_loft_surface',
-        description: '创建放样曲面',
+        description: '在多个轮廓之间创建放样曲面。可选引导线',
         inputSchema: {
             type: 'object',
             properties: {
@@ -213,7 +213,7 @@ export const tools = [
     },
 {
         name: 'thicken_surface',
-        description: '曲面加厚成实体',
+        description: '将曲面加厚为3D实体。指定厚度值',
         inputSchema: {
             type: 'object',
             properties: {
@@ -225,7 +225,7 @@ export const tools = [
     },
 {
         name: 'offset_surface',
-        description: '曲面偏移',
+        description: '将曲面沿法向偏移指定距离',
         inputSchema: {
             type: 'object',
             properties: {
@@ -237,7 +237,7 @@ export const tools = [
     },
 {
         name: 'get_3d_solid_info',
-        description: '获取 3D 实体信息（体积、表面积等）',
+        description: '查询3D实体的体积、表面积、质心等属性',
         inputSchema: {
             type: 'object',
             properties: {

@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'analyze_lisp_code',
-    description: '分析 AutoLISP 代码质量。使用 @atlisp/parser 解析为 AST，通过 @atlisp/lint 执行 70+ 条检查规则（括号、参数数量、危险函数调用、命名约定、未使用变量等）',
+    description: '分析AutoLISP代码质量(70+检查规则:括号/参数/危险函数/未使用变量等)。返回JSON分析报告',
     inputSchema: {
       type: 'object',
       properties: {
@@ -16,7 +16,7 @@ export const tools = [
   },
   {
     name: 'format_lisp_code',
-    description: '格式化 AutoLISP 代码（缩进、括号对齐）。使用 @atlisp/lint 的 formatter 引擎',
+    description: '格式化AutoLISP代码：调整缩进和对齐。tabWidth控制缩进空格数',
     inputSchema: {
       type: 'object',
       properties: {
@@ -28,7 +28,7 @@ export const tools = [
   },
   {
     name: 'list_lint_rules',
-    description: '列出 @atlisp/lint 所有可用的代码检查规则及其说明',
+    description: '列出所有可用的Lint检查规则及其说明',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -36,7 +36,7 @@ export const tools = [
   },
   {
     name: 'lint_project',
-    description: '对目录中的 AutoLISP 文件进行批量 lint 分析。跨文件检测悬空 defun、重复定义、模块循环等问题',
+    description: '批量分析目录中所有AutoLISP文件的代码质量。跨文件检测悬空defun/重复定义/循环引用',
     inputSchema: {
       type: 'object',
       properties: {

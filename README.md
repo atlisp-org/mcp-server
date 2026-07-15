@@ -1,6 +1,6 @@
 # @lisp MCP Server
 
-MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **220+ 个调用工具**和通道。
+MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **230+ 个调用工具**和通道。
 
 支持 **AutoCAD / ZWCAD / GStarCAD / BricsCAD**，通过 COM 互操作与 CAD 通信。
 
@@ -225,7 +225,7 @@ curl http://localhost:8110/metrics
 
 ```json
 {
-  "name": "connect_cad",
+  "name": "open_cad",
   "arguments": {}
 }
 ```
@@ -234,16 +234,26 @@ curl http://localhost:8110/metrics
 
 ```json
 {
-  "name": "connect_cad",
+  "name": "open_cad",
   "arguments": {
     "platform": "AutoCAD"
   }
 }
 ```
 
+也支持 `connect_cad` 工具（仅连接不切前台）：
+
+```json
+{
+  "name": "connect_cad",
+  "arguments": {}
+}
+```
+
 **自动行为**:
 - 如果 CAD 已运行，连接现有实例
 - 如果 CAD 未运行，通过 COM 自动创建新实例
+- `open_cad` 额外将 CAD 窗口切换到前台
 
 连接成功返回类似: `已连接到 AutoCAD 2025`
 
@@ -281,11 +291,12 @@ curl http://localhost:8110/metrics
 
 ## 工具列表 (230+)
 
-### 系统与 CAD 连接 (11)
+### 系统与 CAD 连接 (12)
 
 | 工具 | 说明 | 参数 |
 |------|------|------|
-| `connect_cad` | 连接 CAD | `platform` (可选) |
+| `open_cad` | 打开 CAD 应用并切换到前台（未运行则自动启动） | `platform` (可选) |
+| `connect_cad` | 连接 CAD（仅连接不切换前台） | `platform` (可选) |
 | `eval_lisp` | 执行 LISP 代码（无返回值） | `code` (必填) |
 | `eval_lisp_with_result` | 执行 LISP 并返回结果 | `code` (必填), `encoding` (可选) |
 | `get_cad_info` | 获取 CAD 信息 | — |

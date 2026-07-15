@@ -49,6 +49,7 @@ function lazy(toolName, argMapper) {
 export const TOOL_HANDLERS = {
 
     // === CAD Connection ===
+    open_cad:              lazy('open_cad', (a) => a?.platform),
     connect_cad:           lazy('connect_cad', (a) => a?.platform),
     get_platform_info:     () => ({ content: [{ type: 'text', text: `支持的 CAD 平台:\n${CAD_PLATFORMS.join('\n')}\n当前连接: ${cad.connected ? '已连接' : '未连接'}` }] }),
     get_system_status:      lazy('get_system_status'),

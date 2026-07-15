@@ -4,6 +4,24 @@ import { log } from '../logger.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 import { analyzeLispCode } from '../lint-analyzer.js';
 
+export async function openCad(platform = null) {
+    log(`open_cad called${platform ? ` (target: ${platform})` : ''}`);
+    try {
+        const connected = await cad.connect(platform);
+        if (!connected) {
+            return mcpError('未能打开或连接 CAD，请确保 CAD 已安装');
+        }
+        const platformName = cad.getPlatform();
+        const version = cad.getVersion();
+        await cad.bringToFront();
+        initAtlisp().catch(e => log(`open_cad: initAtlisp failed: ${e.message}`));
+        return mcpSuccess(`已打开 ${platformName} ${version} 并切换到前台`);
+    } catch (e) {
+        log('open_cad error: ' + e.message);
+        return mcpError(`打开 CAD 失败: ${e.message}`);
+    }
+}
+
 export async function connectCad(platform = null) {
     log(`connect_cad called${platform ? ` (target: ${platform})` : ''}, cad.connected before: ${cad.connected}`);
     try {

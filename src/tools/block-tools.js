@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_block',
-        description: '创建块定义',
+        description: '创建块定义（将选中的实体组合为块）。块名全局唯一，重复会覆盖',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'insert_block',
-        description: '插入块',
+        description: '插入块引用到图形。用户说"放个块/插入图块"时调用。需先选好插入点和比例',
         inputSchema: {
             type: 'object',
             properties: {
@@ -27,12 +27,12 @@ export const tools = [
     },
 {
         name: 'get_blocks',
-        description: '获取图形中所有块定义',
+        description: '列出当前 DWG 中所有块定义的名称列表。用户问"有哪些块"时调用',
         inputSchema: { type: 'object', properties: {} }
     },
     {
         name: 'explode_block',
-        description: '炸开块引用',
+        description: '炸开（分解）块引用为独立实体。用户说"炸开块/分解块"时调用。不可逆',
         inputSchema: {
             type: 'object',
             properties: {
@@ -43,7 +43,7 @@ export const tools = [
     },
     {
         name: 'batch_get_block_attributes',
-        description: '批量获取块属性（按块名/图层过滤）',
+        description: '批量获取所有块参照的属性值。按块名和/或图层过滤。想查某类块的属性时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -54,7 +54,7 @@ export const tools = [
     },
     {
         name: 'batch_set_block_attributes',
-        description: '批量设置块属性',
+        description: '批量修改多个块参照的属性值。传入 handle 和 attributes 对象数组。用户说"批量改块属性"时调用',
         inputSchema: {
             type: 'object',
             properties: {

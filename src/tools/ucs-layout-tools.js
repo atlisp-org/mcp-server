@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_ucs',
-        description: '创建 UCS 用户坐标系',
+        description: '创建用户坐标系(UCS)。指定原点、X轴和Y轴方向。用户说"建坐标系/设UCS"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -15,7 +15,7 @@ export const tools = [
     },
 {
         name: 'set_ucs',
-        description: '切换到指定 UCS',
+        description: '切换到之前创建的 UCS。用户说"切换到XX坐标系"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -26,12 +26,12 @@ export const tools = [
     },
 {
         name: 'list_ucs',
-        description: '列出所有 UCS',
+        description: '列出当前图形中所有已定义的 UCS 名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'delete_ucs',
-        description: '删除 UCS',
+        description: '删除指定的已命名 UCS',
         inputSchema: {
             type: 'object',
             properties: {
@@ -42,12 +42,12 @@ export const tools = [
     },
 {
         name: 'get_current_ucs',
-        description: '获取当前 UCS 名称',
+        description: '查询当前正在使用的 UCS 名称',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'create_layout',
-        description: '创建布局',
+        description: '创建新布局（图纸空间）。用户说"新建布局/新建图纸"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -58,7 +58,7 @@ export const tools = [
     },
 {
         name: 'set_layout',
-        description: '切换到指定布局',
+        description: '切换到指定布局（图纸空间）。用户说"切换到XX布局/看布局"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -69,12 +69,12 @@ export const tools = [
     },
 {
         name: 'list_layouts',
-        description: '列出所有布局',
+        description: '列出当前 DWG 中所有布局名称（含 Model）',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'delete_layout',
-        description: '删除布局',
+        description: '删除指定布局（不能删除 Model）',
         inputSchema: {
             type: 'object',
             properties: {
@@ -85,12 +85,12 @@ export const tools = [
     },
 {
         name: 'get_current_layout',
-        description: '获取当前布局名称',
+        description: '查询当前正在工作的布局名称（Model 或布局名）',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'rename_layout',
-        description: '重命名布局',
+        description: '给布局改名字。用户说"重命名布局"时调用',
         inputSchema: {
             type: 'object',
             properties: {

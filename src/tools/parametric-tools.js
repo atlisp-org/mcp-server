@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'get_dynamic_block_properties',
-    description: '获取动态块所有属性（可见性状态、拉伸点、翻转状态等）',
+    description: '获取动态块的所有可调属性(可见性/拉伸/翻转等)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12,7 +12,7 @@ export const tools = [
   },
   {
     name: 'set_dynamic_block_property',
-    description: '设置动态块属性值',
+    description: '设置动态块的属性值（修改尺寸/切换可见性等）',
     inputSchema: {
       type: 'object',
       properties: {
@@ -25,7 +25,7 @@ export const tools = [
   },
   {
     name: 'get_block_parameters',
-    description: '获取块参数及其当前值',
+    description: '获取块的所有参数化参数及其当前值',
     inputSchema: {
       type: 'object',
       properties: {
@@ -36,7 +36,7 @@ export const tools = [
   },
   {
     name: 'set_block_parameter',
-    description: '设置块参数值',
+    description: '设置块参数化参数的值',
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,7 +49,7 @@ export const tools = [
   },
   {
     name: 'list_visibility_states',
-    description: '列出动态块的可见性状态',
+    description: '列出动态块的所有可见性状态名称',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,7 +60,7 @@ export const tools = [
   },
   {
     name: 'set_visibility_state',
-    description: '设置动态块当前可见性状态',
+    description: '切换动态块的可见性状态（显示/隐藏不同部分）',
     inputSchema: {
       type: 'object',
       properties: {

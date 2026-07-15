@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_sheet_set',
-        description: '创建图纸集',
+        description: '创建图纸集（SheetSet）。用户说"建图纸集"时调用。需先有布局',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'open_sheet_set',
-        description: '打开图纸集文件 (.dst)',
+        description: '打开已有的 .dst 图纸集文件',
         inputSchema: {
             type: 'object',
             properties: {
@@ -24,12 +24,12 @@ export const tools = [
     },
 {
         name: 'list_sheet_sets',
-        description: '列出所有图纸集',
+        description: '列出当前可用的所有图纸集',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'add_sheet',
-        description: '添加图纸到图纸集',
+        description: '向图纸集中添加图纸（关联布局）。用户说"添加图纸到图纸集"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -42,7 +42,7 @@ export const tools = [
     },
 {
         name: 'list_sheets',
-        description: '列出图纸集中的所有图纸',
+        description: '列出图纸集中的所有图纸名称',
         inputSchema: {
             type: 'object',
             properties: {
@@ -53,7 +53,7 @@ export const tools = [
     },
 {
         name: 'delete_sheet',
-        description: '删除图纸集中的图纸',
+        description: '从图纸集中移除指定图纸',
         inputSchema: {
             type: 'object',
             properties: {
@@ -65,7 +65,7 @@ export const tools = [
     },
 {
         name: 'publish_sheet_set',
-        description: '发布图纸集',
+        description: '将整个图纸集发布为PDF或DWF',
         inputSchema: {
             type: 'object',
             properties: {
@@ -78,7 +78,7 @@ export const tools = [
     },
 {
         name: 'get_sheet_set_property',
-        description: '获取图纸集属性',
+        description: '读取图纸集的自定义属性值',
         inputSchema: {
             type: 'object',
             properties: {
@@ -90,7 +90,7 @@ export const tools = [
     },
     {
         name: 'create_sheet_set_archive',
-        description: '归档图纸集 (eTransmit)',
+        description: '归档图纸集（eTransmit打包为zip）',
         inputSchema: {
             type: 'object',
             properties: {
@@ -102,7 +102,7 @@ export const tools = [
     },
     {
         name: 'reorder_sheet',
-        description: '重新排序图纸集中的图纸',
+        description: '调整图纸在图纸集中的顺序',
         inputSchema: {
             type: 'object',
             properties: {
@@ -115,7 +115,7 @@ export const tools = [
     },
     {
         name: 'create_subset',
-        description: '创建图纸集子集',
+        description: '在图纸集中创建子集（文件夹）用于分类',
         inputSchema: {
             type: 'object',
             properties: {
@@ -127,7 +127,7 @@ export const tools = [
     },
     {
         name: 'list_subsets',
-        description: '列出图纸集的所有子集',
+        description: '列出图纸集中的所有子集',
         inputSchema: {
             type: 'object',
             properties: {
@@ -138,7 +138,7 @@ export const tools = [
     },
     {
         name: 'set_sheet_property',
-        description: '设置图纸自定义属性',
+        description: '设置图纸的自定义属性',
         inputSchema: {
             type: 'object',
             properties: {

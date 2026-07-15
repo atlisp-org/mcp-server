@@ -1,12 +1,12 @@
 export const tools = [
   {
     name: 'cad_pool_discover',
-    description: '发现所有 CAD 实例（AutoCAD/ZWCAD/GStarCAD/BricsCAD）并加入连接池',
+    description: '通过Windows ROT(运行对象表)自动发现所有运行中的CAD实例并加入连接池。用户说"发现CAD/找CAD"时调用',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'cad_pool_switch',
-    description: '切换活动 CAD 实例',
+    description: '切换连接池的活动CAD实例。后续无instance参数的工具调用将路由到此实例',
     inputSchema: {
       type: 'object',
       properties: {
@@ -17,17 +17,17 @@ export const tools = [
   },
   {
     name: 'cad_pool_health',
-    description: '检查所有 CAD 实例的健康状态（ping 检测）',
+    description: '对所有已连接的CAD实例执行ping健康检查，返回各实例状态',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'cad_pool_stats',
-    description: '获取连接池统计信息（实例数量/队列大小/运行时间等）',
+    description: '获取连接池统计信息：实例数、队列大小、运行时间等',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'cad_pool_connect',
-    description: '连接到指定 CAD 平台并加入连接池',
+    description: '手动连接指定CAD实例到连接池。支持指定key(标识名)、platform(平台)、pid(进程ID)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,7 +41,7 @@ export const tools = [
   },
   {
     name: 'cad_pool_disconnect',
-    description: '断开并移除连接池中的指定 CAD 实例',
+    description: '从连接池中断开并移除指定CAD实例',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +52,7 @@ export const tools = [
   },
   {
     name: 'cad_pool_list',
-    description: '列出连接池中所有 CAD 实例及其状态',
+    description: '列出连接池中所有CAD实例的key、平台、版本、连接状态和活跃标记',
     inputSchema: { type: 'object', properties: {} }
   },
   {

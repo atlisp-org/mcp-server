@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'stream_entities',
-    description: 'Stream entities by type/layer with pagination. 按类型和图层分页流式读取实体数据。',
+    description: '分页读取实体数据。按type(实体类型)和/或layer(图层)过滤。offset/limit控制分页。适合大批量获取',
     inputSchema: {
       type: 'object',
       properties: {
@@ -14,7 +14,7 @@ export const tools = [
   },
   {
     name: 'stream_text',
-    description: 'Stream text content (TEXT/MTEXT) with pagination. 分页流式读取文字内容。',
+    description: '分页读取文字内容(TEXT/MTEXT)。可选按图层过滤',
     inputSchema: {
       type: 'object',
       properties: {
@@ -26,7 +26,7 @@ export const tools = [
   },
   {
     name: 'stream_block_refs',
-    description: 'Stream block references with pagination. 分页流式读取块参照。',
+    description: '分页读取块参照数据。可选按blockName过滤',
     inputSchema: {
       type: 'object',
       properties: {

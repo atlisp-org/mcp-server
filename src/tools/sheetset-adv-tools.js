@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'sheet_set_publish_options',
-    description: '配置图纸发布选项（每张图纸的 PDF/DWF 格式、页面设置覆盖、打印戳记）',
+    description: '配置单张图纸的发布格式、页面设置覆盖和打印戳记',
     inputSchema: {
       type: 'object',
       properties: {
@@ -16,7 +16,7 @@ export const tools = [
   },
   {
     name: 'sheet_set_transmit',
-    description: 'eTransmit 打包图纸集：收集所有依赖文件（含外部参照）并创建传输包',
+    description: 'eTransmit打包：收集图纸集所有依赖文件（含外部参照）准备传输',
     inputSchema: {
       type: 'object',
       properties: {
@@ -28,7 +28,7 @@ export const tools = [
   },
   {
     name: 'sheet_set_compare',
-    description: '比较两个图纸集，列出仅存在于其中一个的图纸',
+    description: '比较两个图纸集，找出差异图纸',
     inputSchema: {
       type: 'object',
       properties: {
@@ -40,7 +40,7 @@ export const tools = [
   },
   {
     name: 'sheet_list_views',
-    description: '列出图纸中布局的所有命名视图',
+    description: '列出图纸中布局包含的命名视图',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +52,7 @@ export const tools = [
   },
   {
     name: 'sheet_import_layouts',
-    description: '从外部 DWG 文件导入布局到图纸集',
+    description: '从外部DWG导入布局到图纸集作为新图纸',
     inputSchema: {
       type: 'object',
       properties: {

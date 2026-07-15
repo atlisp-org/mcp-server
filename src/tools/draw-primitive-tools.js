@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'draw_line',
-        description: '绘制直线',
+        description: '画直线段。p1起点 p2终点',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'draw_circle',
-        description: '绘制圆',
+        description: '画圆。中心点+半径',
         inputSchema: {
             type: 'object',
             properties: {
@@ -25,7 +25,7 @@ export const tools = [
     },
 {
         name: 'draw_arc',
-        description: '绘制圆弧',
+        description: '画圆弧。中心点+半径+起始角度+终止角度（度）',
         inputSchema: {
             type: 'object',
             properties: {
@@ -39,7 +39,7 @@ export const tools = [
     },
 {
         name: 'draw_rectangle',
-        description: '绘制矩形',
+        description: '画矩形。两个对角点确定',
         inputSchema: {
             type: 'object',
             properties: {
@@ -51,7 +51,7 @@ export const tools = [
     },
 {
         name: 'draw_polygon',
-        description: '绘制正多边形',
+        description: '画正多边形。中心点+边数(>=3)+半径',
         inputSchema: {
             type: 'object',
             properties: {
@@ -64,7 +64,7 @@ export const tools = [
     },
 {
         name: 'draw_ellipse',
-        description: '绘制椭圆',
+        description: '画椭圆。中心+长轴端点+短轴端点(或短长比)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -77,7 +77,7 @@ export const tools = [
     },
 {
         name: 'draw_text',
-        description: '创建单行文字',
+        description: '创建单行文字(TEXT)。指定内容和插入点',
         inputSchema: {
             type: 'object',
             properties: {
@@ -90,7 +90,7 @@ export const tools = [
     },
 {
         name: 'draw_mtext',
-        description: '创建多行文字',
+        description: '创建多行文字(MTEXT)。指定内容、插入点和文本框宽度',
         inputSchema: {
             type: 'object',
             properties: {
@@ -103,7 +103,7 @@ export const tools = [
     },
 {
         name: 'draw_polyline',
-        description: '创建多段线，points格式: x1,y1 x2,y2 ...',
+        description: '创建多段线(Polyline)，由直线段和弧段组成的连续线。可闭合',
         inputSchema: {
             type: 'object',
             properties: {
@@ -115,7 +115,7 @@ export const tools = [
     },
 {
         name: 'draw_spline',
-        description: '创建样条曲线',
+        description: '创建样条曲线(SPLINE)，通过控制点拟合光滑曲线',
         inputSchema: {
             type: 'object',
             properties: {
@@ -126,7 +126,7 @@ export const tools = [
     },
 {
         name: 'draw_point',
-        description: '创建点',
+        description: '创建点(Point)实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -137,7 +137,7 @@ export const tools = [
     },
 {
         name: 'draw_hatch',
-        description: '创建图案填充，points: 边界点序列',
+        description: '创建图案填充。points为边界点序列，pattern为填充图案名(如ANSI31)',
         inputSchema: {
             type: 'object',
             properties: {
@@ -149,7 +149,7 @@ export const tools = [
     },
   {
     name: 'draw_helix',
-    description: '创建螺旋（Helix）',
+    description: '创建螺旋(Helix)。指定中心、顶底半径、高度和圈数',
     inputSchema: {
       type: 'object',
       properties: {
@@ -164,7 +164,7 @@ export const tools = [
   },
   {
     name: 'draw_donut',
-    description: '绘制圆环',
+    description: '画圆环(Donut)。指定中心、内径和外径',
     inputSchema: {
       type: 'object',
       properties: {
@@ -177,7 +177,7 @@ export const tools = [
   },
   {
     name: 'draw_2d_solid',
-    description: '创建 2D 填充实体（SOLID）',
+    description: '创建2D填充实体(SOLID)。四个点构成填充区域',
     inputSchema: {
       type: 'object',
       properties: {
@@ -191,7 +191,7 @@ export const tools = [
   },
   {
     name: 'draw_xline',
-    description: '创建构造线（XLINE）',
+    description: '创建构造线(XLINE)无限长直线',
     inputSchema: {
       type: 'object',
       properties: {
@@ -203,7 +203,7 @@ export const tools = [
   },
   {
     name: 'draw_ray',
-    description: '创建射线（RAY）',
+    description: '创建射线(RAY)从一点出发的无限长线',
     inputSchema: {
       type: 'object',
       properties: {
@@ -215,7 +215,7 @@ export const tools = [
   },
   {
     name: 'draw_leader',
-    description: '创建引线标注',
+    description: '创建引线标注(Leader)。指引线和注释文字',
     inputSchema: {
       type: 'object',
       properties: {
@@ -227,7 +227,7 @@ export const tools = [
   },
   {
     name: 'draw_table',
-    description: '创建表格',
+    description: '创建表格。指定插入点、行列数、行高列宽',
     inputSchema: {
       type: 'object',
       properties: {

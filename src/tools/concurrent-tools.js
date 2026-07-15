@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'batch_concurrent_tasks',
-    description: '并发执行多实例工具 — 将多个工具调用同时路由到不同 CAD 实例并行执行。内部使用 Promise.allSettled，一个失败不影响其他。',
+    description: '跨多个CAD实例并发执行不同工具。各任务独立运行(一个失败不影响其他)。需指定每个任务的tool/args/instance',
     inputSchema: {
       type: 'object',
       properties: {

@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'sandbox_validate',
-    description: '验证 Lisp 代码是否符合沙箱安全规则。分析代码中的危险函数调用并按威胁等级分类',
+    description: '检查Lisp代码是否违反安全规则。扫描危险函数并按block/warn/allow分级返回结果',
     inputSchema: {
       type: 'object',
       properties: {
@@ -13,7 +13,7 @@ export const tools = [
   },
   {
     name: 'sandbox_allowlist_add',
-    description: '将指定规则索引添加到会话 allowlist，允许该规则在白名单下通过',
+    description: '将规则索引加入会话白名单，放行该规则的检查',
     inputSchema: {
       type: 'object',
       properties: {
@@ -25,7 +25,7 @@ export const tools = [
   },
   {
     name: 'sandbox_allowlist_clear',
-    description: '清除指定会话的所有 allowlist 规则，恢复默认安全限制',
+    description: '清空当前会话的所有白名单规则，恢复完整安全检查',
     inputSchema: {
       type: 'object',
       properties: {

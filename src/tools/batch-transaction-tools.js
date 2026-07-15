@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'batch_transaction',
-    description: '批量事务：将多个 CAD 写操作包装在一个撤销组中。任一操作失败则自动回滚全部操作',
+    description: '事务性批量操作：将多个工具调用包装在一个撤销组中。任一失败自动回滚全部。适合需要原子性的操作',
     inputSchema: {
       type: 'object',
       properties: {

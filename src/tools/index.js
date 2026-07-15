@@ -97,7 +97,7 @@ const EXTRA_DESTRUCTIVE = new Set([
 
 const IDEMPOTENT_WRITE_TOOLS = new Set([
   'set_system_variable', 'set_current_layer', 'save_dwg',
-  'init_atlisp', 'install_atlisp', 'connect_cad', 'bring_to_front',
+  'init_atlisp', 'install_atlisp', 'open_cad', 'connect_cad', 'bring_to_front',
   'cad_pool_connect', 'cad_pool_disconnect', 'cad_pool_switch',
   'agent_set_context', 'agent_delete_context', 'agent_clear_context',
   'set_page_setup', 'create_page_setup',
@@ -132,7 +132,7 @@ function getToolCategory(name) {
   if (/^(create_text|create_mleader|create_linetype|list_text|list_linetype|list_mleader|load_linetype|create_dimension_style|set_dimstyle|list_dimension_styles|set_mleader_style)/.test(n)) return '样式';
   if (/^(purge_|drawing_audit|drawing_recover|overkill)/.test(n)) return '清理';
   if (/^(find_text|replace_text|set_text_|justify_|convert_text|explode_text)/.test(n)) return '文字';
-  if (/^(eval_lisp|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status)/.test(n)) return '系统';
+  if (/^(eval_lisp|open_cad|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status)/.test(n)) return '系统';
   if (/^(list_packages|search_packages|install_package|get_function_usage|list_symbols|import_funlib)/.test(n)) return '包与函数';
   if (/^(watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|external_|list_data|export_to|import_external)/.test(n)) return '高级';
   if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|get_tool_info)/.test(n)) return '元工具';

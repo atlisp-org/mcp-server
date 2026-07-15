@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'attach_pdf',
-        description: '附着 PDF 底图',
+        description: '将PDF文件作为底图附着到DWG中。指定插入点、缩放和旋转',
         inputSchema: {
             type: 'object',
             properties: {
@@ -15,12 +15,12 @@ export const tools = [
     },
 {
         name: 'list_attached_pdfs',
-        description: '列出所有已附着的 PDF',
+        description: '列出当前DWG中所有已附着的PDF底图',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'reload_pdf',
-        description: '重载 PDF 底图',
+        description: '重新加载PDF底图（用于文件更新后刷新显示）',
         inputSchema: {
             type: 'object',
             properties: {
@@ -31,7 +31,7 @@ export const tools = [
     },
 {
         name: 'detach_pdf',
-        description: '拆离 PDF 底图',
+        description: '拆离(删除)已附着的PDF底图',
         inputSchema: {
             type: 'object',
             properties: {
@@ -42,7 +42,7 @@ export const tools = [
     },
 {
         name: 'get_pdf_info',
-        description: '获取 PDF 底图信息',
+        description: '获取PDF底图的信息（路径、页数、尺寸等）',
         inputSchema: {
             type: 'object',
             properties: {
@@ -53,7 +53,7 @@ export const tools = [
     },
 {
         name: 'import_dxf',
-        description: '导入 DXF 文件',
+        description: '导入DXF文件到当前图形。explode=true则炸开插入',
         inputSchema: {
             type: 'object',
             properties: {
@@ -65,7 +65,7 @@ export const tools = [
     },
 {
         name: 'import_dgn',
-        description: '导入 DGN 文件',
+        description: '导入DGN(V8)文件为DWG',
         inputSchema: {
             type: 'object',
             properties: {
@@ -77,7 +77,7 @@ export const tools = [
     },
 {
         name: 'export_dgn',
-        description: '导出为 DGN 文件',
+        description: '导出当前图形为DGN(V8)格式',
         inputSchema: {
             type: 'object',
             properties: {
@@ -88,7 +88,7 @@ export const tools = [
     },
 {
         name: 'create_dgn_underlay',
-        description: '附着 DGN 底图',
+        description: '附着DGN文件作为底图到DWG',
         inputSchema: {
             type: 'object',
             properties: {
@@ -101,7 +101,7 @@ export const tools = [
     },
 {
         name: 'create_dwf_underlay',
-        description: '附着 DWF 底图',
+        description: '附着DWF文件作为底图到DWG',
         inputSchema: {
             type: 'object',
             properties: {
@@ -114,7 +114,7 @@ export const tools = [
     },
 {
         name: 'create_hyperlink',
-        description: '创建超链接',
+        description: '为实体添加超链接(URL)。用户说"加链接"时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -127,7 +127,7 @@ export const tools = [
     },
 {
         name: 'remove_hyperlink',
-        description: '删除超链接',
+        description: '删除实体上的超链接',
         inputSchema: {
             type: 'object',
             properties: {
@@ -138,7 +138,7 @@ export const tools = [
     },
 {
         name: 'batch_attach_pdfs',
-        description: '批量附着 PDF（如拼图打印）',
+        description: '批量附着多个PDF文件到DWG（拼图排列）。指定间距和方向',
         inputSchema: {
             type: 'object',
             properties: {
@@ -152,7 +152,7 @@ export const tools = [
     },
 {
         name: 'save_pdf_layout',
-        description: '保存布局为 PDF（批量打印）',
+        description: '按页面设置将布局打印为PDF文件',
         inputSchema: {
             type: 'object',
             properties: {

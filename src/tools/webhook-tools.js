@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'webhook_register',
-    description: '注册 webhook。当指定事件发生时，向目标 URL 发送 HTTP POST 请求',
+    description: '注册Webhook：当CAD事件发生(工具执行/包安装/连接/断开/错误)时向指定URL发POST通知',
     inputSchema: {
       type: 'object',
       properties: {
@@ -19,12 +19,12 @@ export const tools = [
   },
   {
     name: 'webhook_list',
-    description: '列出所有已注册的 webhook',
+    description: '列出所有已注册的Webhook',
     inputSchema: { type: 'object', properties: {} }
   },
   {
     name: 'webhook_remove',
-    description: '移除已注册的 webhook',
+    description: '删除已注册的Webhook',
     inputSchema: {
       type: 'object',
       properties: {
@@ -35,7 +35,7 @@ export const tools = [
   },
   {
     name: 'webhook_log',
-    description: '获取 webhook 的执行日志',
+    description: '查看指定Webhook的执行历史日志',
     inputSchema: {
       type: 'object',
       properties: {

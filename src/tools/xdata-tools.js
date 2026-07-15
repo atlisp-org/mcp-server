@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'get_xdata',
-        description: '获取实体扩展数据 (Xdata)',
+        description: '读取实体的扩展数据(Xdata)指定应用程序下的数据。用户查实体附加信息时调用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'set_xdata',
-        description: '设置实体扩展数据 (Xdata)',
+        description: '为实体写入扩展数据(Xdata)。需指定appName和AutoLISP格式的data字符串。常用于附加业务标识',
         inputSchema: {
             type: 'object',
             properties: {
@@ -26,7 +26,7 @@ export const tools = [
     },
 {
         name: 'delete_xdata',
-        description: '删除实体扩展数据',
+        description: '删除实体上指定应用程序的扩展数据',
         inputSchema: {
             type: 'object',
             properties: {
@@ -38,7 +38,7 @@ export const tools = [
     },
 {
         name: 'list_xdata_apps',
-        description: '列出实体上所有 Xdata 应用程序名',
+        description: '列出某实体上注册了哪些扩展数据应用程序名',
         inputSchema: {
             type: 'object',
             properties: {
@@ -49,7 +49,7 @@ export const tools = [
     },
 {
         name: 'get_all_entity_xdata',
-        description: '获取实体所有扩展数据',
+        description: '获取实体上所有应用程序的完整扩展数据',
         inputSchema: {
             type: 'object',
             properties: {
@@ -60,7 +60,7 @@ export const tools = [
     },
 {
         name: 'copy_xdata',
-        description: '复制扩展数据到另一实体',
+        description: '将源实体上的扩展数据复制到目标实体。可选只复制指定appName',
         inputSchema: {
             type: 'object',
             properties: {
@@ -73,7 +73,7 @@ export const tools = [
     },
 {
         name: 'search_by_xdata',
-        description: '根据 Xdata 搜索实体',
+        description: '按扩展数据中的键值对搜索匹配的实体。需知appName和key/value',
         inputSchema: {
             type: 'object',
             properties: {
@@ -86,7 +86,7 @@ export const tools = [
     },
 {
         name: 'export_xdata_to_file',
-        description: '导出实体 Xdata 到 JSON 文件',
+        description: '将实体的扩展数据导出到JSON文件',
         inputSchema: {
             type: 'object',
             properties: {
@@ -98,7 +98,7 @@ export const tools = [
     },
 {
         name: 'import_xdata_from_file',
-        description: '从 JSON 文件导入 Xdata',
+        description: '从JSON文件导入扩展数据到实体',
         inputSchema: {
             type: 'object',
             properties: {

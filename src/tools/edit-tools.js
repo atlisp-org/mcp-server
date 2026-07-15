@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'trim_entity',
-        description: '修剪实体',
+        description: '修剪实体(TRIM)：用剪切边切掉指定实体的多余部分',
         inputSchema: {
             type: 'object',
             properties: {
@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'extend_entity',
-        description: '延伸实体',
+        description: '延伸实体(EXTEND)：将实体延伸到与边界相交',
         inputSchema: {
             type: 'object',
             properties: {
@@ -25,7 +25,7 @@ export const tools = [
     },
 {
         name: 'fillet',
-        description: '圆角连接',
+        description: '圆角(FILLET)：在两个实体间创建指定半径的圆弧过渡',
         inputSchema: {
             type: 'object',
             properties: {
@@ -38,7 +38,7 @@ export const tools = [
     },
 {
         name: 'chamfer',
-        description: '倒角连接',
+        description: '倒角(CHAMFER)：在两个实体间创建指定距离的斜角连接',
         inputSchema: {
             type: 'object',
             properties: {
@@ -52,7 +52,7 @@ export const tools = [
     },
 {
         name: 'break_entity',
-        description: '打断实体',
+        description: '打断(BREAK)：在实体上两点之间断开',
         inputSchema: {
             type: 'object',
             properties: {
@@ -65,7 +65,7 @@ export const tools = [
     },
 {
         name: 'join_entities',
-        description: '合并实体',
+        description: '合并(JOIN)：将多个连接的实体合并为一个',
         inputSchema: {
             type: 'object',
             properties: {
@@ -76,7 +76,7 @@ export const tools = [
     },
 {
         name: 'stretch',
-        description: '拉伸实体',
+        description: '拉伸(STRETCH)：通过交叉选择移动实体的一部分',
         inputSchema: {
             type: 'object',
             properties: {

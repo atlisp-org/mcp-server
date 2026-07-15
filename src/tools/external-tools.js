@@ -1,7 +1,7 @@
 export const tools = [
 {
     name: 'external_db_query',
-    description: '查询外部数据源 (CSV/JSON)',
+    description: '查询外部数据源(CSV/JSON文件)。source是文件名(不带扩展名)。filters支持键值对过滤',
     inputSchema: {
       type: 'object',
       properties: {
@@ -14,7 +14,7 @@ export const tools = [
   },
 {
     name: 'import_external_data',
-    description: '从外部数据源导入实体到 CAD 图形',
+    description: '根据外部数据在CAD中创建点实体。mapping字段映射x/y/z/label列名',
     inputSchema: {
       type: 'object',
       properties: {
@@ -27,7 +27,7 @@ export const tools = [
   },
 {
     name: 'export_to_external',
-    description: '将 CAD 实体导出到外部文件 (CSV/JSON)',
+    description: '将CAD实体数据导出为CSV或JSON文件。filter可选按图层过滤',
     inputSchema: {
       type: 'object',
       properties: {
@@ -40,7 +40,7 @@ export const tools = [
   },
 {
     name: 'list_data_sources',
-    description: '列出 ~/.atlisp/data/ 下可用的外部数据源',
+    description: '列出 ~/.atlisp/data/ 目录下可用的外部数据源文件',
     inputSchema: {
       type: 'object',
       properties: {},

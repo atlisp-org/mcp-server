@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'debug_start',
-    description: '启动交互式调试会话。将代码按块拆分为断点级执行，加载调试辅助函数到 CAD，跳过非断点前置块',
+    description: '启动交互式Lisp调试会话。将代码分块，支持断点和变量追踪',
     inputSchema: {
       type: 'object',
       properties: {
@@ -29,7 +29,7 @@ export const tools = [
   },
   {
     name: 'debug_step',
-    description: '执行一步（step）或继续到下一断点（continue）',
+    description: '单步执行(step)或继续到下一断点(continue)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,7 +41,7 @@ export const tools = [
   },
   {
     name: 'debug_evaluate',
-    description: '调试暂停时求值 AutoLISP 表达式',
+    description: '在调试会话中即时求值任意Lisp表达式',
     inputSchema: {
       type: 'object',
       properties: {
@@ -53,7 +53,7 @@ export const tools = [
   },
   {
     name: 'debug_get_state',
-    description: '查询调试会话当前状态',
+    description: '查询当前调试会话的状态（当前块、变量值等）',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,7 +64,7 @@ export const tools = [
   },
   {
     name: 'debug_stop',
-    description: '停止调试会话，清理 CAD 全局变量和辅助函数',
+    description: '停止调试会话，清理CAD中的辅助变量和函数',
     inputSchema: {
       type: 'object',
       properties: {
