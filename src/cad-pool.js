@@ -19,7 +19,7 @@ class CadConnectionPool {
   _reconnectCounts = new Map();
   _maxReconnectAttempts = 10;
   _healthCheckTimer = null;
-  _healthCheckInterval = 30000;
+  _healthCheckInterval = config.heartbeatInterval || 30000;
 
   constructor() {
     this._maxPoolSize = config.maxPoolSize || 3;
@@ -263,11 +263,13 @@ class CadConnectionPool {
    */
   async healthCheck() {
     const results = [];
+    let anyConnected = false;
     for (const [key, entry] of this._instances) {
       try {
         const pingOk = await entry.connection.ping();
         entry.connected = pingOk;
         entry.lastPing = Date.now();
+        if (pingOk) anyConnected = true;
         results.push({ key, connected: pingOk, platform: entry.platform, label: entry.label });
         if (!pingOk && entry.autoReconnect) {
           this._scheduleReconnect(key);
@@ -278,6 +280,13 @@ class CadConnectionPool {
         if (entry.autoReconnect) this._scheduleReconnect(key);
       }
     }
+
+    if (!anyConnected && this._instances.size > 0 && !this._discoverCooldown) {
+      this._discoverCooldown = true;
+      setTimeout(() => { this._discoverCooldown = false; }, 60000);
+      this.discover().catch(e => logError(`连接池: 自动发现失败: ${e.message}`));
+    }
+
     return results;
   }
 

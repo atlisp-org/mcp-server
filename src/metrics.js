@@ -2,6 +2,7 @@ import config from './config.js';
 import { metrics as otelMetrics } from '@opentelemetry/api';
 import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { log, error as logError } from './logger.js';
 
 const MAX_HISTORY_VALUES = 1000;
 
@@ -23,7 +24,7 @@ function initOtel() {
     otelMetrics.setGlobalMeterProvider(meterProvider);
     otelMeter = otelMetrics.getMeter('atlisp-mcp');
   } catch (e) {
-    console.error('OpenTelemetry init error:', e.message);
+    logError('OpenTelemetry init error:', e.message);
   }
 }
 

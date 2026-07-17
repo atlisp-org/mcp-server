@@ -6,8 +6,9 @@ import { cad, onDocumentChanged } from './cad.js';
 import { SERVER_NAME, SERVER_VERSION, SERVER_CAPABILITIES } from './constants.js';
 import { tools } from './tools/index.js';
 import { subscribe, unsubscribe } from './subscription-manager.js';
+import config from './config.js';
 
-const PING_INTERVAL = 30000;
+const PING_INTERVAL = config.heartbeatInterval || 30000;
 const CAD_POLL_INTERVAL = 5000;
 
 const connectedClients = new Map();

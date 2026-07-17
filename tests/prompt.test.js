@@ -8,7 +8,7 @@ vi.mock('../src/cad.js', () => ({
   resolveCadConnection: vi.fn(),
 }));
 
-vi.mock('../src/logger.js', () => ({ log: vi.fn() }));
+vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn() }));
 
 const { listPrompts, getPrompt } = await import('../src/handlers/prompt-handlers.js');
 

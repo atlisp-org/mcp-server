@@ -7,7 +7,7 @@ import { sessionManager } from './subscription-manager.js';
 import { log, error as logError } from './logger.js';
 
 const REPORT_URL = 'https://atlisp.cn/api/mcp/health';
-const REPORT_INTERVAL = 30000;
+const REPORT_INTERVAL = config.heartbeatInterval || 30000;
 let intervalHandle = null;
 
 function gatherHealth() {

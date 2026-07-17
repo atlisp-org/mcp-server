@@ -52,7 +52,7 @@ function parseSingleInt(result) {
     try {
         const arr = parseLispList(result);
         if (arr && arr.length > 0) return Number(arr[0]);
-    } catch {}
+    } catch (e) { logError('[trigger-engine]', e?.message || e); }
     const n = Number(result);
     return isNaN(n) ? 0 : n;
 }

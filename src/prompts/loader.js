@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { renderPrompt } from './renderer.js';
+import { log, error as logError } from '../logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFS_DIR = path.join(__dirname, 'definitions');
@@ -15,13 +16,13 @@ function safeReadJson(filePath) {
   try {
     const stat = fs.statSync(filePath);
     if (stat.size > MAX_PROMPT_FILE_SIZE) {
-      console.error(`Prompt file too large (${(stat.size / 1024).toFixed(0)}KB): ${filePath}`);
+      logError(`Prompt file too large (${(stat.size / 1024).toFixed(0)}KB): ${filePath}`);
       return null;
     }
     const raw = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(raw);
   } catch (e) {
-    console.error(`Error loading prompt file ${filePath}: ${e.message}`);
+    logError(`Error loading prompt file ${filePath}: ${e.message}`);
     return null;
   }
 }
@@ -54,7 +55,7 @@ function loadBuiltinDefs() {
       } catch (e) {}
     }
   } catch (e) {
-    console.error(`Error reading prompt definitions directory: ${e.message}`);
+    logError(`Error reading prompt definitions directory: ${e.message}`);
   }
   return builtinDefs;
 }
@@ -84,7 +85,7 @@ function loadExternalPrompts() {
       } catch (e) {}
     }
   } catch (e) {
-    console.error(`Error reading external prompts directory: ${e.message}`);
+    logError(`Error reading external prompts directory: ${e.message}`);
   }
   externalPromptsAt = now;
   return externalPrompts;

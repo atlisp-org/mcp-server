@@ -1,13 +1,30 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
 const AUTOSTART_NAME = 'atlisp-mcp';
 
+function regAdd(args) {
+  const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
+  return result.stdout.toString();
+}
+
+function regDelete(args) {
+  const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
+  return result.stdout.toString();
+}
+
 function getStartupCommand() {
     const nodePath = process.execPath;
     const scriptPath = process.argv[1];
+    if (process.platform === 'win32') {
+        return `& '${nodePath}' '${scriptPath}' --transport http`;
+    }
     return `"${nodePath}" "${scriptPath}" --transport http`;
 }
 
@@ -20,12 +37,11 @@ export function installAutostart() {
     const platform = process.platform;
 
     if (platform === 'win32') {
-        const cmd = getStartupCommand().replace(/"/g, '\\"');
+        const baseCmd = getStartupCommand();
+        const psCmd = `powershell -WindowStyle Hidden -Command "${baseCmd}"`;
         try {
-            execSync(
-                `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${AUTOSTART_NAME}" /t REG_SZ /d "${cmd}" /f`,
-                { stdio: 'pipe', timeout: 5000 }
-            );
+            regAdd(['add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+                '/v', AUTOSTART_NAME, '/t', 'REG_SZ', '/d', psCmd, '/f']);
             console.error(`自动启动已安装 (HKCU\\...\\Run)`);
             return true;
         } catch (e) {
@@ -100,10 +116,8 @@ export function uninstallAutostart() {
 
     if (platform === 'win32') {
         try {
-            execSync(
-                `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${AUTOSTART_NAME}" /f`,
-                { stdio: 'pipe', timeout: 5000 }
-            );
+            regDelete(['delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+                '/v', AUTOSTART_NAME, '/f']);
             console.error('自动启动已卸载');
             return true;
         } catch (e) {
@@ -151,7 +165,7 @@ export function autostartStatus() {
             );
             const match = out.match(/(\S+\.js)/);
             return { installed: true, command: match ? match[1] : out.trim() };
-        } catch {
+        } catch (_) {
             return { installed: false };
         }
     }

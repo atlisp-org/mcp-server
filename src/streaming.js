@@ -1,7 +1,8 @@
 import { cad } from './cad.js';
+import config from './config.js';
 
 const STREAM_CHUNK_SIZE = 100;
-const MAX_ENTITY_LIMIT = 20000;
+const MAX_ENTITY_LIMIT = config.maxEntityLimit;
 const UNFILTERED_WARN_THRESHOLD = 5000;
 
 function escapeLispStr(str) {

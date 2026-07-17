@@ -616,6 +616,36 @@ async function executeWithRetry(fn, label) {
   return { success: false, error: lastError?.message || '发送失败' };
 }
 
+async function executeLongCode(msg) {
+  const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
+  const codeHash = computeCodeHash(msg.code, cacheEnabled);
+  log(`sendResult (${msg.code.length} chars, cache=${cacheEnabled}): ${msg.code.substring(0, 80)}...`);
+  return await executeWithRetry(async () => {
+    const r = await new Promise((resolve, reject) => {
+      cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '', codeHash, cacheEnabled }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+    log(`sendResult result: ${JSON.stringify(r)}`);
+    return r;
+  }, 'sendResult');
+}
+
+async function executeShortCode(msg) {
+  log(`send: ${msg.code}`);
+  return await executeWithRetry(async () => {
+    const r = await new Promise((resolve, reject) => {
+      cadSend({ code: msg.code, platform: msg.platform }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+    log(`send result: ${JSON.stringify(r)}`);
+    return r;
+  }, 'send');
+}
+
 async function executeLisp(msg, withResult) {
   if (!msg.code.endsWith('\n')) {
     msg.code += '\n';
@@ -636,32 +666,10 @@ async function executeLisp(msg, withResult) {
   }
 
   if (withResult || msg.code.length > 255) {
-    const cacheEnabled = process.env.LONG_CODE_CACHE === '1';
-    const codeHash = computeCodeHash(msg.code, cacheEnabled);
-    log(`sendResult (${msg.code.length} chars, cache=${cacheEnabled}): ${msg.code.substring(0, 80)}...`);
-    return await executeWithRetry(async () => {
-      const r = await new Promise((resolve, reject) => {
-        cadSendWithResult({ code: msg.code, platform: msg.platform, encoding: msg.encoding || '', codeHash, cacheEnabled }, (e, r) => {
-          if (e) reject(e);
-          else resolve(r);
-        });
-      });
-      log(`sendResult result: ${JSON.stringify(r)}`);
-      return r;
-    }, 'sendResult');
+    return await executeLongCode(msg);
   }
 
-  log(`send: ${msg.code}`);
-  return await executeWithRetry(async () => {
-    const r = await new Promise((resolve, reject) => {
-      cadSend({ code: msg.code, platform: msg.platform }, (e, r) => {
-        if (e) reject(e);
-        else resolve(r);
-      });
-    });
-    log(`send result: ${JSON.stringify(r)}`);
-    return r;
-  }, 'send');
+  return await executeShortCode(msg);
 }
 
 const MESSAGE_HANDLERS = {
@@ -756,4 +764,4 @@ export async function handleMessage(msg) {
 }
 
 // Exported for testing
-export { validateCode, computeCodeHash, getCachedLisp, setCachedLisp, MESSAGE_HANDLERS, executeLisp };
+export { validateCode, computeCodeHash, getCachedLisp, setCachedLisp, MESSAGE_HANDLERS, executeLisp, executeLongCode, executeShortCode };

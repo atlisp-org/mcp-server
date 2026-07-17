@@ -36,6 +36,11 @@ pool.onInstanceSwitch(() => {
 // Re-export handleToolCall from the executor module
 export { handleToolCall } from './tool-executor.js';
 
+/**
+ * @param {string} toolName
+ * @param {(args: Record<string,any>) => any|any[]} [argMapper]
+ * @returns {(args: Record<string,any>) => Promise<{content: {type:string,text:string}[], isError?: boolean}>}
+ */
 function lazy(toolName, argMapper) {
   return async (args) => {
     const handler = await getHandler(toolName);
@@ -217,7 +222,6 @@ export const TOOL_HANDLERS = {
     batch_copy:            lazy('batch_copy', (a) => [a?.handles, a?.dx, a?.dy, a?.dz]),
     batch_delete:          lazy('batch_delete', (a) => a?.handles),
     batch_set_color:       lazy('batch_set_color', (a) => [a?.handles, a?.color]),
-    batch_set_layer:      lazy('batch_set_layer', (a) => [a?.handles, a?.layerName]),
     batch_explode:         lazy('batch_explode', (a) => a?.handles),
     batch_mirror:          lazy('batch_mirror', (a) => [a?.handles, a?.startPoint, a?.endPoint, a?.deleteOriginal]),
     batch_offset:          lazy('batch_offset', (a) => [a?.handles, a?.distance, a?.side]),

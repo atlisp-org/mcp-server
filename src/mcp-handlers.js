@@ -490,7 +490,7 @@ export function createMcpServer(handlers = {}) {
         const { requestId, reason } = notification.params;
         log(`Request cancelled by client: id=${requestId}${reason ? ` reason=${reason}` : ''}`);
         // Cancel the current CAD command by sending ESC/Ctrl+C equivalent
-        try { cad.sendCommand('(command "_.UCS" "")'); } catch (_) {}
+        try { cad.sendCommand('(command "_.UCS" "")'); } catch (e) { logError('[mcp-handlers]', e?.message || e); }
     });
 
     server.setNotificationHandler(ProgressNotificationSchema, (notification) => {

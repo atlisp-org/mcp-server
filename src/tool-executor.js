@@ -48,7 +48,7 @@ async function beginUndo(instance) {
 
 async function endUndo(instance) {
   const conn = resolveConn(instance);
-  try { await conn.sendCommand('(command "_.UNDO" "_END")'); } catch (_) {}
+  try { await conn.sendCommand('(command "_.UNDO" "_END")'); } catch (e) { logError('[tool-executor]', e?.message || e); }
 }
 
 export async function handleToolCall(name, args, options = {}) {
@@ -96,7 +96,11 @@ export async function handleToolCall(name, args, options = {}) {
         } catch (e) {
             logError(`Tool call error [${name}]: ${e.message}`, { tool: name, args });
             await writeAuditError(name, args, options, e);
-            if (e.message.startsWith('Missing required') || e.message.startsWith('Invalid type')) {
+            if (e instanceof MCPError && e.code === ERROR_CODES.INVALID_ARGS) {
+                return mcpErrorResponse(e);
+            }
+            if (e instanceof MCPError) return mcpErrorResponse(e);
+            if (e.message?.startsWith('Missing required') || e.message?.startsWith('Invalid type')) {
                 return mcpErrorResponse(new MCPError(ERROR_CODES.INVALID_ARGS, e.message));
             }
             return mcpErrorResponse(e);

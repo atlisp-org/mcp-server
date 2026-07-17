@@ -11,7 +11,7 @@ vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn(), warn: vi.fn()
 const {
   createDimension, getDimensionValue, createHatch, setHatchProperties,
   getBlockAttributes, setBlockAttribute, zoomToExtents, zoomToWindow,
-  createNamedView, restoreNamedView, listNamedViews, exportDxf, exportDwf, batchSetLayer,
+  createNamedView, restoreNamedView, listNamedViews, exportDxf, exportDwf,
 } = await import('../src/handlers/dim-hatch-handlers.js');
 
 describe('dim-hatch-handlers', () => {
@@ -130,21 +130,6 @@ describe('dim-hatch-handlers', () => {
       mockSendCommandWithResult.mockResolvedValue('"EXPORTED"');
       const result = await exportDwf('C:/test.dwf');
       expect(result.content[0].text).toContain('已导出');
-    });
-  });
-
-  describe('batchSetLayer', () => {
-    it('sets layer for handles', async () => {
-      mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"Updated 2 entities"');
-      const result = await batchSetLayer(['1F', '2A'], 'Layer1');
-      expect(result.content[0].text).toContain('Updated');
-    });
-
-    it('returns error for empty handles', async () => {
-      mockCad.connected = true;
-      const result = await batchSetLayer([], 'Layer1');
-      expect(result.isError).toBe(true);
     });
   });
 });

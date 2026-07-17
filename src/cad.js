@@ -1,3 +1,4 @@
+// @ts-check
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -5,6 +6,7 @@ import { randomUUID } from 'crypto';
 import config from './config.js';
 import { setCadConnected } from './metrics.js';
 import { CircuitBreaker } from './cad-circuit-breaker.js';
+import { log, error as logError } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
@@ -42,11 +44,17 @@ export function onDocumentChanged(callback) {
 
 function emitDocumentChanged(info) {
   for (const cb of _docChangeCallbacks) {
-    try { cb(info); } catch (e) { console.error('doc change callback error:', e.message); }
+    try { cb(info); } catch (e) { logError('doc change callback error:', e.message); }
   }
 }
 
+/**
+ * @typedef {{ type: string, code: string, platform: string, encoding: string, resolve: Function, reject: Function }} Command
+ * @typedef {{ success: boolean, result?: string, error?: string, rawBase64?: string }} CommandResult
+ */
+
 class ReadBatcher {
+  /** @param {object} connection @param {number} maxDelayMs @param {number} maxBatchSize */
   constructor(connection, maxDelayMs = 50, maxBatchSize = 10) {
     this._conn = connection;
     this._batch = [];
@@ -111,7 +119,13 @@ class ReadBatcher {
   }
 }
 
+/**
+ * @template T
+ * @typedef {{ resolve: (v: T) => void, reject: (e: Error) => void, timeout: NodeJS.Timeout, _skipCb?: boolean }} PendingEntry
+ */
+
 class CommandQueue {
+  /** @param {object} connection */
   constructor(connection) {
     this._conn = connection;
     this._queues = [[], [], []];
@@ -122,7 +136,7 @@ class CommandQueue {
 
   enableBatcher() {
     if (this._batcher) return;
-    this._batcher = new ReadBatcher(this._conn, 50, 10);
+    this._batcher = new ReadBatcher(this._conn, config.readBatchWindow, config.readBatchSize);
   }
 
   enqueue(command, priority = PRIORITY_NORMAL) {
@@ -212,24 +226,39 @@ class CommandQueue {
   }
 }
 
+/**
+ * @typedef {import('child_process').ChildProcess} ChildProcess
+ */
+
 class CadConnection {
+  /** @type {ChildProcess|null} */
   _primaryWorker = null;
+  /** @type {ChildProcess[]} */
   _readWorkers = [];
   _readWorkerIndex = 0;
+  /** @type {string|null} */
   _platform = null;
+  /** @type {string|null} */
   _version = null;
+  /** @type {string|null} */
   _product = null;
   connected = false;
 
+  /** @type {NodeJS.Timeout|null} */
   _heartbeatTimer = null;
+  /** @type {Map<string, PendingEntry<any>>} */
   _pendingRequests = new Map();
+  /** @type {CommandQueue|null} */
   _commandQueue = null;
 
   _restartCount = 0;
+  /** @type {NodeJS.Timeout|null} */
   _restartTimer = null;
   _activeDocName = null;
   _monitorStarted = false;
+  /** @type {string|null} */
   _connectionId = null;
+  /** @type {NodeJS.Timeout[]} */
   _readRestartTimers = [];
 
   constructor() {
@@ -237,8 +266,8 @@ class CadConnection {
     this._commandQueue = new CommandQueue(this);
     this._cb = new CircuitBreaker(
       this._connectionId,
-      (id) => console.error(`[${id}] Circuit breaker OPEN`),
-      (id) => console.error(`[${id}] Circuit breaker HALF_OPEN, allowing trial request`)
+      (id) => logError(`[${id}] Circuit breaker OPEN`),
+      (id) => logError(`[${id}] Circuit breaker HALF_OPEN, allowing trial request`)
     );
   }
 
@@ -250,6 +279,11 @@ class CadConnection {
     return process.platform === 'win32';
   }
 
+  /**
+   * @param {string|null} [platform]
+   * @param {{ moniker?: string, key?: string }} [options]
+   * @returns {Promise<boolean>}
+   */
   async connect(platform = null, options = {}) {
     if (!this.isAvailable()) return false;
     this._cb.recordSuccess();
@@ -275,11 +309,15 @@ class CadConnection {
         return true;
       }
     } catch (e) {
-      console.error('CAD connect error:', e.message);
+      logError('CAD connect error:', e.message);
     }
     return false;
   }
 
+  /**
+   * @param {string} code
+   * @returns {Promise<boolean>}
+   */
   async sendCommand(code) {
     if (!this.connected) throw new Error('未连接 CAD');
     return new Promise((resolve, reject) => {
@@ -293,6 +331,12 @@ class CadConnection {
     });
   }
 
+  /**
+   * @param {string} code
+   * @param {string|null} [encoding]
+   * @param {boolean} [raw]
+   * @returns {Promise<string|{ text: string, rawBase64: string }>}
+   */
   async sendCommandWithResult(code, encoding = null, raw = false) {
     if (!this.connected) throw new Error('未连接 CAD');
     return new Promise((resolve, reject) => {
@@ -407,7 +451,7 @@ class CadConnection {
     this._setupStdoutHandler(w);
 
     w.on('exit', (code) => {
-      console.error(`[${this._connectionId}] ${type} worker exited with code:`, code);
+      logError(`[${this._connectionId}] ${type} worker exited with code:`, code);
       w.connected = false;
 
       if (type === 'primary') {
@@ -445,7 +489,7 @@ class CadConnection {
 
     if (!this._primaryWorker || !this._primaryWorker.connected) {
       if (this._primaryWorker) {
-        try { this._primaryWorker.kill(); } catch {}
+        try { this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
         this._primaryWorker = null;
       }
       this._primaryWorker = this._spawnWorker('primary');
@@ -479,11 +523,11 @@ class CadConnection {
     this._commandQueue.clear();
 
     if (this._primaryWorker) {
-      try { this._primaryWorker.kill(); } catch {}
+      try { this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
       this._primaryWorker = null;
     }
     for (const rw of this._readWorkers) {
-      try { rw.kill(); } catch {}
+      try { rw.kill(); } catch (e) { logError('[cad]', e?.message || e); }
     }
     this._readWorkers = [];
     this._readWorkerIndex = 0;
@@ -533,16 +577,16 @@ class CadConnection {
             }
           } catch (parseErr) {
             if (line.startsWith('{') || line.startsWith('[')) {
-              console.error(`[${self._connectionId}] JSON parse error in worker output:`, parseErr.message);
+              logError(`[${self._connectionId}] JSON parse error in worker output:`, parseErr.message);
             }
           }
         }
       } catch (e) {
-        console.error(`[${self._connectionId}] Unexpected error in worker stdout handler:`, e.message);
+        logError(`[${self._connectionId}] Unexpected error in worker stdout handler:`, e.message);
       }
     });
 
-    w.stderr.on('data', (d) => console.error(`[${self._connectionId}] ${w._workerType || 'worker'} stderr:`, d.toString()));
+    w.stderr.on('data', (d) => logError(`[${self._connectionId}] ${w._workerType || 'worker'} stderr:`, d.toString()));
   }
 
   _startHeartbeat() {
@@ -552,7 +596,7 @@ class CadConnection {
       try {
         const result = await self._sendMessageInternal({ type: 'ping' }, true);
         if (!result?.pong) {
-          console.error(`[${self._connectionId}] heartbeat failed, worker may be dead`);
+          logError(`[${self._connectionId}] heartbeat failed, worker may be dead`);
           self._resetWorker();
           return;
         }
@@ -563,11 +607,11 @@ class CadConnection {
               emitDocumentChanged({ docName: docResult.docName, docPath: docResult.docPath || '' });
             }
           } catch (e) {
-            console.error(`[${self._connectionId}] heartbeat doc poll error:`, e.message);
+            logError(`[${self._connectionId}] heartbeat doc poll error:`, e.message);
           }
         }
       } catch (e) {
-        console.error(`[${self._connectionId}] heartbeat error:`, e.message);
+        logError(`[${self._connectionId}] heartbeat error:`, e.message);
         self._resetWorker();
       }
     }, HEARTBEAT_INTERVAL);
@@ -579,16 +623,16 @@ class CadConnection {
       this._restartTimer = null;
     }
     if (this._restartCount >= MAX_RESTART_ATTEMPTS) {
-      console.error(`[${this._connectionId}] Max worker restart attempts reached, giving up`);
+      logError(`[${this._connectionId}] Max worker restart attempts reached, giving up`);
       return;
     }
     const delay = Math.min(RESTART_BACKOFF_BASE * Math.pow(2, this._restartCount), 30000);
     this._restartCount++;
-    console.error(`[${this._connectionId}] Scheduling worker restart in ${delay}ms (attempt ${this._restartCount}/${MAX_RESTART_ATTEMPTS})`);
+    logError(`[${this._connectionId}] Scheduling worker restart in ${delay}ms (attempt ${this._restartCount}/${MAX_RESTART_ATTEMPTS})`);
     const self = this;
     this._restartTimer = setTimeout(() => {
       self._restartTimer = null;
-      console.error(`[${self._connectionId}] Attempting worker restart...`);
+      logError(`[${self._connectionId}] Attempting worker restart...`);
       self._resetWorker();
       self._getWorker(false);
     }, delay);
@@ -596,7 +640,7 @@ class CadConnection {
 
   async _sendMessage(msg) {
     if (!this._cb.allowRequest()) {
-      console.error(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
+      logError(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
       this._cb.reset();
       await this._resetWorker();
       await this._getWorker(false);
@@ -643,25 +687,32 @@ class CadConnection {
   }
 }
 
+/** @returns {CadConnection} */
 export function createCadConnection() {
   return new CadConnection();
 }
 
+/** @type {CadConnection} */
 let _activeConnection = new CadConnection();
 
+/** @param {CadConnection} conn */
 export function setActiveConnection(conn) {
   _activeConnection = conn;
 }
 
+/** @returns {CadConnection} */
 export function getActiveConnection() {
   return _activeConnection;
 }
 
+/** @type {(() => CadConnection|null)|null} */
 let _resolveInstanceConn = null;
+/** @param {() => CadConnection|null} fn */
 export function _setInstanceResolver(fn) {
   _resolveInstanceConn = fn;
 }
 
+/** @returns {CadConnection} */
 function _resolveConn() {
   if (_resolveInstanceConn) {
     const conn = _resolveInstanceConn();
@@ -670,10 +721,37 @@ function _resolveConn() {
   return _activeConnection;
 }
 
+/** @returns {CadConnection} */
 export function resolveCadConnection() {
   return _resolveConn();
 }
 
+/**
+ * @type {{
+ *   connected: boolean,
+ *   version: string|null,
+ *   product: string|null,
+ *   _platform: string|null,
+ *   connect(platform?: string|null): Promise<boolean>,
+ *   sendCommand(code: string): Promise<boolean>,
+ *   sendCommandWithResult(code: string, encoding?: string|null, raw?: boolean): Promise<string|{text:string,rawBase64:string}>,
+ *   getVersion(): string|null,
+ *   getPlatform(): string|null,
+ *   getConnectionId(): string|null,
+ *   isAvailable(): boolean,
+ *   isBusy(): Promise<boolean>,
+ *   hasDoc(): Promise<{hasDoc:boolean,docCount:number}>,
+ *   newDoc(): Promise<boolean>,
+ *   bringToFront(): Promise<boolean>,
+ *   getActiveDocInfo(): Promise<{docName:string,docPath:string,docCount:number}>,
+ *   getInfo(): Promise<string>,
+ *   disconnect(): Promise<void>,
+ *   ping(): Promise<boolean>,
+ *   _reset(): void,
+ *   _getQueueSize(): number,
+ *   _getRestartCount(): number,
+ * }}
+ */
 export const cad = {
   get connected() { return _resolveConn().connected; },
   set connected(v) { _resolveConn().connected = v; },
@@ -704,6 +782,8 @@ export const cad = {
   _getQueueSize() { return _resolveConn()._getQueueSize(); },
   _getRestartCount() { return _resolveConn()._getRestartCount(); },
 };
+
+/** @typedef {typeof CadConnection.prototype} CadConnectionInstance */
 
 export { ReadBatcher, isReadCommand, CommandQueue };
 export default CadConnection;

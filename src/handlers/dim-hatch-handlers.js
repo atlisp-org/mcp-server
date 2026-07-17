@@ -314,27 +314,3 @@ export async function exportDwf(outputPath) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
 }
-
-export async function batchSetLayer(handles, layerName) {
-    if (!cad.connected) { await cad.connect(); }
-    if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
-
-    if (!Array.isArray(handles) || handles.length === 0) {
-        return { content: [{ type: 'text', text: '句柄列表为空' }], isError: true };
-    }
-
-    const handlesStr = handles.map(h => `"${escapeLispString(h)}"`).join(' ');
-    const code = `(progn
-        (vl-load-com)
-        (setq ss (ssadd))
-        ${handlesStr.split('\n').map(h => `(ssadd (handent ${h}) ss)`).join('\n')}
-        (command "._CHPROP" ss "" "LA" "${escapeLispString(layerName)}" "")
-        (strcat "Updated " (itoa ${handles.length}) " entities")
-    )`;
-    try {
-        const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result || `已批量设置 ${handles.length} 个实体图层为 ${layerName}` }] };
-    } catch (e) {
-        return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
-    }
-}

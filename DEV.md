@@ -74,8 +74,6 @@ tools/mcp-server/
 │   ├── logger.js              # 日志
 │   ├── metrics.js             # Prometheus 指标
 │   ├── errors.js              # 错误定义
-│   ├── lisp-sandbox.js        # Lisp 沙箱
-│   ├── pipeline-engine.js     # 管道引擎
 │   ├── repl-engine.js         # REPL 引擎
 │   ├── trigger-engine.js      # 触发器引擎
 │   ├── webhook-engine.js      # Webhook 引擎
@@ -112,11 +110,9 @@ tools/mcp-server/
 | **流式读取** | `streaming.js` | 分页流式读取 CAD 实体/文字 |
 | **SSE** | `sse-session.js` | Server-Sent Events 会话管理 |
 | **WebSocket** | `websocket-transport.js` | WebSocket 传输层 |
-| **管道** | `pipeline-engine.js` | 多步工具调用链编排引擎 |
 | **REPL** | `repl-engine.js` | 交互式 Lisp REPL 会话引擎 |
 | **触发器** | `trigger-engine.js` | CAD 变更触发器注册与等待 |
 | **Webhook** | `webhook-engine.js` | 事件驱动 HTTP 回调引擎 |
-| **沙箱** | `lisp-sandbox.js` | Lisp 代码安全验证 |
 | **审计** | `audit-log.js` | 工具调用审计日志 |
 | **指标** | `metrics.js` | Prometheus 指标导出 |
 
@@ -296,15 +292,12 @@ npm run test:watch
 
 ### 安全规则必须保持同步
 
-`src/lisp-security.js` 是共享安全模块，统一定义 21 条安全规则。`cad-worker.js`（执行层校验）和 `lisp-sandbox.js`（沙箱层校验）都引用此模块。**修改安全规则时只修改 `lisp-security.js`，禁止在其他文件中重复定义规则。**
+`src/lisp-security.js` 是统一安全模块，统一定义 21 条安全规则 + session allowlist。`cad-worker.js`（执行层校验）和 `mcp-tools.js`（校验层）都引用此模块。**修改安全规则时只修改 `lisp-security.js`，禁止在其他文件中重复定义规则。**
 
-`lisp-security.js` 同时导出两个校验函数：
+`lisp-security.js` 导出三个校验函数：
 - `validateLispCodeWorker(code)` → cad-worker 使用，简单返回 `{valid, error}`
+- `validateLispCode(code, sessionId)` → mcp-tools 使用，支持 sessionId 做 allowlist 豁免
 - `checkParens(code)` → 括号匹配检查，cad-worker 中使用
-
-`lisp-sandbox.js` 额外提供：
-- `validateLispCode(code, sessionId)` → 支持 sessionId 做 allowlist 豁免
-- session allowlist 管理函数
 
 ### SessionManager 单例模式
 
@@ -332,7 +325,7 @@ import { sessionManager } from './subscription-manager.js';
 
 ### 流式读取实体上限
 
-`streaming.js` 中 `MAX_ENTITY_LIMIT = 50000`。当选择集实体数量超过此限制时，返回错误提示用户使用过滤条件缩小范围，而非直接执行 `ssget "_X"`。此限制保护 CAD 端不被超大选择集拖垮。
+`streaming.js` 中 `MAX_ENTITY_LIMIT`（默认 20000，可通过 `MAX_ENTITY_LIMIT` 环境变量配置）。当选择集实体数量超过此限制时，返回错误提示用户使用过滤条件缩小范围，而非直接执行 `ssget "_X"`。此限制保护 CAD 端不被超大选择集拖垮。
 
 ### Webhook 重试策略
 

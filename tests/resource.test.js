@@ -16,7 +16,7 @@ const mockCad = {
 };
 
 vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
-vi.mock('../src/logger.js', () => ({ log: vi.fn(), closeLog: vi.fn() }));
+vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn(), closeLog: vi.fn() }));
 vi.mock('../src/config.js', () => ({
   default: {
     port: 8110, host: '0.0.0.0', transport: 'stdio',

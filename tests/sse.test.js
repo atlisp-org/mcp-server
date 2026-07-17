@@ -4,7 +4,7 @@ import http from 'node:http';
 import { setupSseHeaders, sendSSE, createSseResponseHandler, SseSession, SSE_EVENTS, parseLastEventId } from '../src/sse-session.js';
 import { SseSessionManager } from '../src/sse-session-manager.js';
 
-vi.mock('../src/logger.js', () => ({ log: vi.fn() }));
+vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn() }));
 
 const mockCad = vi.hoisted(() => ({
   connected: false,

@@ -40,6 +40,9 @@ const envSchema = z.object({
     NO_LINT: z.coerce.boolean().optional().default(false),
     SECURITY_LEVEL: z.string().optional().default('strict'),
     CLIENT_ID: z.string().optional().default(''),
+    MAX_ENTITY_LIMIT: z.coerce.number().optional().default(20000),
+    READ_BATCH_WINDOW: z.coerce.number().optional().default(50),
+    READ_BATCH_SIZE: z.coerce.number().optional().default(10),
 });
 
 const configSchema = z.object({
@@ -85,6 +88,9 @@ const configSchema = z.object({
     noLint: z.boolean().optional(),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
+    maxEntityLimit: z.number().optional(),
+    readBatchWindow: z.number().optional(),
+    readBatchSize: z.number().optional(),
 });
 
 function parseArgs() {
@@ -206,6 +212,9 @@ const config = {
     noLint: fileConfig?.noLint ?? cliArgs.noLint ?? env.NO_LINT,
     securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'strict'),
     clientId: fileConfig?.clientId ?? (env.CLIENT_ID || ''),
+    maxEntityLimit: fileConfig?.maxEntityLimit ?? env.MAX_ENTITY_LIMIT,
+    readBatchWindow: fileConfig?.readBatchWindow ?? env.READ_BATCH_WINDOW,
+    readBatchSize: fileConfig?.readBatchSize ?? env.READ_BATCH_SIZE,
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

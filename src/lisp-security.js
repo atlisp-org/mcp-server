@@ -50,7 +50,7 @@ export function refreshConfig() {
 
 try {
   onConfigChange(() => { _cachedLevel = null; });
-} catch (_) {}
+} catch (e) { logError('[lisp-security]', e?.message || e); }
 
 function resolveSeverity(rule) {
   if (_cachedLevel) return _cachedLevel;
@@ -116,8 +116,6 @@ export function checkParens(code) {
   if (depth < 0) return { valid: false, error: `多余 ${-depth} 个左括号 (` };
   return { valid: true };
 }
-
-// === Session Sandbox (merged from lisp-sandbox.js) ===
 
 export const RULES = SECURITY_RULES;
 

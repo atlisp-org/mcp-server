@@ -1,4 +1,5 @@
 import { SseSession, SSE_EVENTS } from './sse-session.js';
+import { log, error as logError } from './logger.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -23,7 +24,7 @@ function persistSessionData(clientId, sessionData) {
         };
         fs.writeFileSync(getSessionStorePath(clientId), JSON.stringify(store), 'utf-8');
     } catch (e) {
-        console.error('Failed to persist session:', e.message);
+        logError('Failed to persist session:', e.message);
     }
 }
 
@@ -57,11 +58,11 @@ function cleanupStaleSessions() {
                     fs.unlinkSync(filePath);
                 }
             } catch (e) {
-                try { fs.unlinkSync(filePath); } catch (e2) { console.error('Failed to remove corrupt session file:', filePath, e2.message); }
+                try { fs.unlinkSync(filePath); } catch (e2) { logError('Failed to remove corrupt session file:', filePath, e2.message); }
             }
         }
     } catch (e) {
-        console.error('Failed to cleanup stale sessions:', e.message);
+        logError('Failed to cleanup stale sessions:', e.message);
     }
 }
 
@@ -270,7 +271,7 @@ export class SseSessionManager {
             if (!session.isActive) continue;
             const idle = now - (session.lastActivity || now);
             if (idle > IDLE_SESSION_TIMEOUT) {
-                console.error(`Closing idle SSE session ${clientId} (idle ${Math.round(idle / 1000)}s)`);
+                logError(`Closing idle SSE session ${clientId} (idle ${Math.round(idle / 1000)}s)`);
                 persistSessionData(clientId, session.sessionData);
                 session.close();
                 this.#sessions.delete(clientId);

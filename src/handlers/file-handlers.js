@@ -1,15 +1,5 @@
 import { cad } from '../cad.js';
-import { escapeLispString } from '../handler-utils.js';
-import path from 'path';
-
-function validateFilePath(filePath) {
-  const normalized = path.normalize(filePath);
-  if (normalized.includes('..')) {
-    throw new Error(`路径不允许包含 "..": ${filePath}`);
-  }
-  const resolved = path.resolve(normalized);
-  return resolved;
-}
+import { escapeLispString, validateFilePath } from '../handler-utils.js';
 
 export async function openDwg(filePath) {
     if (!cad.connected) { await cad.connect(); }

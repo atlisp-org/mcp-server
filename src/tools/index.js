@@ -86,6 +86,8 @@ const READ_ONLY_TOOLS = new Set([
 ]);
 
 const DEPRECATED_TOOLS = new Set([
+  'plot_to_pdf',
+  'save_pdf_layout',
 ]);
 
 const EXTRA_DESTRUCTIVE = new Set([

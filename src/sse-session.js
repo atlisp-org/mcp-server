@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
+import config from './config.js';
 
-const DEFAULT_HEARTBEAT_INTERVAL = 30000;
+const DEFAULT_HEARTBEAT_INTERVAL = config.heartbeatInterval || 30000;
 const DEFAULT_RETRY_INTERVAL = 30000;
 const MAX_SENT_MESSAGES = 1000;
 

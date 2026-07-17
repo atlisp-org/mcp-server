@@ -1,4 +1,5 @@
 import { onDocumentChanged, cad } from './cad.js';
+import { log, error as logError } from './logger.js';
 
 const subscribers = new Map();
 let wasConnected = false;
@@ -66,7 +67,7 @@ export function unsubscribeEvents(sessionId) {
     const sub = subscribers.get(sessionId);
     if (sub) {
         clearInterval(sub.heartbeatTimer);
-        try { sub.res.end(); } catch {}
+        try { sub.res.end(); } catch (e) { logError('[cad-event-bus]', e?.message || e); }
         subscribers.delete(sessionId);
     }
 }
@@ -93,7 +94,7 @@ function broadcastEvent(event, data) {
 function sendEvent(res, event, data) {
     try {
         res.write(formatSSE(event, data));
-    } catch {}
+    } catch (e) { logError('[cad-event-bus]', e?.message || e); }
 }
 
 function formatSSE(event, data) {
