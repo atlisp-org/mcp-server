@@ -30,6 +30,8 @@ import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromp
 import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
+import { acquirePortLock, releasePortLock } from './lockfile.js';
+import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
 
 export { tools, handleToolCall } from './mcp-tools.js';
 export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
@@ -69,6 +71,9 @@ Options:
   --api-key <key>              API key for authentication
   --client-id <id>             Client identifier for remote health report
   --security-level <type>      Security level: strict, standard, relaxed (default: strict)
+  --install-autostart          Register server to auto-start after user login
+  --uninstall-autostart        Remove auto-start registration
+  --autostart-status           Check if auto-start is installed
 
 Environment Variables:
   TRANSPORT             Transport mode (http/stdio/ws)
@@ -149,6 +154,21 @@ For more info: https://atlisp.cn
             process.env.CLIENT_ID = cliArgs[++i];
         } else if (arg === '--metrics-enabled' && cliArgs[i + 1]) {
             process.env.METRICS_ENABLED = cliArgs[++i];
+        } else if (arg === '--install-autostart') {
+            installAutostart();
+            process.exit(0);
+        } else if (arg === '--uninstall-autostart') {
+            uninstallAutostart();
+            process.exit(0);
+        } else if (arg === '--autostart-status') {
+            const s = autostartStatus();
+            if (s.installed) {
+                console.error(`自动启动: 已安装`);
+                if (s.command) console.error(`  命令: ${s.command}`);
+            } else {
+                console.error(`自动启动: 未安装`);
+            }
+            process.exit(0);
         }
     }
 }
@@ -250,6 +270,15 @@ export async function startServer() {
         const rawServer = httpsServer || http.createServer(app);
         createWebSocketServer(rawServer);
 
+        const lock = acquirePortLock(config.port, config.host);
+        if (!lock.ok) {
+            console.error(`\n错误: 端口 ${config.port} 已被另一个 atlisp-mcp 实例占用`);
+            console.error(`  PID: ${lock.pid}`);
+            if (lock.started) console.error(`  启动时间: ${lock.started}`);
+            console.error(`请选择其他端口 (--port) 或结束占用进程后重试。\n`);
+            process.exit(1);
+        }
+
         const httpServer = rawServer.listen(config.port, config.host, async () => {
             await initCadConnection();
             const proto = useSsl ? 'https' : 'http';
@@ -268,6 +297,7 @@ export async function startServer() {
                 removeSessionServer(sid);
             }
             await closeStreamableHttpServer();
+            releasePortLock(config.port);
             await cad.disconnect();
             closeLog();
             httpServer.close(() => {
@@ -278,6 +308,7 @@ export async function startServer() {
         }
         process.on('SIGINT', () => shutdown('SIGINT'));
         process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('exit', () => releasePortLock(config.port));
     }
 }
 

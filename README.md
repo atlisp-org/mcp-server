@@ -189,6 +189,30 @@ atlisp-mcp --ws
 atlisp-mcp --port 9000 --host 127.0.0.1
 ```
 
+> **端口防冲突**：每个端口只允许一个实例运行。启动时自动检测端口是否已被其他 `atlisp-mcp` 进程占用（通过 `~/.atlisp/locks/atlisp-mcp-{port}.lock` PID 锁文件），占用则报错退出。不同端口可同时运行多个实例互不干扰。
+
+### 设置开机自启
+
+注册到用户登录后自动启动 HTTP 服务：
+
+```bash
+atlisp-mcp --install-autostart
+```
+
+移除自启：
+
+```bash
+atlisp-mcp --uninstall-autostart
+```
+
+查看自启状态：
+
+```bash
+atlisp-mcp --autostart-status
+```
+
+支持三种平台：Windows（Registry Run 键）、macOS（LaunchAgent）、Linux（XDG Autostart）。
+
 ### 健康检查
 
 ```bash
@@ -824,6 +848,9 @@ curl http://localhost:8110/metrics
 | `--config <path>` | 配置文件路径 |
 | `--ssl-key <path>` | SSL 私钥文件 |
 | `--ssl-cert <path>` | SSL 证书文件 |
+| `--install-autostart` | 注册用户登录后自动启动 HTTP 服务 |
+| `--uninstall-autostart` | 移除自动启动注册 |
+| `--autostart-status` | 查询自动启动是否已安装 |
 
 ---
 
@@ -880,7 +907,7 @@ curl http://localhost:8110/metrics
 | 中文乱码 | 使用 `encoding: gbk` 参数或用 `vl-prin1-to-string` 处理 |
 | 括号错误 | MCP Server 会自动检查并提示 |
 | CAD 未自动启动 | 检查 COM 权限，以管理员身份运行 |
-| 端口被占用 | 使用 `--port` 指定其他端口 |
+| 端口被占用 | 使用 `--port` 指定其他端口；同端口多实例冲突时，结束原进程或换端口 |
 | 全局命令找不到 | 检查 npm 全局安装路径是否在 PATH 中 |
 
 ---
