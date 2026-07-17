@@ -20,7 +20,7 @@ export function installAutostart() {
     const platform = process.platform;
 
     if (platform === 'win32') {
-        const cmd = getStartupCommand();
+        const cmd = getStartupCommand().replace(/"/g, '\\"');
         try {
             execSync(
                 `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${AUTOSTART_NAME}" /t REG_SZ /d "${cmd}" /f`,
