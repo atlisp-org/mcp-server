@@ -64,6 +64,8 @@ vi.mock('../src/constants.js', () => ({
   PROTOCOL_VERSION: '2024-11-05',
   SERVER_NAME: 'atlisp-mcp-server',
   SERVER_VERSION: '1.0.10',
+  AUTO_LAUNCH_PLATFORMS: ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD'],
+  CAD_REGISTRY_PATHS: {},
 }));
 
 const {

@@ -36,3 +36,34 @@ export const CAD_RESOURCE_URIS = [
     'atlisp://dwg/entities', 'atlisp://dwg/tbl', 'atlisp://dwg/block-refs',
     'atlisp://dwg/text-content', 'atlisp://cad/dwgs', 'atlisp://packages'
 ];
+
+/** Order of CAD platforms to try when auto-launching */
+export const AUTO_LAUNCH_PLATFORMS = ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD'];
+
+/** Registry paths for detecting CAD installations (Windows) */
+export const CAD_REGISTRY_PATHS = {
+    'AutoCAD': {
+        root: 'SOFTWARE\\Autodesk\\AutoCAD',
+        keyPattern: /^R\d+(\.\d+)?$/,
+        subKey: 'ACAD-\\d+:\\d+',
+        exe: 'acad.exe',
+    },
+    'ZWCAD': {
+        root: 'SOFTWARE\\ZWSOFT\\ZWCAD',
+        keyPattern: /^\d+(\.\d+)?$/,
+        subKey: null,
+        exe: 'zwcad.exe',
+    },
+    'GStarCAD': {
+        root: 'SOFTWARE\\GStarSoft\\GStarCAD',
+        keyPattern: /^\d+(\.\d+)?$/,
+        subKey: null,
+        exe: 'gstarcad.exe',
+    },
+    'BricsCAD': {
+        root: 'SOFTWARE\\Bricsys\\BricsCAD',
+        keyPattern: /^\d+(\.\d+)?$/,
+        subKey: null,
+        exe: 'bricscad.exe',
+    },
+};

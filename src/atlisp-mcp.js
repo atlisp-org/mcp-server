@@ -175,19 +175,15 @@ For more info: https://atlisp.cn
 
 if (config.apiKey) log('API Key authentication enabled');
 
-async function initCadConnection() {
+if (config.autoConnect) {
     log('Attempting to connect to CAD on startup...');
-    try {
-        const connected = await cad.connect();
-        if (connected) {
-            log(`Auto-connected to CAD: ${cad.getPlatform()} ${cad.getVersion()}`);
-            console.error(`已自动连接到 CAD: ${cad.getPlatform()} ${cad.getVersion()}`);
-        } else {
-            log('No CAD found on startup');
-        }
-    } catch (e) {
-        logError(`Auto-connect failed: ${e.message}`);
-    }
+    const { ensureCadConnected } = await import('./handler-utils.js');
+    ensureCadConnected().then(() => {
+        log(`Auto-connected to CAD: ${cad.getPlatform()} ${cad.getVersion()}`);
+        console.error(`已自动连接到 CAD: ${cad.getPlatform()} ${cad.getVersion()}`);
+    }).catch((e) => {
+        log(`Auto-connect failed: ${e.message}`);
+    });
 }
 
 export async function startServer() {
@@ -220,7 +216,6 @@ export async function startServer() {
     }
 
     if (config.transport === 'stdio') {
-        await initCadConnection();
         const mcpServer = createStdioServer({ tools, handleToolCall });
         const transport = new StdioServerTransport();
         const sessionId = 'stdio-session';
@@ -280,7 +275,6 @@ export async function startServer() {
         }
 
         const httpServer = rawServer.listen(config.port, config.host, async () => {
-            await initCadConnection();
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
             console.error(`@lisp MCP Server 启动 - ${proto}://${config.host}:${config.port} (${mode}模式)`);

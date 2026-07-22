@@ -20,15 +20,48 @@ export function mcpError(text) {
   return { content: [{ type: 'text', text: String(text) }], isError: true };
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 export async function ensureCadConnected() {
   const { cad, resolveCadConnection } = await import('./cad.js');
+  const { pool } = await import('./cad-pool.js');
+  const config = (await import('./config.js')).default;
   const conn = resolveCadConnection();
-  if (!conn.connected) {
-    await conn.connect();
+
+  if (conn.connected) return;
+
+  const tryConnect = async () => {
+    if (conn.connected) return true;
+    const ok = await conn.connect();
+    if (ok) return true;
+
+    const discovered = await pool.discover().catch(() => []);
+    const live = discovered.find(d => d.connected);
+    if (live) {
+      pool.setActive(live.key);
+      return true;
+    }
+
+    return false;
+  };
+
+  if (await tryConnect()) return;
+
+  if (!process.env.VITEST && config.autoLaunch) {
+    const { ensureCadInstance } = await import('./cad-launcher.js');
+    await ensureCadInstance({
+      preferredPlatforms: ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD'],
+      timeout: config.launchTimeout,
+    });
+
+    for (let i = 0; i < Math.ceil(config.launchTimeout / 2000); i++) {
+      await sleep(2000);
+      if (await tryConnect()) return;
+    }
   }
-  if (!conn.connected) {
-    throw createError(ERROR_CODES.CAD_NOT_CONNECTED);
-  }
+
+  throw createError(ERROR_CODES.CAD_NOT_CONNECTED,
+    'CAD 未连接。请先打开 CAD 或调用 open_cad 工具');
 }
 
 export function withCadConnection(handler) {

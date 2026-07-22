@@ -84,6 +84,13 @@ vi.mock('../src/constants.js', () => ({
       request_dedup: true,
     },
   },
+  AUTO_LAUNCH_PLATFORMS: ['AutoCAD', 'ZWCAD', 'GStarCAD', 'BricsCAD'],
+  CAD_REGISTRY_PATHS: {
+    'AutoCAD': { root: 'SOFTWARE\\Autodesk\\AutoCAD', keyPattern: /^R\d+(\.\d+)?$/, subKey: 'ACAD-\\d+:\\d+', exe: 'acad.exe' },
+    'ZWCAD': { root: 'SOFTWARE\\ZWSOFT\\ZWCAD', keyPattern: /^\d+(\.\d+)?$/, subKey: null, exe: 'zwcad.exe' },
+    'GStarCAD': { root: 'SOFTWARE\\GStarSoft\\GStarCAD', keyPattern: /^\d+(\.\d+)?$/, subKey: null, exe: 'gstarcad.exe' },
+    'BricsCAD': { root: 'SOFTWARE\\Bricsys\\BricsCAD', keyPattern: /^\d+(\.\d+)?$/, subKey: null, exe: 'bricscad.exe' },
+  },
 }));
 
 vi.mock('../src/logger.js', () => ({

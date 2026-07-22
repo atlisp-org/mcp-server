@@ -43,6 +43,9 @@ const envSchema = z.object({
     MAX_ENTITY_LIMIT: z.coerce.number().optional().default(20000),
     READ_BATCH_WINDOW: z.coerce.number().optional().default(50),
     READ_BATCH_SIZE: z.coerce.number().optional().default(10),
+    AUTO_CONNECT: z.coerce.boolean().optional().default(false),
+    AUTO_LAUNCH: z.coerce.boolean().optional().default(true),
+    LAUNCH_TIMEOUT: z.coerce.number().optional().default(30000),
 });
 
 const configSchema = z.object({
@@ -91,6 +94,9 @@ const configSchema = z.object({
     maxEntityLimit: z.number().optional(),
     readBatchWindow: z.number().optional(),
     readBatchSize: z.number().optional(),
+    autoConnect: z.boolean().optional(),
+    autoLaunch: z.boolean().optional(),
+    launchTimeout: z.number().optional(),
 });
 
 function parseArgs() {
@@ -215,6 +221,9 @@ const config = {
     maxEntityLimit: fileConfig?.maxEntityLimit ?? env.MAX_ENTITY_LIMIT,
     readBatchWindow: fileConfig?.readBatchWindow ?? env.READ_BATCH_WINDOW,
     readBatchSize: fileConfig?.readBatchSize ?? env.READ_BATCH_SIZE,
+    autoConnect: fileConfig?.autoConnect ?? env.AUTO_CONNECT,
+    autoLaunch: fileConfig?.autoLaunch ?? env.AUTO_LAUNCH,
+    launchTimeout: fileConfig?.launchTimeout ?? env.LAUNCH_TIMEOUT,
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;
