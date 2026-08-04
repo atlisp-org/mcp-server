@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../src/config.js', () => ({
-    default: { messageTimeout: 5000, heartbeatInterval: 30000, maxPoolSize: 3 },
+    default: { messageTimeout: 5000, heartbeatInterval: 30000, maxPoolSize: 3, readBatchWindow: 50, readBatchSize: 10 },
     getConfig: vi.fn(() => null),
 }));
 vi.mock('../../src/metrics.js', () => ({
@@ -30,7 +30,7 @@ vi.mock('crypto', () => ({
     createHash: vi.fn(() => ({ update: vi.fn(() => ({ digest: vi.fn(() => 'hash') })) })),
 }));
 
-import { ReadBatcher, isReadCommand } from '../../src/cad.js';
+import { ReadBatcher, isReadCommand, CommandQueue } from '../../src/cad.js';
 
 let connQueue = null;
 function makeConn() {
@@ -149,5 +149,33 @@ describe('ReadBatcher', () => {
         combinedCmd.resolve({ success: true, result: '"not-an-array"' });
         expect(cmd1.reject).toHaveBeenCalled();
         expect(cmd2.reject).toHaveBeenCalled();
+    });
+
+    it('attaches dedup keys to the combined command', () => {
+        const batcher = new ReadBatcher(makeConn(), 1000, 2);
+        batcher.add(makeCmd('(tblnext "L" nil)'), 'k1');
+        batcher.add(makeCmd('(tblnext "L" nil)'), 'k2');
+        const combinedCmd = connQueue.enqueueHighPriority.mock.calls[0][0];
+        expect(combinedCmd._dedupKeys).toEqual(['k1', 'k2']);
+    });
+
+    it('cleans up dedup entries after batched commands are processed', async () => {
+        const conn = {
+            _platform: 'AutoCAD',
+            _sendMessageInternal: vi.fn().mockResolvedValue({ success: true, result: '["(LINE)","(ARC)"]' }),
+        };
+        const q = new CommandQueue(conn);
+        conn._commandQueue = q;
+        q.enableBatcher();
+        const c1 = { type: 'sendResult', code: '(ssget "_X" (list (cons 0 "LINE")))', platform: 'AutoCAD', encoding: '', resolve: vi.fn(), reject: vi.fn() };
+        const c2 = { type: 'sendResult', code: '(ssget "_X" (list (cons 0 "ARC")))', platform: 'AutoCAD', encoding: '', resolve: vi.fn(), reject: vi.fn() };
+        q.enqueue(c1);
+        q.enqueue(c2);
+        expect(q._dedupMap.size).toBe(2);
+        await new Promise(r => setTimeout(r, 120));
+        expect(q._dedupMap.size).toBe(0);
+        expect(conn._sendMessageInternal).toHaveBeenCalledTimes(1);
+        expect(c1.resolve).toHaveBeenCalled();
+        expect(c2.resolve).toHaveBeenCalled();
     });
 });

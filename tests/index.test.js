@@ -122,6 +122,21 @@ describe('tools definition', () => {
       expect(tool).toHaveProperty('inputSchema');
     }
   });
+
+  it('every tool has a valid industry and priority', () => {
+    const validPrio = ['core', 'common', 'rare'];
+    for (const tool of tools) {
+      const ann = tool.annotations;
+      expect(Array.isArray(ann.industry) && ann.industry.length >= 1).toBe(true);
+      expect(validPrio).toContain(ann.priority);
+    }
+  });
+
+  it('exposes the new grouping meta-tools', () => {
+    const names = new Set(tools.map(t => t.name));
+    expect(names.has('list_tools_by_industry')).toBe(true);
+    expect(names.has('list_tools_by_priority')).toBe(true);
+  });
 });
 
 describe('handleToolCall', () => {

@@ -10,6 +10,9 @@ const envSchema = z.object({
     MCP_API_KEY: z.string().optional().default(''),
     ENABLE_SSE: z.coerce.boolean().optional().default(true),
     MESSAGE_TIMEOUT: z.coerce.number().optional().default(300000),
+    CAD_COMMAND_TIMEOUT: z.coerce.number().optional().default(120000),
+    STALL_COOLDOWN: z.coerce.number().optional().default(30000),
+    HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(10000),
     HEARTBEAT_INTERVAL: z.coerce.number().optional().default(30000),
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
@@ -55,6 +58,9 @@ const configSchema = z.object({
     apiKey: z.string().optional(),
     enableSse: z.boolean().optional(),
     messageTimeout: z.number().optional(),
+    cadCommandTimeout: z.number().optional(),
+    stallCooldown: z.number().optional(),
+    heartbeatPingTimeout: z.number().optional(),
     heartbeatInterval: z.number().optional(),
     busyRetries: z.number().optional(),
     busyDelay: z.number().optional(),
@@ -186,6 +192,9 @@ const config = {
     apiKey: fileConfig?.apiKey ?? env.MCP_API_KEY,
     enableSse: fileConfig?.enableSse ?? env.ENABLE_SSE,
     messageTimeout: fileConfig?.messageTimeout ?? env.MESSAGE_TIMEOUT,
+    cadCommandTimeout: fileConfig?.cadCommandTimeout ?? env.CAD_COMMAND_TIMEOUT,
+    stallCooldown: fileConfig?.stallCooldown ?? env.STALL_COOLDOWN,
+    heartbeatPingTimeout: fileConfig?.heartbeatPingTimeout ?? env.HEARTBEAT_PING_TIMEOUT,
     heartbeatInterval: fileConfig?.heartbeatInterval ?? env.HEARTBEAT_INTERVAL,
     busyRetries: fileConfig?.busyRetries ?? env.BUSY_RETRIES,
     busyDelay: fileConfig?.busyDelay ?? env.BUSY_DELAY,
@@ -246,6 +255,9 @@ export function validateConfig() {
     }
     if (config.messageTimeout < 1000) {
         errors.push(`消息超时过短: ${config.messageTimeout}ms (最小 1000ms)`);
+    }
+    if (config.cadCommandTimeout < 1000) {
+        errors.push(`命令超时过短: ${config.cadCommandTimeout}ms (最小 1000ms)`);
     }
     if (config.rateLimitMax < 1) {
         errors.push(`速率限制无效: ${config.rateLimitMax}`);

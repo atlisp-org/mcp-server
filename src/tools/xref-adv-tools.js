@@ -14,7 +14,7 @@ export const tools = [
   },
   {
     name: 'xref_compare',
-    description: '查看外部参照内的实体列表，与当前图形中的实体进行比较——识别外部参照中的图元类型和数量。传入 xrefName 或 handle 二选一。对比 xref_convert_to_block 可转为块',
+    description: '查看外部参照内的实体列表，与当前图形中的实体进行比较。当用户说"看看外部参照里有什么/比较参照内容"时调用——识别外部参照中的图元类型和数量。传入 xrefName 或 handle 二选一。对比 xref_convert_to_block 可转为块',
     inputSchema: {
       type: 'object',
       properties: {

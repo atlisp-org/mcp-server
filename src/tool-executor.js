@@ -1,7 +1,7 @@
 import { TOOL_HANDLERS } from './mcp-tools.js';
 import { validateToolArgs } from './tool-validators.js';
 import { notifyResourceChanges } from './tool-dispatch.js';
-import { READ_ONLY_TOOLS } from './tools/index.js';
+import { READ_ONLY_TOOLS, DESTRUCTIVE_TOOLS } from './tools/index.js';
 import { checkToolRateLimit } from './rate-limiter.js';
 import { progressContext, mcpContext } from './mcp-server-state.js';
 import { setNotifyProgress, getNotifyProgress } from './handler-utils.js';
@@ -79,7 +79,7 @@ export async function handleToolCall(name, args, options = {}) {
                 ctx._toolInstance = instance;
             }
 
-            if (!isReadOnly) {
+            if (!isReadOnly && DESTRUCTIVE_TOOLS.has(name)) {
                 undoBegun = await beginUndo(instance);
             }
 

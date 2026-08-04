@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'sheet_set_publish_options',
-    description: '配置图纸集中单张图纸的发布格式(PDF/DWF)、页面设置覆盖和打印戳记。用于批量发布前精细化控制。配合 publish_sheet_set 使用',
+    description: '配置图纸集中单张图纸的发布格式(PDF/DWF)、页面设置覆盖和打印戳记。当用户说"设置这张图的发布方式"时调用。用于批量发布前精细化控制。配合 publish_sheet_set 使用',
     inputSchema: {
       type: 'object',
       properties: {
@@ -28,7 +28,7 @@ export const tools = [
   },
   {
     name: 'sheet_set_compare',
-    description: '比较两个图纸集的差异——找出新增/删除/修改的图纸。返回差异清单。多版本管理或图纸变更审查时使用',
+    description: '比较两个图纸集的差异——找出新增/删除/修改的图纸。当用户说"对比两个图纸集/查图纸变更"时调用。返回差异清单。多版本管理或图纸变更审查时使用',
     inputSchema: {
       type: 'object',
       properties: {
@@ -40,7 +40,7 @@ export const tools = [
   },
   {
     name: 'sheet_list_views',
-    description: '列出图纸中布局包含的所有命名视图(named views)。返回视图名称/范围列表。配合 list_sheets 先查出布局再查看视图',
+    description: '列出图纸中布局包含的所有命名视图(named views)。当用户问"这张图有哪些视图"时调用。返回视图名称/范围列表。配合 list_sheets 先查出布局再查看视图',
     inputSchema: {
       type: 'object',
       properties: {

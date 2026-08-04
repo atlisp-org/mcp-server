@@ -23,7 +23,7 @@ export const tools = [
     },
 {
         name: 'import_funlib',
-        description: '从 @lisp 服务器获取完整函数库清单并导入到 Agent 上下文内存。让 Agent 知道有哪些 @lisp 函数可用(名称+参数+描述)。format=list 返回简洁的函数名:描述列表更省 token。前置条件：需先 init_atlisp',
+        description: '从 @lisp 服务器获取完整函数库清单并导入到 Agent 上下文内存。当用户说"导入@lisp函数库/有哪些@lisp函数"时调用。让 Agent 知道有哪些 @lisp 函数可用(名称+参数+描述)。format=list 返回简洁的函数名:描述列表更省 token。前置条件：需先 init_atlisp',
         inputSchema: {
             type: 'object',
             properties: {
@@ -49,6 +49,8 @@ export const tools = [
         }
     },
 { name: 'search_tools', description: '按关键词搜索工具名称和描述。用户说"有没有能XX的工具/怎么实现XX"时率先调用。返回匹配的工具列表及其分类。如搜索"阵列"可找到 array_polar/array_rectangular 等', inputSchema: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词，匹配工具名称和描述。如 "阵列"、"图层"、"块"、"打印"、"文字"、"标注"' } }, required: ['query'] } },
-{ name: 'list_tools_by_category', description: '按分类浏览工具：绘图与3D、修改、图层、块、标注、打印、选择、查询、图纸集等。不传 category 则列出所有分类名和工具计数。用于发现某类功能的所有可用工具', inputSchema: { type: 'object', properties: { category: { type: 'string', description: '分类名称，如 "绘图与3D"、"修改"、"图层"、"块"、"标注"、"选择"、"查询"、"打印"、"图纸集"。不传则列出所有分类' } } } },
+{ name: 'list_tools_by_category', description: '按分类浏览工具：绘图与3D、修改、图层、块、标注、打印、选择、查询、图纸集等。当用户说"有什么工具/按分类看工具"时调用。不传 category 则列出所有分类名和工具计数。用于发现某类功能的所有可用工具', inputSchema: { type: 'object', properties: { category: { type: 'string', description: '分类名称，如 "绘图与3D"、"修改"、"图层"、"块"、"标注"、"选择"、"查询"、"打印"、"图纸集"。不传则列出所有分类' } } } },
+{ name: 'list_tools_by_industry', description: '按行业列出该行业常用的 CAD 工具（含一句话用途、优先级、真实调用次数）。当用户说"建筑/机械/电气等行业用什么工具"时调用。多行业标签工具会出现在多个行业下。行业: 通用、建筑、结构、机械、电气、暖通给排水、土木道桥、制造、测绘、室内装饰、景观园林', inputSchema: { type: 'object', properties: { industry: { type: 'string', description: '行业名称，如 "建筑"、"机械"、"电气"、"测绘"。不传则列出所有行业及工具数' } } } },
+{ name: 'list_tools_by_priority', description: '按优先级列出工具：core（核心高频，最常用）/ common（常规）/ rare（低频专业）。当用户说"有哪些核心工具/常用工具"时调用。返回含真实调用次数（来自审计日志）。用于快速定位最常用工具，减少在低频工具上的误选', inputSchema: { type: 'object', properties: { priority: { type: 'string', enum: ['core', 'common', 'rare'], description: '优先级档位: core(核心高频)/common(常规)/rare(低频专业)。不传则列出所有档位及工具数' } } } },
 { name: 'get_tool_info', description: '获取工具的详细元数据：完整参数列表及类型、分类(category)、只读(readOnlyHint)、破坏性(destructiveHint)标记。用户说"XX工具怎么用/参数是什么"时调用', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '工具名称，如 "draw_circle"、"eval_lisp"、"batch_delete"。先用 search_tools 找到准确工具名' } }, required: ['name'] } },
 ];

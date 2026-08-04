@@ -27,6 +27,15 @@ export interface McpConfig {
   /** Timeout for worker messages in ms (default 60000) */
   messageTimeout: number;
 
+  /** Timeout for CAD-touching command messages in ms (default 120000) */
+  cadCommandTimeout: number;
+
+  /** Cooldown after a detected CAD stall; commands fail fast during it (ms, default 30000) */
+  stallCooldown: number;
+
+  /** Timeout for heartbeat pings in ms (default 10000) */
+  heartbeatPingTimeout: number;
+
   /** Heartbeat ping interval in ms (default 30000) */
   heartbeatInterval: number;
 
@@ -137,6 +146,9 @@ export interface EnvConfig {
   MCP_API_KEY: string;
   ENABLE_SSE: string;
   MESSAGE_TIMEOUT: string;
+  CAD_COMMAND_TIMEOUT: string;
+  STALL_COOLDOWN: string;
+  HEARTBEAT_PING_TIMEOUT: string;
   HEARTBEAT_INTERVAL: string;
   BUSY_RETRIES: string;
   BUSY_DELAY: string;

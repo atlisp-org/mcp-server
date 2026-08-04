@@ -13,7 +13,7 @@ export const tools = [
     },
 {
         name: 'set_xdata',
-        description: '为实体写入扩展数据(Xdata)。需指定appName（需先注册）和AutoLISP格式的data字符串。常用于附加业务标识、BIM信息等。写入后可用 get_xdata 读取',
+        description: '为实体写入扩展数据(Xdata)。当用户说"给实体加扩展数据/写业务标识"时调用。需指定appName（需先注册）和AutoLISP格式的data字符串。常用于附加业务标识、BIM信息等。写入后可用 get_xdata 读取',
         inputSchema: {
             type: 'object',
             properties: {
@@ -26,7 +26,7 @@ export const tools = [
     },
 {
         name: 'delete_xdata',
-        description: '删除实体上指定应用程序(Xdata)的扩展数据。不可逆。删除后可用 get_xdata 确认已清除',
+        description: '删除实体上指定应用程序(Xdata)的扩展数据。当用户说"删掉这个扩展数据/清理Xdata"时调用。不可逆。删除后可用 get_xdata 确认已清除',
         inputSchema: {
             type: 'object',
             properties: {
@@ -38,7 +38,7 @@ export const tools = [
     },
 {
         name: 'list_xdata_apps',
-        description: '列出某实体上注册了哪些扩展数据(Xdata)应用程序名(RegApp)。返回 appName 数组。想知道实体带了哪些业务的附加信息时先调用此工具',
+        description: '列出某实体上注册了哪些扩展数据(Xdata)应用程序名(RegApp)。当用户问"这个实体带了什么附加数据"时调用。返回 appName 数组。想知道实体带了哪些业务的附加信息时先调用此工具',
         inputSchema: {
             type: 'object',
             properties: {
@@ -49,7 +49,7 @@ export const tools = [
     },
 {
         name: 'get_all_entity_xdata',
-        description: '获取实体上所有应用程序(RegApp)的完整扩展数据(Xdata)。返回完整数据（含所有 appName 及其数据）。对比 get_xdata 只查指定app',
+        description: '获取实体上所有应用程序(RegApp)的完整扩展数据(Xdata)。当用户问"查这个实体全部附加数据"时调用。返回完整数据（含所有 appName 及其数据）。对比 get_xdata 只查指定app',
         inputSchema: {
             type: 'object',
             properties: {
@@ -60,7 +60,7 @@ export const tools = [
     },
 {
         name: 'copy_xdata',
-        description: '将源实体上的扩展数据(Xdata)复制到目标实体。可选参数 appName 只复制指定应用程序的数据。批量标注或属性迁移时使用',
+        description: '将源实体上的扩展数据(Xdata)复制到目标实体。当用户说"把扩展数据复制过去/迁移属性"时调用。可选参数 appName 只复制指定应用程序的数据。批量标注或属性迁移时使用',
         inputSchema: {
             type: 'object',
             properties: {
@@ -73,7 +73,7 @@ export const tools = [
     },
 {
         name: 'search_by_xdata',
-        description: '按扩展数据(Xdata)中的键值对搜索匹配的实体。需知道 appName 和 key/value。返回匹配的实体句柄数组。适用于按业务ID/标签检索实体的场景',
+        description: '按扩展数据(Xdata)中的键值对搜索匹配的实体。当用户说"按ID/标签找实体"时调用。需知道 appName 和 key/value。返回匹配的实体句柄数组。适用于按业务ID/标签检索实体的场景',
         inputSchema: {
             type: 'object',
             properties: {
@@ -86,7 +86,7 @@ export const tools = [
     },
 {
         name: 'export_xdata_to_file',
-        description: '将实体的扩展数据(Xdata)导出到JSON文件。可用于备份/迁移业务数据。配合 import_xdata_from_file 实现跨图数据迁移',
+        description: '将实体的扩展数据(Xdata)导出到JSON文件。当用户说"导出扩展数据/备份Xdata"时调用。可用于备份/迁移业务数据。配合 import_xdata_from_file 实现跨图数据迁移',
         inputSchema: {
             type: 'object',
             properties: {
@@ -98,7 +98,7 @@ export const tools = [
     },
 {
         name: 'import_xdata_from_file',
-        description: '从JSON文件导入扩展数据(Xdata)到实体。可选 appName 只导入指定应用程序的数据。配合 export_xdata_to_file 使用',
+        description: '从JSON文件导入扩展数据(Xdata)到实体。当用户说"导入扩展数据/恢复Xdata"时调用。可选 appName 只导入指定应用程序的数据。配合 export_xdata_to_file 使用',
         inputSchema: {
             type: 'object',
             properties: {

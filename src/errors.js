@@ -23,9 +23,9 @@ export const ERROR_DEFS = {
         tools: ['connect_cad', 'cad_pool_discover', 'cad_pool_connect'],
     },
     [ERROR_CODES.CAD_BUSY]: {
-        message: 'CAD 忙碌，请稍后重试',
-        hint: 'CAD 正在处理之前的命令，等待片刻后重试。可使用 get_system_status 检查 CAD 状态',
-        tools: ['get_system_status'],
+        message: 'CAD 忙碌或停滞，请稍后重试',
+        hint: 'CAD 正在处理之前的命令或等待输入（弹窗/命令挂起）。请人工处理 CAD 窗口，或调用 cad_pool_connect(key, platform, forceLaunch:true) 打开全新 CAD 实例继续任务。可用 get_system_status 或资源 atlisp://system/cad-status 查看停滞状态',
+        tools: ['get_system_status', 'cad_pool_connect', 'cad_pool_switch'],
     },
     [ERROR_CODES.CAD_NO_DOCUMENT]: {
         message: 'CAD 中没有打开的文档',

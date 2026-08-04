@@ -27,7 +27,7 @@ export const tools = [
   },
   {
     name: 'cad_pool_connect',
-    description: '手动连接指定 CAD 实例到连接池。当 cad_pool_discover 未自动发现，或需要指定特定进程时调用。支持指定 key（标识名）、platform（平台）、pid（进程 ID）。返回连接成功状态和实例信息。',
+    description: '手动连接指定 CAD 实例到连接池。当 cad_pool_discover 未自动发现，或需要指定特定进程时调用。支持指定 key（标识名）、platform（平台）、pid（进程 ID）。forceLaunch=true 时跳过复用已运行实例，直接启动一个新的 CAD 进程——用于 CAD 卡死（停滞）后打开新实例继续任务。返回连接成功状态和实例信息。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -35,7 +35,8 @@ export const tools = [
         platform: { type: 'string', description: 'CAD 平台: AutoCAD, ZWCAD, GStarCAD, BricsCAD（可选，自动检测）' },
         pid: { type: 'number', description: '目标进程 PID（可选）。通过 Windows 任务管理器或 ROT 查找后连接' },
         label: { type: 'string', description: '实例显示标签（可选）。如 "我的 AutoCAD 2025"' },
-        makeActive: { type: 'boolean', description: '连接后设为活动实例（默认 true）。设为 false 则仅连接不切换' }
+        makeActive: { type: 'boolean', description: '连接后设为活动实例（默认 true）。设为 false 则仅连接不切换' },
+        forceLaunch: { type: 'boolean', description: '跳过 GetActiveObject，直接启动新的 CAD 进程（默认 false）。CAD 停滞时置 true 可打开全新实例继续任务' }
       }
     }
   },

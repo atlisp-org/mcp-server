@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('../../src/mcp-tools.js', () => ({
-    TOOL_HANDLERS: { test_write_tool: mocks.handler, test_read_tool: mocks.handler },
+    TOOL_HANDLERS: { test_write_tool: mocks.handler, test_read_tool: mocks.handler, test_destructive_tool: mocks.handler },
     tools: [],
     handleToolCall: null,
 }));
@@ -29,6 +29,7 @@ vi.mock('../../src/mcp-server-state.js', () => ({
 }));
 vi.mock('../../src/tools/index.js', () => ({
     READ_ONLY_TOOLS: new Set(['test_read_tool']),
+    DESTRUCTIVE_TOOLS: new Set(['test_destructive_tool']),
 }));
 vi.mock('../../src/cad.js', () => ({
     cad: mocks.cad,
@@ -119,8 +120,13 @@ describe('tool-executor handleToolCall', () => {
         }));
     });
 
-    it('calls undo for write tools', async () => {
+    it('does not call undo for non-destructive write tools', async () => {
         await handleToolCall('test_write_tool', {});
+        expect(mocks.cad.sendCommand).not.toHaveBeenCalled();
+    });
+
+    it('calls undo for destructive tools', async () => {
+        await handleToolCall('test_destructive_tool', {});
         expect(mocks.cad.sendCommand).toHaveBeenCalledWith('(command "_.UNDO" "_BEGIN")');
     });
 
@@ -131,14 +137,14 @@ describe('tool-executor handleToolCall', () => {
 
     it('sends undo END even when handler fails', async () => {
         mocks.handler.mockRejectedValue(new Error('fail'));
-        await handleToolCall('test_write_tool', {});
+        await handleToolCall('test_destructive_tool', {});
         expect(mocks.cad.sendCommand).toHaveBeenLastCalledWith('(command "_.UNDO" "_END")');
     });
 
     it('resolves instance from pool when instance param provided', async () => {
         const poolConn = { connected: true, sendCommand: vi.fn() };
         mocks.poolGetConnection.mockReturnValue(poolConn);
-        await handleToolCall('test_write_tool', { instance: 'mycad' });
+        await handleToolCall('test_destructive_tool', { instance: 'mycad' });
         expect(mocks.poolGetConnection).toHaveBeenCalledWith('mycad');
         expect(poolConn.sendCommand).toHaveBeenCalledWith('(command "_.UNDO" "_BEGIN")');
     });

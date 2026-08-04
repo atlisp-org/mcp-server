@@ -24,7 +24,9 @@ export const RESOURCES = [
   { uri: 'atlisp://tools/relationships', name: 'Tool Relationships', description: '工具依赖关系图。描述工具间的调用链关系（如 select_entities → batch_delete），帮助理解工具组合使用方式', mimeType: 'application/json', subscribable: false },
   { uri: 'atlisp://dwg/analysis', name: 'Drawing Analysis', description: '当前图纸综合分析：实体类型统计、块使用统计、图层摘要、文字统计、系统变量快照。支持 ?type=summary（默认）或 ?type=detailed', mimeType: 'application/json', subscribable: true },
   { uri: 'atlisp://tools/categories', name: 'Tool Categories', description: '工具分类概览。列出所有分类及其包含的工具数量', mimeType: 'application/json', subscribable: false },
+  { uri: 'atlisp://tools/industries', name: 'Tool Industries', description: '工具行业分组概览。列出所有行业及其工具数量。支持 ?name=建筑 返回该行业的推荐工具集（含优先级/真实调用次数）', mimeType: 'application/json', subscribable: false },
   { uri: 'atlisp://dwg/standards/check', name: 'Drawing Standards Check', description: '检查当前图纸是否符合加载的制图规范（图层命名、颜色、线型等规则）', mimeType: 'application/json', subscribable: false },
+  { uri: 'atlisp://system/cad-status', name: 'CAD Status', description: '所有 CAD 实例的连接与停滞状态（含停滞原因、冷却剩余时间），帮助判断当前是否有实例停滞、是否需要打开新实例', mimeType: 'application/json', subscribable: false },
 ];
 
 export const TBL_INFO = {

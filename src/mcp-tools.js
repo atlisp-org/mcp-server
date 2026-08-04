@@ -21,7 +21,7 @@ import { clearCache } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 
 import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
-import { search_tools, list_tools_by_category, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
+import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
 
 // 注册实例切换回调：通知已订阅客户端刷新资源
 // 缓存已在 cad-pool.setActive() 中通过 setInstanceKey() 自动隔离
@@ -636,7 +636,7 @@ export const TOOL_HANDLERS = {
         return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
     },
     cad_pool_connect: async (a) => {
-        const ok = await pool.connect(a.key, a.platform, { label: a.label, pid: a.pid, makeActive: a.makeActive !== false });
+        const ok = await pool.connect(a.key, a.platform, { label: a.label, pid: a.pid, makeActive: a.makeActive !== false, forceLaunch: !!a.forceLaunch });
         const label = a.key || (a.pid != null ? `PID ${a.pid}` : 'default');
         return { content: [{ type: 'text', text: ok ? `实例 "${label}" 已连接` : `实例 "${label}" 连接失败` }] };
     },
@@ -692,6 +692,8 @@ export const TOOL_HANDLERS = {
     // === Meta Tools ===
     search_tools,
     list_tools_by_category,
+    list_tools_by_industry,
+    list_tools_by_priority,
     get_tool_info,
 
     // === Skill Management ===

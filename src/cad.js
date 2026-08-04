@@ -7,16 +7,20 @@ import config from './config.js';
 import { setCadConnected } from './metrics.js';
 import { CircuitBreaker } from './cad-circuit-breaker.js';
 import { log, error as logError } from './logger.js';
+import { createError, ERROR_CODES, MCPError } from './errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
 
 const MESSAGE_TIMEOUT = config.messageTimeout;
+const CAD_COMMAND_TIMEOUT = config.cadCommandTimeout;
+const STALL_COOLDOWN = config.stallCooldown;
+const HEARTBEAT_PING_TIMEOUT = config.heartbeatPingTimeout;
 const HEARTBEAT_INTERVAL = config.heartbeatInterval;
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_BACKOFF_BASE = 1000;
 
-const MAX_BUFFER_SIZE = 1024 * 1024;
+const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const PRIORITY_HIGH = 0;
 const PRIORITY_NORMAL = 1;
@@ -88,6 +92,7 @@ class ReadBatcher {
     ).join(' ') + ` (list${items.map((_, idx) => ` _br${idx}`).join('')})`;
     const combinedCommand = {
       type: 'sendResult', code: combinedCode, platform: this._conn._platform, encoding: '',
+      _dedupKeys: items.map(item => item.dedupKey).filter(Boolean),
       resolve: (result) => {
         if (!result.success || !result.result) {
           items.forEach(item => item.command.reject(new Error(result.error || 'Batch failed')));
@@ -183,8 +188,12 @@ class CommandQueue {
     while (this._hasPending()) {
       const cmd = this._dequeue();
       if (!cmd) continue;
-      const dedupKey = this._dedupKey(cmd);
-      if (dedupKey) this._dedupMap.delete(dedupKey);
+      if (cmd._dedupKeys) {
+        for (const k of cmd._dedupKeys) this._dedupMap.delete(k);
+      } else {
+        const dedupKey = this._dedupKey(cmd);
+        if (dedupKey) this._dedupMap.delete(dedupKey);
+      }
       try {
         const result = await this._conn._sendMessageInternal(cmd);
         cmd.resolve(result);
@@ -206,11 +215,11 @@ class CommandQueue {
     return null;
   }
 
-  clear() {
+  clear(error) {
     for (const q of this._queues) {
       while (q.length) {
         const cmd = q.shift();
-        cmd.reject(new Error('Queue cleared'));
+        cmd.reject(error || new Error('Queue cleared'));
       }
     }
     this._dedupMap.clear();
@@ -261,6 +270,11 @@ class CadConnection {
   /** @type {NodeJS.Timeout[]} */
   _readRestartTimers = [];
 
+  /** Stall (CAD stuck/busy-waiting) cooldown deadline, 0 when not stalled. */
+  _stalledUntil = 0;
+  /** @type {string|null} */
+  _stallReason = null;
+
   constructor() {
     this._connectionId = randomUUID().slice(0, 8);
     this._commandQueue = new CommandQueue(this);
@@ -281,7 +295,7 @@ class CadConnection {
 
   /**
    * @param {string|null} [platform]
-   * @param {{ moniker?: string, key?: string }} [options]
+   * @param {{ moniker?: string, key?: string, forceLaunch?: boolean }} [options]
    * @returns {Promise<boolean>}
    */
   async connect(platform = null, options = {}) {
@@ -293,12 +307,16 @@ class CadConnection {
         msg.moniker = options.moniker;
         msg.monikerKey = options.key || 'moniker';
       }
+      if (options.forceLaunch) {
+        msg.forceLaunch = true;
+      }
       const result = await this._sendMessage(msg);
       if (result && result.success) {
         this._version = result.version;
         this._product = result.platform;
         this._platform = result.platform;
         this.connected = true;
+        this._clearStall();
         setCadConnected(true);
         this._activeDocName = null;
         this._commandQueue.enableBatcher();
@@ -320,6 +338,7 @@ class CadConnection {
    */
   async sendCommand(code) {
     if (!this.connected) throw new Error('未连接 CAD');
+    if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
         type: 'send', code, platform: this._platform,
@@ -339,6 +358,7 @@ class CadConnection {
    */
   async sendCommandWithResult(code, encoding = null, raw = false) {
     if (!this.connected) throw new Error('未连接 CAD');
+    if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
         type: 'sendResult', code, platform: this._platform, encoding: encoding || '',
@@ -359,8 +379,41 @@ class CadConnection {
   getPlatform() { return this._product; }
   getConnectionId() { return this._connectionId; }
 
+  isStalled() {
+    return this._stalledUntil > Date.now();
+  }
+
+  getStallInfo() {
+    if (!this._stalledUntil) return { stalled: false, reason: null, remainingMs: 0 };
+    const remainingMs = this._stalledUntil - Date.now();
+    return { stalled: remainingMs > 0, reason: this._stallReason, remainingMs: Math.max(0, remainingMs) };
+  }
+
+  _stallError(reason = this._stallReason || 'CAD 停滞') {
+    const info = this.getStallInfo();
+    return new MCPError(
+      ERROR_CODES.CAD_BUSY,
+      `CAD 停滞中（可能等待输入或弹窗）：${reason}。冷却期内命令将快速失败，可人工处理 CAD 后重试，或打开新 CAD 实例继续任务`,
+      { reason: info.reason || reason, remainingMs: info.remainingMs }
+    );
+  }
+
+  _markStalled(reason = 'command timeout') {
+    this._stalledUntil = Date.now() + STALL_COOLDOWN;
+    this._stallReason = reason;
+    const err = this._stallError(reason);
+    this._commandQueue.clear(err);
+    logError(`[${this._connectionId}] CAD 停滞已标记 (${reason}), ${STALL_COOLDOWN}ms 内命令将快速失败`);
+  }
+
+  _clearStall() {
+    this._stalledUntil = 0;
+    this._stallReason = null;
+  }
+
   async isBusy() {
     if (!this.connected) return false;
+    if (this.isStalled()) return true;
     try {
       const result = await this._sendMessage({ type: 'isBusy', platform: this._platform });
       return result && result.isBusy;
@@ -401,6 +454,7 @@ class CadConnection {
 
   async getActiveDocInfo() {
     if (!this.connected) return { docName: '', docPath: '', docCount: 0 };
+    if (this.isStalled()) return { docName: '', docPath: '', docCount: 0 };
     try {
       const result = await this._sendMessage({ type: 'getActiveDocInfo', platform: this._platform });
       return result || { docName: '', docPath: '', docCount: 0 };
@@ -436,6 +490,7 @@ class CadConnection {
     this._platform = null;
     this._activeDocName = null;
     this._monitorStarted = false;
+    this._clearStall();
     this._commandQueue.clear();
     this._resetWorker();
   }
@@ -444,7 +499,14 @@ class CadConnection {
   _getRestartCount() { return this._restartCount; }
 
   _spawnWorker(type) {
-    const w = spawn('node', [workerPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const w = spawn('node', [workerPath], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        BUSY_RETRIES: String(config.busyRetries ?? 5),
+        BUSY_DELAY: String(config.busyDelay ?? 300),
+      },
+    });
     w.connected = true;
     w._workerType = type;
 
@@ -457,6 +519,7 @@ class CadConnection {
       if (type === 'primary') {
         if (w !== this._primaryWorker) return;
         this._cb.recordFailure();
+        this._clearStall();
         const exitError = new Error(`Primary worker exited with code ${code}`);
         for (const [id, entry] of this._pendingRequests) {
           clearTimeout(entry.timeout);
@@ -554,7 +617,8 @@ class CadConnection {
       try {
         buffer += data.toString();
         if (buffer.length > MAX_BUFFER_SIZE) {
-          buffer = buffer.slice(-MAX_BUFFER_SIZE);
+          const lastNewline = buffer.lastIndexOf('\n');
+          buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer.slice(-MAX_BUFFER_SIZE);
         }
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -593,8 +657,9 @@ class CadConnection {
     if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
     const self = this;
     this._heartbeatTimer = setInterval(async () => {
+      if (self._stalledUntil > Date.now()) return;
       try {
-        const result = await self._sendMessageInternal({ type: 'ping' }, true);
+        const result = await self._sendMessageInternal({ type: 'ping' }, true, HEARTBEAT_PING_TIMEOUT);
         if (!result?.pong) {
           logError(`[${self._connectionId}] heartbeat failed, worker may be dead`);
           self._resetWorker();
@@ -602,7 +667,7 @@ class CadConnection {
         }
         if (self._platform) {
           try {
-            const docResult = await self._sendMessageInternal({ type: 'getActiveDocInfo', platform: self._platform }, true);
+            const docResult = await self._sendMessageInternal({ type: 'getActiveDocInfo', platform: self._platform }, true, HEARTBEAT_PING_TIMEOUT);
             if (docResult?.docName) {
               emitDocumentChanged({ docName: docResult.docName, docPath: docResult.docPath || '' });
             }
@@ -648,11 +713,13 @@ class CadConnection {
     return this._sendMessageInternal(msg);
   }
 
-  _sendMessageInternal(msg, noCircuitBreaker = false) {
+  _sendMessageInternal(msg, noCircuitBreaker = false, timeoutMs = null) {
     const isReadOnly = this._isReadOnlyMessage(msg);
     const w = this._getWorker(isReadOnly);
     const requestId = randomUUID();
     const self = this;
+
+    const effectiveTimeout = timeoutMs ?? (msg.type === 'ping' ? MESSAGE_TIMEOUT : CAD_COMMAND_TIMEOUT);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -660,9 +727,14 @@ class CadConnection {
         if (p) {
           self._pendingRequests.delete(requestId);
           if (!noCircuitBreaker) self._cb.recordFailure();
+          if (!noCircuitBreaker && msg.type !== 'ping') {
+            self._markStalled(`消息 ${msg.type} 超时 (${effectiveTimeout}ms)`);
+            reject(self._stallError());
+            return;
+          }
           reject(new Error('Timeout waiting for worker'));
         }
-      }, MESSAGE_TIMEOUT);
+      }, effectiveTimeout);
 
       const entry = {
         resolve: (v) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); resolve(v); },
@@ -732,7 +804,7 @@ export function resolveCadConnection() {
  *   version: string|null,
  *   product: string|null,
  *   _platform: string|null,
- *   connect(platform?: string|null): Promise<boolean>,
+ *   connect(platform?: string|null, options?: { moniker?: string, key?: string, forceLaunch?: boolean }): Promise<boolean>,
  *   sendCommand(code: string): Promise<boolean>,
  *   sendCommandWithResult(code: string, encoding?: string|null, raw?: boolean): Promise<string|{text:string,rawBase64:string}>,
  *   getVersion(): string|null,
@@ -740,6 +812,8 @@ export function resolveCadConnection() {
  *   getConnectionId(): string|null,
  *   isAvailable(): boolean,
  *   isBusy(): Promise<boolean>,
+ *   isStalled(): boolean,
+ *   getStallInfo(): { stalled: boolean, reason: string|null, remainingMs: number },
  *   hasDoc(): Promise<{hasDoc:boolean,docCount:number}>,
  *   newDoc(): Promise<boolean>,
  *   bringToFront(): Promise<boolean>,
@@ -763,7 +837,7 @@ export const cad = {
   get _platform() { return _resolveConn()._platform; },
   set _platform(v) { _resolveConn()._platform = v; },
 
-  async connect(platform) { return _resolveConn().connect(platform); },
+  async connect(platform, options) { return _resolveConn().connect(platform, options); },
   async sendCommand(code) { return _resolveConn().sendCommand(code); },
   async sendCommandWithResult(code, encoding, raw) { return _resolveConn().sendCommandWithResult(code, encoding, raw); },
   getVersion() { return _resolveConn().getVersion(); },
@@ -771,6 +845,8 @@ export const cad = {
   getConnectionId() { return _resolveConn().getConnectionId(); },
   isAvailable() { return _resolveConn().isAvailable(); },
   async isBusy() { return _resolveConn().isBusy(); },
+  isStalled() { return _resolveConn().isStalled(); },
+  getStallInfo() { return _resolveConn().getStallInfo(); },
   async hasDoc() { return _resolveConn().hasDoc(); },
   async newDoc() { return _resolveConn().newDoc(); },
   async bringToFront() { return _resolveConn().bringToFront(); },

@@ -38,9 +38,10 @@ class CadConnectionPool {
    * @param {boolean} [options.autoReconnect=true] - Auto-reconnect on failure
    * @param {number} [options.pid] - Target process PID (find via ROT)
    * @param {boolean} [options.makeActive=true] - Set as active after connecting
+   * @param {boolean} [options.forceLaunch=false] - Launch a NEW CAD process instead of reusing the running instance
    */
   async connect(key = 'default', platform = null, options = {}) {
-    const { label, autoReconnect = true, makeActive = true, pid } = options || {};
+    const { label, autoReconnect = true, makeActive = true, pid, forceLaunch = false } = options || {};
 
     if (this._instances.size >= this._maxPoolSize && !this._instances.has(key)) {
       throw new Error(`连接池已满 (${this._maxPoolSize})，无法添加新实例 "${key}"`);
@@ -89,6 +90,7 @@ class CadConnectionPool {
     try {
       const moniker = options._moniker || entry.moniker;
       const connectOpts = moniker ? { moniker, key } : {};
+      if (forceLaunch) connectOpts.forceLaunch = true;
       const ok = await conn.connect(platform, connectOpts);
       if (ok) {
         entry.connected = true;
@@ -347,6 +349,7 @@ class CadConnectionPool {
         version: i.version,
         label: i.label,
         queueSize: i.connection?._getQueueSize ? i.connection._getQueueSize() : 0,
+        stall: i.connection?.getStallInfo ? i.connection.getStallInfo() : { stalled: false, reason: null, remainingMs: 0 },
         lastPingAgo: Date.now() - (i.lastPing || 0),
         uptime: i.connected ? Math.round((Date.now() - i.createdAt) / 1000) : 0,
       })),

@@ -99,6 +99,24 @@ export interface ToolAnnotation {
    */
   destructiveHint: boolean;
 
+  /**
+   * 工具分类（如 绘图与3D / 图层 / 打印）。由 getToolCategory() 生成。
+   */
+  category: string;
+
+  /**
+   * 行业标签（多标签）。未配置的工具默认 ['通用']。
+   * 用于按行业浏览/推荐工具，见 list_tools_by_industry 与
+   * atlisp://tools/industries 资源。
+   */
+  industry: string[];
+
+  /**
+   * 优先级分档（静态基准）：core=核心高频 / common=常规 / rare=低频专业。
+   * 真实调用次数的动态微调在查询时叠加，不改变此静态值。
+   */
+  priority: 'core' | 'common' | 'rare';
+
   /** Explanation for deprecated tools. */
   deprecatedReason?: string;
 }

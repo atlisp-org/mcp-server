@@ -1,0 +1,230 @@
+// 工具分组策展数据：行业标签（多标签） + 优先级分档（静态基准）
+// 未在 TOOL_INDUSTRIES 配置的工具默认归入 ['通用']；未在 CORE/RARE 配置的默认 common。
+// 动态微调（真实调用次数）在查询时叠加，见 handlers/meta-handlers.js。
+
+export const INDUSTRIES = [
+  '通用',
+  '建筑',
+  '结构',
+  '机械',
+  '电气',
+  '暖通给排水',
+  '土木道桥',
+  '制造',
+  '测绘',
+  '室内装饰',
+  '景观园林',
+];
+
+// 工具 → 行业数组（多标签）。键为工具名，值是该工具最常服务的行业。
+export const TOOL_INDUSTRIES = {
+  // 建筑/室内：标注、填充、布局、视口、图纸集、打印、文字排版、参照
+  create_dimension: ['建筑', '结构', '机械', '通用'],
+  get_dimension: ['建筑', '结构', '机械', '通用'],
+  create_hatch: ['建筑', '结构', '景观园林', '通用'],
+  set_hatch: ['建筑', '结构', '景观园林', '通用'],
+  create_dimension_style: ['建筑', '机械', '通用'],
+  set_dimstyle_var: ['建筑', '机械', '通用'],
+  list_dimension_styles: ['建筑', '机械', '通用'],
+  set_text_height: ['建筑', '室内装饰', '通用'],
+  justify_text: ['建筑', '室内装饰', '通用'],
+  set_text_style_name: ['建筑', '室内装饰', '通用'],
+  convert_text_to_mtext: ['建筑', '室内装饰', '通用'],
+  create_text_style: ['建筑', '室内装饰', '通用'],
+  list_text_styles: ['建筑', '室内装饰', '通用'],
+  create_layout: ['建筑', '暖通给排水', '通用'],
+  set_layout: ['建筑', '暖通给排水', '通用'],
+  list_layouts: ['建筑', '暖通给排水', '通用'],
+  delete_layout: ['建筑', '暖通给排水', '通用'],
+  rename_layout: ['建筑', '暖通给排水', '通用'],
+  get_current_layout: ['建筑', '暖通给排水', '通用'],
+  create_viewport: ['建筑', '暖通给排水', '通用'],
+  create_polygonal_viewport: ['建筑', '暖通给排水', '通用'],
+  set_viewport_scale: ['建筑', '暖通给排水', '通用'],
+  lock_viewport: ['建筑', '暖通给排水', '通用'],
+  unlock_viewport: ['建筑', '暖通给排水', '通用'],
+  create_page_setup: ['建筑', '暖通给排水', '通用'],
+  list_page_setups: ['建筑', '暖通给排水', '通用'],
+  set_page_setup: ['建筑', '暖通给排水', '通用'],
+  import_page_setup: ['建筑', '暖通给排水', '通用'],
+  batch_plot_wizard: ['建筑', '暖通给排水', '通用'],
+  publish_layouts: ['建筑', '暖通给排水', '通用'],
+  plot_from_file_list: ['建筑', '暖通给排水', '通用'],
+  export_pdf: ['建筑', '通用'],
+  plot_to_pdf: ['建筑', '通用'],
+  save_pdf_layout: ['建筑', '通用'],
+  create_sheet_set: ['建筑', '通用'],
+  open_sheet_set: ['建筑', '通用'],
+  list_sheet_sets: ['建筑', '通用'],
+  add_sheet: ['建筑', '通用'],
+  list_sheets: ['建筑', '通用'],
+  delete_sheet: ['建筑', '通用'],
+  reorder_sheet: ['建筑', '通用'],
+  create_subset: ['建筑', '通用'],
+  list_subsets: ['建筑', '通用'],
+  sheet_import_layouts: ['建筑', '通用'],
+  sheet_set_publish_options: ['建筑', '通用'],
+  sheet_set_transmit: ['建筑', '通用'],
+  sheet_set_compare: ['建筑', '通用'],
+  sheet_list_views: ['建筑', '通用'],
+  set_sheet_property: ['建筑', '通用'],
+  get_sheet_set_property: ['建筑', '通用'],
+  publish_sheet_set: ['建筑', '通用'],
+  create_sheet_set_archive: ['建筑', '通用'],
+  attach_pdf: ['建筑', '暖通给排水', '通用'],
+  batch_attach_pdfs: ['建筑', '暖通给排水', '通用'],
+  attach_xref: ['建筑', '暖通给排水', '结构', '通用'],
+  list_xrefs: ['建筑', '结构', '通用'],
+  detach_xref: ['建筑', '结构', '通用'],
+  reload_xref: ['建筑', '结构', '通用'],
+  unload_xref: ['建筑', '结构', '通用'],
+  bind_xref: ['建筑', '结构', '通用'],
+  clip_xref: ['建筑', '结构', '通用'],
+  path_xref: ['建筑', '结构', '通用'],
+  xref_path_relative: ['建筑', '结构', '通用'],
+  xref_convert_to_block: ['建筑', '结构', '通用'],
+  xref_demote: ['建筑', '结构', '通用'],
+  xref_compare: ['建筑', '结构', '通用'],
+  create_layer: ['建筑', '室内装饰', '通用'],
+  set_layer: ['建筑', '室内装饰', '通用'],
+  delete_layer: ['建筑', '室内装饰', '通用'],
+  set_current_layer: ['建筑', '室内装饰', '通用'],
+  layer_isolate: ['建筑', '景观园林', '通用'],
+  layer_unisolate: ['建筑', '景观园林', '通用'],
+  layer_merge: ['建筑', '结构', '通用'],
+
+  // 机械/制造：3D 实体、布尔运算、约束、参数化、STL
+  create_box: ['机械', '制造', '通用'],
+  create_sphere: ['机械', '制造', '通用'],
+  create_cylinder: ['机械', '制造', '通用'],
+  create_cone: ['机械', '制造', '通用'],
+  create_torus: ['机械', '制造', '通用'],
+  create_wedge: ['机械', '制造', '通用'],
+  create_3d_face: ['机械', '制造', '通用'],
+  create_mesh: ['机械', '制造', '测绘', '通用'],
+  create_3d_polyline: ['机械', '制造', '测绘', '通用'],
+  extrude_solid: ['机械', '制造', '结构', '通用'],
+  revolve_solid: ['机械', '制造', '通用'],
+  create_region: ['机械', '制造', '结构', '通用'],
+  boolean_union: ['机械', '制造', '通用'],
+  boolean_subtract: ['机械', '制造', '通用'],
+  boolean_intersect: ['机械', '制造', '通用'],
+  slice_solid: ['机械', '制造', '通用'],
+  create_loft_surface: ['机械', '制造', '通用'],
+  thicken_surface: ['机械', '制造', '通用'],
+  offset_surface: ['机械', '制造', '通用'],
+  get_3d_solid_info: ['机械', '制造', '通用'],
+  export_stl: ['机械', '制造', '通用'],
+  add_geom_constraint: ['机械', '制造', '通用'],
+  add_dim_constraint: ['机械', '制造', '通用'],
+  del_constraint: ['机械', '制造', '通用'],
+  list_constraints: ['机械', '制造', '通用'],
+  get_block_parameters: ['机械', '电气', '通用'],
+  set_block_parameter: ['机械', '电气', '通用'],
+  get_dynamic_block_properties: ['机械', '电气', '通用'],
+  set_dynamic_block_property: ['机械', '电气', '通用'],
+  list_visibility_states: ['机械', '电气', '通用'],
+  set_visibility_state: ['机械', '电气', '通用'],
+  create_linetype: ['机械', '电气', '通用'],
+  load_linetype: ['机械', '电气', '通用'],
+  list_linetypes: ['机械', '电气', '通用'],
+
+  // 测绘/GIS：点、坐标数据、DXF/DGN 交换
+  draw_point: ['测绘', '通用'],
+  find_entities_near_point: ['测绘', '通用'],
+  import_external_data: ['测绘', '土木道桥', '通用'],
+  external_db_query: ['测绘', '土木道桥', '通用'],
+  list_data_sources: ['测绘', '土木道桥', '通用'],
+  export_to_external: ['测绘', '土木道桥', '通用'],
+  import_dxf: ['测绘', '土木道桥', '通用'],
+  import_dgn: ['测绘', '土木道桥', '通用'],
+  export_dxf: ['测绘', '土木道桥', '通用'],
+  export_dgn: ['测绘', '土木道桥', '通用'],
+  create_3d_face: ['测绘', '机械', '通用'],
+
+  // 土木道桥：测量、多段线/样条、视图缩放、清理
+  measure_distance: ['土木道桥', '通用'],
+  measure_area: ['土木道桥', '建筑', '通用'],
+  draw_polyline: ['土木道桥', '建筑', '通用'],
+  draw_spline: ['土木道桥', '景观园林', '通用'],
+  draw_cloud_line: ['景观园林', '通用'],
+  convert_to_cloud_line: ['景观园林', '通用'],
+  purge_all: ['土木道桥', '通用'],
+  purge_layers: ['土木道桥', '通用'],
+  zoom_extents: ['土木道桥', '通用'],
+  zoom_window: ['土木道桥', '通用'],
+
+  // 室内装饰：文字、表格、填充、图块
+  draw_mtext: ['室内装饰', '建筑', '通用'],
+  draw_text: ['室内装饰', '建筑', '通用'],
+  draw_table: ['室内装饰', '通用'],
+  insert_block: ['室内装饰', '建筑', '通用'],
+  get_blocks: ['室内装饰', '建筑', '通用'],
+};
+
+// 核心高频工具（静态基准，动态微调在查询时叠加）
+export const CORE_TOOLS = new Set([
+  // 连接与环境
+  'open_cad', 'connect_cad', 'get_cad_info', 'get_system_status', 'bring_to_front',
+  'eval_lisp', 'eval_lisp_with_result', 'get_system_variable', 'set_system_variable',
+  'get_platform_info', 'init_atlisp', 'install_atlisp',
+  // 文件
+  'new_document', 'open_dwg', 'save_dwg', 'close_dwg',
+  // 绘图基础
+  'draw_line', 'draw_circle', 'draw_arc', 'draw_rectangle', 'draw_polyline',
+  'draw_polygon', 'draw_ellipse', 'draw_text', 'draw_mtext', 'draw_spline', 'draw_point',
+  // 选择与查询
+  'select_entities', 'select_all', 'select_last', 'get_entity', 'get_entity_info',
+  'get_bounding_box', 'measure_distance', 'measure_area', 'find_text',
+  // 修改
+  'delete_entity', 'batch_delete', 'batch_move', 'batch_copy', 'move_entity', 'copy_entity',
+  'rotate_entity', 'scale_entity', 'mirror_entity', 'offset_entity',
+  'array_rectangular', 'array_polar', 'set_entity', 'batch_set_color',
+  'batch_match_properties', 'batch_transaction',
+  // 图层
+  'create_layer', 'set_current_layer', 'set_layer', 'delete_layer',
+  'layer_isolate', 'layer_unisolate', 'layer_freeze_all', 'layer_thaw_all',
+  // 块
+  'create_block', 'insert_block', 'get_blocks', 'explode_block',
+  'get_block_attributes', 'set_block_attribute', 'batch_get_block_attributes',
+  // 标注与填充
+  'create_dimension', 'get_dimension', 'create_hatch', 'set_hatch',
+  'create_dimension_style', 'set_dimstyle_var',
+  // 视图与布局
+  'zoom_extents', 'zoom_window', 'create_layout', 'set_layout', 'list_layouts',
+  'get_current_layout', 'create_viewport', 'set_viewport_scale',
+  // 文字
+  'replace_text', 'set_text_height', 'set_text_style_name',
+  // 打印与导出
+  'export_pdf', 'plot_to_pdf', 'export_svg', 'export_dxf',
+  // 元工具
+  'search_tools', 'get_tool_info', 'list_tools_by_category', 'list_tools_by_industry', 'list_tools_by_priority',
+  // @lisp 包
+  'list_packages', 'search_packages', 'install_package', 'at_command',
+  // 高级常用
+  'stream_entities', 'stream_text', 'stream_block_refs', 'select_by_color',
+]);
+
+// 低频/专业工具（显式补充；另有按 category 的兜底规则）
+export const RARE_TOOLS = new Set([
+  'explode_text', 'overkill', 'drawing_audit', 'drawing_recover',
+  'boolean_union', 'boolean_subtract', 'boolean_intersect', 'slice_solid',
+  'create_sphere', 'create_cone', 'create_torus', 'create_wedge',
+  'create_mesh', 'create_3d_face', 'create_3d_polyline', 'create_loft_surface',
+  'thicken_surface', 'offset_surface', 'revolve_solid', 'extrude_solid', 'create_region',
+  'add_geom_constraint', 'add_dim_constraint', 'del_constraint', 'list_constraints',
+  'get_block_parameters', 'set_block_parameter',
+  'create_sheet_set', 'open_sheet_set', 'delete_sheet', 'reorder_sheet',
+  'create_subset', 'list_subsets', 'sheet_import_layouts',
+  'sheet_set_publish_options', 'sheet_set_transmit', 'sheet_set_compare', 'sheet_list_views',
+  'publish_sheet_set', 'create_sheet_set_archive',
+  'bind_xref', 'clip_xref', 'path_xref', 'xref_notifications',
+  'xref_compare', 'xref_convert_to_block', 'xref_demote', 'xref_path_relative',
+  'export_stl', 'import_dgn', 'export_dgn',
+  'create_dgn_underlay', 'create_dwf_underlay',
+]);
+
+// 整类视为低频的 category（新增工具自动落入，无需逐个策展）
+export const RARE_CATEGORIES = new Set([
+  '高级', '元工具', '包与函数', 'Agent上下文', '清理',
+]);

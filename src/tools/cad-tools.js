@@ -52,7 +52,7 @@ export const tools = [
     },
 {
         name: 'at_command',
-        description: '执行 @lisp 包管理器命令。前置条件：需先调用 init_atlisp 加载 @lisp 环境。示例命令: package-install(装包)、system-info(系统信息)、package-list(已安装列表)、package-update-all(升级所有包)',
+        description: '执行 @lisp 包管理器命令。当用户说"运行@lisp命令/装包/查系统信息/升级包"时调用。前置条件：需先调用 init_atlisp 加载 @lisp 环境。示例命令: package-install(装包)、system-info(系统信息)、package-list(已安装列表)、package-update-all(升级所有包)',
         inputSchema: {
             type: 'object',
             properties: { command: { type: 'string', description: '@lisp 命令，如 "system-info"、"package-install <包名>"、"package-list"' } },
@@ -71,12 +71,12 @@ export const tools = [
     },
 {
         name: 'install_atlisp',
-        description: '在 CAD 中安装 @lisp 包管理器（首次使用前调用一次即可）。安装后需调用 init_atlisp 加载。若已安装则自动跳过，返回已安装信息',
+        description: '在 CAD 中安装 @lisp 包管理器（首次使用前调用一次即可）。当用户说"安装@lisp/准备@lisp环境"时调用。安装后需调用 init_atlisp 加载。若已安装则自动跳过，返回已安装信息',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'init_atlisp',
-        description: '加载 @lisp 函数库和初始变量到 CAD。前置条件：CAD 已连接，@lisp 已安装(install_atlisp)。所有 @lisp 工具(list_packages/at_command/search_packages等)前需先调用此工具。若自动加载失败可手动调用',
+        description: '加载 @lisp 函数库和初始变量到 CAD。当用户需要用到 @lisp 函数/包时调用。前置条件：CAD 已连接，@lisp 已安装(install_atlisp)。所有 @lisp 工具(list_packages/at_command/search_packages等)前需先调用此工具。若自动加载失败可手动调用',
         inputSchema: { type: 'object', properties: {} }
     },
 {

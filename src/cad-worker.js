@@ -48,8 +48,8 @@ const _rotEnum = _loadEnum();
 
 let _monikerSession = null;
 
-const BUSY_RETRIES = parseInt(process.env.BUSY_RETRIES || '10', 10);
-const BUSY_DELAY = parseInt(process.env.BUSY_DELAY || '500', 10);
+const BUSY_RETRIES = parseInt(process.env.BUSY_RETRIES || '5', 10);
+const BUSY_DELAY = parseInt(process.env.BUSY_DELAY || '300', 10);
 
 const LISP_CACHE = new Map();
 const LISP_CACHE_MAX = parseInt(process.env.LISP_CACHE_MAX || '500', 10);
@@ -64,17 +64,16 @@ function getCachedLisp(code) {
     return null;
   }
   entry.ts = Date.now();
+  LISP_CACHE.delete(hash);
+  LISP_CACHE.set(hash, entry);
   return entry.compiled;
 }
 
 function setCachedLisp(code, compiled) {
   const hash = crypto.createHash('sha256').update(code).digest('hex');
+  if (LISP_CACHE.has(hash)) LISP_CACHE.delete(hash);
   if (LISP_CACHE.size >= LISP_CACHE_MAX) {
-    let oldest = null;
-    for (const [k, v] of LISP_CACHE) {
-      if (!oldest || v.ts < oldest.ts) oldest = { k, ts: v.ts };
-    }
-    if (oldest) LISP_CACHE.delete(oldest.k);
+    LISP_CACHE.delete(LISP_CACHE.keys().next().value);
   }
   LISP_CACHE.set(hash, { compiled, ts: Date.now() });
   return compiled;
@@ -486,20 +485,22 @@ const cadBringToFront = edge.func(function() {/*
 
 const cadConnectByName = edge.func(function() {/*
   async (input) => {
-      try {
-          string platform = input.ToString();
-          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
-          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
-          if (cad != null) {
-              string ver = cad.Version.ToString();
-              return new { success = true, platform = platform, version = ver, launched = false };
+      dynamic d = input;
+      string platform = d.platform.ToString();
+      bool forceLaunch = d.forceLaunch != null && d.forceLaunch.ToString() == "True";
+      string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+      if (!forceLaunch) {
+          try {
+              dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+              if (cad != null) {
+                  string ver = cad.Version.ToString();
+                  return new { success = true, platform = platform, version = ver, launched = false };
+              }
+          } catch (Exception ex) {
+              System.Diagnostics.Debug.WriteLine("cadConnectByName existing error: " + ex.Message);
           }
-      } catch (Exception ex) {
-          System.Diagnostics.Debug.WriteLine("cadConnectByName existing error: " + ex.Message);
       }
       try {
-          string platform = input.ToString();
-          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
           var type = System.Type.GetTypeFromProgID(progId);
           if (type != null) {
               dynamic cad = System.Activator.CreateInstance(type);
@@ -536,9 +537,9 @@ async function waitForIdle(platform) {
   return false;
 }
 
-async function connectToPlatform(targetPlatform) {
+async function connectToPlatform(targetPlatform, forceLaunch = false) {
   return new Promise((resolve, reject) => {
-    cadConnectByName(targetPlatform, (e, r) => {
+    cadConnectByName({ platform: targetPlatform, forceLaunch }, (e, r) => {
       if (e) reject(e);
       else resolve(r);
     });
@@ -687,7 +688,7 @@ const MESSAGE_HANDLERS = {
       return result;
     }
     if (msg.platform) {
-      return await connectToPlatform(msg.platform);
+      return await connectToPlatform(msg.platform, !!msg.forceLaunch);
     }
     try {
       const result = await new Promise((resolve, reject) => {

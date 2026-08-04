@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 process.env.MESSAGE_TIMEOUT = '200';
+process.env.CAD_COMMAND_TIMEOUT = '80';
+process.env.STALL_COOLDOWN = '5000';
+process.env.HEARTBEAT_PING_TIMEOUT = '100';
 
 vi.mock('crypto', () => ({
   randomUUID: vi.fn(() => 'test-uuid'),
@@ -99,6 +102,35 @@ describe('CadConnection', () => {
 
       expect(result).toBe(false);
       expect(cad.connected).toBe(false);
+    });
+
+    it('sends forceLaunch flag when requested', async () => {
+      const getHandler = captureHandler();
+      const connectPromise = cad.connect('AutoCAD', { forceLaunch: true });
+      const handler = getHandler();
+      expect(handler).toBeTruthy();
+      handler(mockResponse({ success: true, platform: 'AutoCAD', version: '24.0', launched: true }));
+      const result = await connectPromise;
+
+      expect(result).toBe(true);
+      expect(cad.connected).toBe(true);
+      const writeCall = JSON.parse(mockWorker.stdin.write.mock.calls[0][0]);
+      expect(writeCall.type).toBe('connect');
+      expect(writeCall.platform).toBe('AutoCAD');
+      expect(writeCall.forceLaunch).toBe(true);
+    });
+
+    it('does not set forceLaunch flag by default', async () => {
+      const getHandler = captureHandler();
+      const connectPromise = cad.connect('AutoCAD');
+      const handler = getHandler();
+      expect(handler).toBeTruthy();
+      handler(mockResponse({ success: true, platform: 'AutoCAD', version: '24.0' }));
+      await connectPromise;
+
+      const writeCall = JSON.parse(mockWorker.stdin.write.mock.calls[0][0]);
+      expect(writeCall.type).toBe('connect');
+      expect(writeCall.forceLaunch).toBeUndefined();
     });
   });
 
@@ -215,5 +247,53 @@ describe('CadConnection', () => {
       expect(cad.version).toBeNull();
       expect(cad.product).toBeNull();
     });
+  });
+
+  describe('stall detection', () => {
+    it('marks stalled and rejects with CAD_BUSY on command timeout', async () => {
+      cad.connected = true;
+      const getHandler = captureHandler();
+      const promise = cad.sendCommandWithResult('(+ 1 2)');
+      const handler = getHandler();
+      expect(handler).toBeTruthy();
+      // deliberately do NOT respond → times out at CAD_COMMAND_TIMEOUT (80ms)
+
+      await expect(promise).rejects.toThrow('停滞');
+      expect(cad.isStalled()).toBe(true);
+      expect(cad.getStallInfo().stalled).toBe(true);
+      expect(cad.getStallInfo().reason).toContain('超时');
+    }, 5000);
+
+    it('fails fast with CAD_BUSY during stall cooldown without touching worker', async () => {
+      cad.connected = true;
+      const getHandler = captureHandler();
+      const promise = cad.sendCommandWithResult('(+ 1 2)');
+      getHandler();
+      await expect(promise).rejects.toThrow('停滞');
+      expect(cad.isStalled()).toBe(true);
+
+      const writesBefore = mockWorker.stdin.write.mock.calls.length;
+      await expect(cad.sendCommand('(princ "x")')).rejects.toThrow('停滞');
+      await expect(cad.sendCommandWithResult('(+ 1 1)')).rejects.toThrow('停滞');
+      await expect(cad.isBusy()).resolves.toBe(true);
+      expect(mockWorker.stdin.write.mock.calls.length).toBe(writesBefore);
+    }, 5000);
+
+    it('clears stall after successful connect', async () => {
+      cad.connected = true;
+      const getHandler = captureHandler();
+      const promise = cad.sendCommandWithResult('(+ 1 2)');
+      const handler = getHandler();
+      expect(handler).toBeTruthy();
+      await expect(promise).rejects.toThrow('停滞');
+      expect(cad.isStalled()).toBe(true);
+
+      const connectPromise = cad.connect('AutoCAD');
+      handler(mockResponse({ success: true, platform: 'AutoCAD', version: '24.0' }));
+      await connectPromise;
+
+      expect(cad.isStalled()).toBe(false);
+      expect(cad.getStallInfo().stalled).toBe(false);
+    }, 5000);
   });
 });

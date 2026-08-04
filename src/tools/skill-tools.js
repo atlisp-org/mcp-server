@@ -12,7 +12,7 @@ export const tools = [
   },
   {
     name: 'skill_install',
-    description: '从远程注册表下载并安装指定 Skill 到本地。工作流：skill_search 搜索 → skill_install 安装 → 查看已安装 skill_list_installed。安装后即可在对话中激活使用',
+    description: '从远程注册表下载并安装指定 Skill 到本地。当用户说"安装这个Skill"时调用。工作流：skill_search 搜索 → skill_install 安装 → 查看已安装 skill_list_installed。安装后即可在对话中激活使用',
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,7 +39,7 @@ export const tools = [
   },
   {
     name: 'skill_list_categories',
-    description: '列出远程注册表中所有 Skill 分类标签。用户想浏览有哪些 Skill 类型时先用此工具查看分类，再针对性用 skill_search 搜索',
+    description: '列出远程注册表中所有 Skill 分类标签。当用户说"有哪些Skill类型/浏览Skill分类"时调用。用户想浏览有哪些 Skill 类型时先用此工具查看分类，再针对性用 skill_search 搜索',
     inputSchema: { type: 'object', properties: {} }
   }
 ];

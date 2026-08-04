@@ -42,6 +42,7 @@ import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 import { tools as lint_tools } from './lint-tools.js';
 import { tools as debug_tools } from './debug-tools.js';
 import { tools as concurrent_tools } from './concurrent-tools.js';
+import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
   'get_cad_info', 'get_platform_info', 'get_system_status',
@@ -65,6 +66,7 @@ const READ_ONLY_TOOLS = new Set([
   'list_data_sources',
   'external_db_query',
   'list_tools_by_category', 'search_tools',
+  'list_tools_by_industry', 'list_tools_by_priority',
   'get_system_variable',
   'audit_log_query', 'audit_log_stats',
   'cad_pool_list', 'cad_pool_stats', 'cad_pool_health',
@@ -95,6 +97,14 @@ const EXTRA_DESTRUCTIVE = new Set([
   'boolean_union', 'boolean_subtract', 'boolean_intersect', 'slice_solid',
   'batch_mirror', 'batch_rename', 'batch_offset', 'batch_rotate', 'batch_scale',
   'batch_set_color', 'batch_set_linetype', 'stretch',
+]);
+
+const DESTRUCTIVE_TOOLS = new Set([
+  ...EXTRA_DESTRUCTIVE,
+  'delete_entity', 'delete_group', 'delete_layer', 'delete_layout', 'delete_ucs',
+  'delete_sheet', 'delete_xdata', 'detach_pdf', 'detach_xref', 'remove_hyperlink',
+  'purge_all', 'purge_blocks', 'purge_layers', 'purge_styles', 'purge_registered_apps',
+  'layer_merge', 'batch_delete', 'batch_rename', 'explode_block', 'explode_text',
 ]);
 
 const IDEMPOTENT_WRITE_TOOLS = new Set([
@@ -150,9 +160,15 @@ function getToolCategory(name) {
   if (/^debug_/.test(n)) return '高级';
   if (/^skill_/.test(n)) return '高级';
   if (/^(add_geom_constraint|add_dim_constraint|del_constraint|list_constraints)/.test(n)) return '约束';
-  if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|get_tool_info)/.test(n)) return '元工具';
+  if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|list_tools_by_industry|list_tools_by_priority|get_tool_info)/.test(n)) return '元工具';
   if (/^(agent_)/.test(n)) return 'Agent上下文';
   return '其他';
+}
+
+function buildUsageFooter(tool, flags) {
+  const access = flags.destructive ? '破坏性·不可逆' : (flags.readOnly ? '只读·安全' : '写入');
+  const scope = flags.openWorld ? '｜【外部】访问文件/网络' : '';
+  return `\n【类别】${flags.category}｜【操作】${access}｜【幂等】${flags.idempotent ? '是' : '否'}${scope}`;
 }
 
 function addAnnotations(tool) {
@@ -165,23 +181,40 @@ function addAnnotations(tool) {
       instance: { type: 'string', description: '目标 CAD 实例 key（可选，默认活动实例）。如 "autocad", "zwcad"', optional: true },
     };
   }
+  const flags = {
+    readOnly: READ_ONLY_TOOLS.has(tool.name),
+    destructive: DESTRUCTIVE_TOOLS.has(tool.name),
+    idempotent: READ_ONLY_TOOLS.has(tool.name) || IDEMPOTENT_WRITE_TOOLS.has(tool.name),
+    openWorld: OPEN_WORLD_TOOLS.has(tool.name),
+    category: getToolCategory(tool.name),
+    industry: TOOL_INDUSTRIES[tool.name] || ['通用'],
+    priority: getToolPriority(tool.name),
+  };
   return {
     ...tool,
+    description: `${tool.description || ''}${buildUsageFooter(tool, flags)}`,
     inputSchema: schema,
     ...(isDeprecated ? { deprecated: true, title: `${tool.name} (deprecated)` } : {}),
     annotations: {
-      readOnlyHint: READ_ONLY_TOOLS.has(tool.name),
-      destructiveHint: tool.name.startsWith('delete_') || tool.name.startsWith('purge_') ||
-        tool.name.startsWith('boolean_') || EXTRA_DESTRUCTIVE.has(tool.name),
-      idempotentHint: READ_ONLY_TOOLS.has(tool.name) || IDEMPOTENT_WRITE_TOOLS.has(tool.name),
-      openWorldHint: OPEN_WORLD_TOOLS.has(tool.name),
-      category: getToolCategory(tool.name),
+      readOnlyHint: flags.readOnly,
+      destructiveHint: flags.destructive,
+      idempotentHint: flags.idempotent,
+      openWorldHint: flags.openWorld,
+      category: flags.category,
+      industry: flags.industry,
+      priority: flags.priority,
       ...(isDeprecated ? { deprecatedReason: 'This tool has been superseded. Check documentation for alternatives.' } : {}),
     },
   };
 }
 
-export { READ_ONLY_TOOLS };
+function getToolPriority(name) {
+  if (CORE_TOOLS.has(name)) return 'core';
+  if (RARE_TOOLS.has(name) || RARE_CATEGORIES.has(getToolCategory(name))) return 'rare';
+  return 'common';
+}
+
+export { READ_ONLY_TOOLS, DESTRUCTIVE_TOOLS };
 export const tools = [
   ...cad_tools,
   ...package_tools,

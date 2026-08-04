@@ -15,7 +15,7 @@ const mockCad = {
   getVersion: mockGetVersion,
 };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad }));
+vi.mock('../src/cad.js', () => ({ cad: mockCad, resolveCadConnection: () => mockCad, getActiveConnection: () => mockCad }));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn(), closeLog: vi.fn() }));
 vi.mock('../src/config.js', () => ({
   default: {
@@ -92,7 +92,7 @@ describe('resource-handlers', () => {
     });
 
     it('contains all expected resources', () => {
-      expect(RESOURCES).toHaveLength(19);
+      expect(RESOURCES).toHaveLength(21);
       const uris = RESOURCES.map(r => r.uri);
       expect(uris).toContain('atlisp://cad/info');
       expect(uris).toContain('atlisp://dwg/entities');
@@ -112,7 +112,52 @@ describe('resource-handlers', () => {
       expect(uris).toContain('atlisp://tools/relationships');
       expect(uris).toContain('atlisp://dwg/analysis');
       expect(uris).toContain('atlisp://tools/categories');
+      expect(uris).toContain('atlisp://tools/industries');
       expect(uris).toContain('atlisp://dwg/standards/check');
+      expect(uris).toContain('atlisp://system/cad-status');
+    });
+  });
+
+  describe('readResource atlisp://system/cad-status', () => {
+    it('returns active instance info when connected', async () => {
+      mockCad.connected = true;
+      mockGetPlatform.mockReturnValue('AutoCAD');
+      mockGetVersion.mockReturnValue('24.0');
+      const result = await readResource('atlisp://system/cad-status');
+      expect(result).toHaveProperty('instances');
+      expect(Array.isArray(result.instances)).toBe(true);
+      expect(result.instances).toHaveLength(1);
+      expect(result.instances[0]).toMatchObject({
+        connected: true,
+        platform: 'AutoCAD',
+        version: '24.0',
+        isActive: true,
+      });
+      expect(result.instances[0].stall.stalled).toBe(false);
+    });
+  });
+
+  describe('readResource atlisp://tools/industries', () => {
+    it('returns all industries with tool counts', async () => {
+      const result = await readResource('atlisp://tools/industries');
+      expect(Array.isArray(result)).toBe(true);
+      const all = result.find(e => e.industry === '通用');
+      expect(all).toBeDefined();
+      expect(all.count).toBeGreaterThan(0);
+      expect(all.tools[0]).toHaveProperty('name');
+      expect(all.tools[0]).toHaveProperty('priority');
+      expect(all.tools[0]).toHaveProperty('usageCount');
+    });
+
+    it('returns tools for a specific industry', async () => {
+      const result = await readResource('atlisp://tools/industries?name=建筑');
+      expect(result.industry).toBe('建筑');
+      expect(result.tools.length).toBeGreaterThan(0);
+    });
+
+    it('returns error for unknown industry', async () => {
+      const result = await readResource('atlisp://tools/industries?name=不存在');
+      expect(result.error).toBeTruthy();
     });
   });
 

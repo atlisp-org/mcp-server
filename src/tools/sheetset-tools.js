@@ -53,7 +53,7 @@ export const tools = [
     },
 {
         name: 'delete_sheet',
-        description: '从图纸集中移除指定图纸（仅移除引用，不影响布局）。不可撤销。删除前建议先用 list_sheets 确认图纸名',
+        description: '从图纸集中移除指定图纸（仅移除引用，不影响布局）。当用户说"从图纸集删掉XX图"时调用。不可撤销。删除前建议先用 list_sheets 确认图纸名',
         inputSchema: {
             type: 'object',
             properties: {

@@ -1,12 +1,15 @@
 import { RESOURCES, TBL_QUERIES, TBL_KEY_ALIAS, STANDARDS_DIR } from './resource-defs.js';
 import { clearCache, getCached, setCache } from './resource-cache.js';
-import { cad } from '../cad.js';
+import { cad, getActiveConnection } from '../cad.js';
+import { pool } from '../cad-pool.js';
 import { CAD_PLATFORMS, FILE_EXTENSIONS } from '../constants.js';
 import { log } from '../logger.js';
 import { parseLispList, parseLispRecursive, lispPairsToObject, escapeLispString } from '../handler-utils.js';
 import { createError, ERROR_CODES } from '../errors.js';
 import config from '../config.js';
 import { tools } from '../tools/index.js';
+import { computeEffectivePriority, prioRank } from '../tools/params-utils.js';
+import { getAuditStats } from '../audit-log.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -927,6 +930,35 @@ function getPlatforms() {
   }));
 }
 
+async function getCadStatus() {
+  const stats = pool.getStats();
+  const instances = stats.instances.map(i => ({
+    key: i.key,
+    connected: i.connected,
+    platform: i.platform,
+    version: i.version,
+    label: i.label,
+    queueSize: i.queueSize,
+    stall: i.stall || { stalled: false, reason: null, remainingMs: 0 },
+  }));
+
+  const activeConn = getActiveConnection();
+  if (activeConn && activeConn !== pool.getConnection(stats.active)) {
+    instances.push({
+      key: stats.active || 'default',
+      connected: activeConn.connected,
+      platform: activeConn.getPlatform(),
+      version: activeConn.getVersion(),
+      label: '默认连接',
+      queueSize: activeConn._getQueueSize ? activeConn._getQueueSize() : 0,
+      stall: activeConn.getStallInfo ? activeConn.getStallInfo() : { stalled: false, reason: null, remainingMs: 0 },
+      isActive: true,
+    });
+  }
+
+  return { active: stats.active, total: stats.total, instances };
+}
+
 async function getDwgList() {
   const cacheKey = 'cad:dwgs';
   const cached = getCached(cacheKey);
@@ -1185,6 +1217,38 @@ function getToolCategories() {
   return Object.entries(cats).map(([category, info]) => ({
     category, count: info.count, tools: info.tools,
   })).sort((a, b) => b.count - a.count);
+}
+
+function getToolIndustries(name) {
+  const usage = (() => { try { return getAuditStats()?.tools || {}; } catch { return {}; } })();
+  const byIndustry = {};
+  for (const t of tools) {
+    const inds = t.annotations?.industry || ['通用'];
+    for (const ind of inds) {
+      if (!byIndustry[ind]) byIndustry[ind] = { count: 0, tools: [] };
+      byIndustry[ind].count++;
+      const usageCount = usage[t.name] ?? 0;
+      byIndustry[ind].tools.push({
+        name: t.name,
+        priority: t.annotations?.priority || 'common',
+        effectivePriority: computeEffectivePriority(t.annotations?.priority || 'common', usageCount).priority,
+        hot: computeEffectivePriority(t.annotations?.priority || 'common', usageCount).hot,
+        description: (t.description || '').split('\n')[0].replace(/【类别】.*$/, '').trim(),
+        usageCount,
+      });
+    }
+  }
+  const entries = Object.entries(byIndustry).map(([industry, info]) => ({ industry, ...info }))
+    .sort((a, b) => b.count - a.count);
+  if (!name) return entries;
+  const hit = entries.find(e => e.industry === name);
+  if (!hit) return { error: `未找到行业: ${name}` };
+  hit.tools.sort((x, y) => {
+    const pr = prioRank(x.effectivePriority) - prioRank(y.effectivePriority);
+    if (pr !== 0) return pr;
+    return (y.usageCount ?? 0) - (x.usageCount ?? 0);
+  });
+  return hit;
 }
 
 async function checkDrawingStandards() {
@@ -1506,8 +1570,12 @@ export async function readResource(uri) {
       return await getDrawingAnalysis(params);
     case 'atlisp://tools/categories':
       return getToolCategories();
+    case 'atlisp://tools/industries':
+      return getToolIndustries(params.name);
     case 'atlisp://dwg/standards/check':
       return await checkDrawingStandards();
+    case 'atlisp://system/cad-status':
+      return await getCadStatus();
     default:
       throw new Error(`资源不存在: ${uri}`);
   }
