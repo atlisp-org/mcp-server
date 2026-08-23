@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-@lisp MCP Server 是 AI Agent 与 CAD 之间的桥接层——通过 MCP 协议提供 220+ 工具供 Agent 调用，底层通过 `edge-js` → .NET COM 互操作控制 AutoCAD/ZWCAD/GStarCAD/BricsCAD。
+@lisp MCP Server 是 AI Agent 与 CAD 之间的桥接层——通过 MCP 协议提供 330+ 工具供 Agent 调用，底层通过 `edge-js` → .NET COM 互操作控制 AutoCAD/ZWCAD/GStarCAD/BricsCAD。
 
 ## 常用命令
 
@@ -28,9 +28,9 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
-- **工具定义**：`src/tools/` 下 39+ 个文件定义工具 Schema，`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解
+- **工具定义**：`src/tools/` 下 45 个文件定义工具 Schema（共 332 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解
 - **调度**：`src/mcp-tools.js` 的 `TOOL_HANDLERS` 映射工具名到处理函数，参数运行时校验（类型/enum/范围/必填）。skill 管理函数（5 个）已抽取到 `handlers/skill-handlers.js`，元工具（list_tools_by_category/search_tools/get_tool_info/prompts）抽取到 `handlers/meta-handlers.js`
-- **处理器**：`src/handlers/` 下 33 个文件实现具体 LISP 代码生成和 CAD 调用
+- **处理器**：`src/handlers/` 下 36 个文件实现具体 LISP 代码生成和 CAD 调用
 - **安全**：`lisp-security.js` 是统一安全模块（已合并原 lisp-sandbox.js），21 条规则 + session allowlist + 威胁分级（block/warn/allow），同时被 `cad-worker.js`（执行层）和 `mcp-tools.js`（校验层）使用
 - **配置**：env var → `~/.atlisp/atlisp.config.json` → CLI args 三层优先级，使用 Zod.coerce 做类型转换，支持热重载
 - **熔断器**：`src/cad-circuit-breaker.js` 独立管理 CAD 连接熔断逻辑（从 cad.js 提取）
@@ -50,15 +50,17 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **编码**：源文件 UTF-8，CAD 通信使用系统 ANSI 编码（GBK 兼容），`eval_lisp_with_result` 支持 `encoding` 参数
 - **错误处理**：使用 `errors.js` 的 `createError()`，禁止空 catch 块；CAD 执行错误必须保持完整错误信息链
 - **路径安全**：接受文件路径的工具必须调用 `validateFilePath()`（`handler-utils.js`）检查 `..` 穿越
-- **流式限制**：`streaming.js` 有 50000 实体上限（`MAX_ENTITY_LIMIT`），超限返回错误而非执行 `ssget "_X"`
+- **流式限制**：`streaming.js` 默认 20000 实体上限（`MAX_ENTITY_LIMIT` 环境变量可配），超限返回错误而非执行 `ssget "_X"`
 - **Webhook**：失败自动指数退避重试 3 次（1s/2s/4s），总耗时 ≈ 7s
 - **队列清理**：`resetWorker()` 会同时清空 `CommandQueue`，确保残留命令不被消费
 
 ## 测试
 
 ```bash
-npm test              # 运行全部 vitest 测试 (41 个测试文件, 558+ 测试)
+npm test              # 运行全部 vitest 测试 (53 个测试文件, 684 用例)
 npm run test:watch    # 监视模式
+npm run test:coverage # 覆盖率报告 (coverage/)
+npm run lint          # eslint 检查（CI 强制，必须 0 问题）
 ```
 
 - 测试 mock CAD 连接（不依赖真实 CAD），`fetch` 全局 mock 为拒绝状态
@@ -67,8 +69,9 @@ npm run test:watch    # 监视模式
 ## CI
 
 ```yaml
-npm ci → npm run build → npm test     # Node 18/20
-npx eslint src/ --ext .js             # lint (continue-on-error)
+npm ci → npm run build → npm test     # Node 20/22/24
+npm run lint                          # eslint（强制，0 问题才算通过）
+npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git tag
 ```
 
 ## Lint 代码分析

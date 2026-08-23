@@ -81,8 +81,8 @@ tools/mcp-server/
 │   ├── plugin-loader.js       # 插件加载器
 │   ├── sampling.js            # LLM Sampling
 │   ├── properties.lsp         # LISP 属性辅助
-│   ├── tools/                 # MCP 工具定义 (32 files)
-│   ├── handlers/              # 资源/请求处理器 (25 files)
+│   ├── tools/                 # MCP 工具定义 (45 files)
+│   ├── handlers/              # 资源/请求处理器 (36 files)
 │   ├── prompts/               # 提示模板处理
 │   └── standards/             # 制图/编码规范
 ├── prompts/                   # 外部提示模板
@@ -105,8 +105,8 @@ tools/mcp-server/
 | **CAD 池** | `cad-pool.js` | 多 CAD 实例连接池管理 |
 | **MCP 协议** | `mcp-handlers.js` | MCP initialize/tools/list/call 等协议处理 |
 | **工具注册** | `tool-registry.js` | 工具注册、查找、Schema 管理 |
-| **工具定义** | `tools/*.js` | 各分类工具的 Schema 定义 (32 个文件) |
-| **资源处理** | `handlers/*.js` | MCP 资源读写、缓存、订阅 (25 个文件) |
+| **工具定义** | `tools/*.js` | 各分类工具的 Schema 定义 (45 个文件) |
+| **资源处理** | `handlers/*.js` | MCP 资源读写、缓存、订阅 (36 个文件) |
 | **流式读取** | `streaming.js` | 分页流式读取 CAD 实体/文字 |
 | **SSE** | `sse-session.js` | Server-Sent Events 会话管理 |
 | **WebSocket** | `websocket-transport.js` | WebSocket 传输层 |
@@ -271,9 +271,27 @@ npm test
 
 # 监视模式
 npm run test:watch
+
+# 覆盖率报告（coverage/ 目录，含 text/html/lcov）
+npm run test:coverage
 ```
 
-测试文件位于 `tests/` 目录，使用 vitest。
+测试文件位于 `tests/` 目录，使用 vitest（配置见 `vitest.config.js`）。
+
+## Lint
+
+```bash
+npm run lint   # eslint（flat config: eslint.config.js）
+```
+
+CI 强制 0 问题。规则要点：禁止未使用变量/空 catch 块、`eqeqeq`（smart）、`prefer-const`、`no-var`。
+
+## 发布
+
+```bash
+npm run release <patch|minor|major>
+# 自动：bump 版本 → 生成 CHANGELOG 条目 → git commit + tag vX.Y.Z（不自动 push）
+```
 
 ---
 
@@ -376,7 +394,11 @@ CAD 执行错误必须保持完整的错误信息链：
 
 新增工具时确保 `inputSchema` 包含正确约束，校验会自动生效。
 
-### 测试在无 CAD 环境下部分失败
+### CAD 相关测试的平台处理
 
-`tests/resource.test.js` 中的 4 个测试（约 27/31 通过）在无 CAD 连接环境下会失败，这是**预期行为**。这些测试验证 CAD 连接逻辑，在 CI 环境中不存在 CAD，因此会失败。本地开发时如果连接到 CAD，所有 31 个测试应全部通过。
+CAD 连接类测试（如 `tests/integration.test.js`）使用 `it.skipIf(!cad.isAvailable())` 声明：仅在 Windows + CAD 可用环境执行，其他平台自动跳过（当前为 2 个 skipped）。**不要**在无 CAD 的 CI 环境期望这些测试执行；新增 CAD 依赖测试时必须使用同样的 skipIf 模式或 mock worker（参考 `tests/cad.test.js`）。
+
+### 测试平台依赖
+
+涉及 `process.platform` 判断的测试（如 connect 流程），在非 Windows 平台需临时强制 `Object.defineProperty(process, 'platform', { value: 'win32' })` 并在 afterEach 恢复——参考 `tests/cad.test.js` 的 `connect`/`stall detection` describe 块。
 

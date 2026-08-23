@@ -1,6 +1,6 @@
 # @lisp MCP Server
 
-MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **230+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
+MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **330+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
 
 支持 **AutoCAD / ZWCAD / GStarCAD / BricsCAD**，通过 COM 互操作与 CAD 通信。
 
@@ -32,7 +32,7 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 
 - **连接多平台 CAD** — AutoCAD / ZWCAD / GStarCAD / BricsCAD
 - **执行 AutoLISP** — 执行 LISP 代码并获取结果
-- **AI Agent 控制 CAD** — 220+ MCP 工具，涵盖绘图、编辑、查询、管理
+- **AI Agent 控制 CAD** — 330+ MCP 工具，涵盖绘图、编辑、查询、管理
 - **包管理** — 列出、搜索、安装 @lisp 包
 - **批量操作** — 批量复制/移动/旋转/缩放/镜像/偏移/改名/改色/改图层
 - **3D 建模** — 创建 Box/Sphere/Cylinder/Cone/Torus/Wedge，布尔运算，拉伸/旋转
@@ -315,7 +315,7 @@ curl http://localhost:8110/metrics
 
 ---
 
-## 工具列表 (230+)
+## 工具列表 (330+)
 
 > 所有工具的 `description` 和参数说明已针对 AI Agent 优化——包含触发条件、参数示例、交叉引用和后果提示，帮助 Agent 更准确选择和使用工具。
 
