@@ -58,7 +58,7 @@ export const deleteLayer = withCadConnection(async (name) => {
 });
 
 export const setLayerProperty = withCadConnection(async (name, property, value) => {
-    let propCode = '';
+    let propCode;
     switch (property) {
         case 'color':
             propCode = `(command "._LAYER" "P" "${escapeLispString(name)}" "C" ${isNaN(Number(value)) ? 7 : Number(value)} "")`;

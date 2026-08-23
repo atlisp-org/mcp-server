@@ -124,7 +124,7 @@ export async function closeDwg(save = false) {
         "CLOSED"
     )`;
     try {
-        const result = await cad.sendCommandWithResult(code);
+        await cad.sendCommandWithResult(code);
         return { content: [{ type: 'text', text: '已关闭图形' }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };

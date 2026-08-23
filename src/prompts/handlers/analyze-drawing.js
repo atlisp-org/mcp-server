@@ -1,6 +1,7 @@
 import { cad } from '../../cad.js';
+import { error as logError } from '../../logger.js';
 
-export default async function handler(args) {
+export default async function handler(_args) {
   let entities = { total: 0, byType: {} };
   let layers = [];
   try {
@@ -9,16 +10,16 @@ export default async function handler(args) {
         '(progn(setq ss(ssget "_X"))(if ss(progn(setq elst(mapcar(quote(lambda(x)(cdr(assoc 0(entget x))))) (pickset:to-list ss)))(stat:stat elst))))'
       );
       if (entResult) {
-        try { entities = JSON.parse(entResult); } catch {}
+        try { entities = JSON.parse(entResult); } catch (e) { logError(`实体列表解析失败: ${e.message}`); }
       }
       const layerResult = await cad.sendCommandWithResult(
         '(progn(setq res nil)(while(setq e(tblnext "LAYER"(null res)))(setq res(cons(cdr(assoc 2 e))res)))(reverse res))'
       );
       if (layerResult) {
-        try { layers = JSON.parse(layerResult); } catch {}
+        try { layers = JSON.parse(layerResult); } catch (e) { logError(`图层列表解析失败: ${e.message}`); }
       }
     }
-  } catch {}
+  } catch (e) { logError(`图纸快照采集失败: ${e.message}`); }
 
   const suggestions = [];
   if (entities.total > 1000) suggestions.push('- 图纸实体较多，建议使用图层分类管理');

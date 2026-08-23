@@ -53,7 +53,6 @@ export function installAutostart() {
     if (platform === 'darwin') {
         const plistDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
         const plistPath = path.join(plistDir, `com.atlisp.mcp.plist`);
-        const cmd = getStartupCommand().replace(/"/g, '&quot;');
         const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -165,7 +164,7 @@ export function autostartStatus() {
             );
             const match = out.match(/(\S+\.js)/);
             return { installed: true, command: match ? match[1] : out.trim() };
-        } catch (_) {
+        } catch {
             return { installed: false };
         }
     }

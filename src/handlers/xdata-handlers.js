@@ -1,5 +1,5 @@
 import { cad } from '../cad.js';
-import { log } from '../logger.js';
+
 import { mcpSuccess, mcpError, ensureCadConnected, escapeLispString } from '../handler-utils.js';
 
 export async function getXdata(handle, appName = 'ACAD') {

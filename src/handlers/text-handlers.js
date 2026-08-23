@@ -5,7 +5,6 @@ export async function findText(params) {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
     try {
-        const caseSensitive = params.caseSensitive ? 'T' : 'nil';
         const code = `(progn
             (vl-load-com)
             (setq ss (ssget "X" (list (cons 0 "TEXT,MTEXT") (cons 1 "${escapeLispString(params.pattern)}"))))

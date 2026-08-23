@@ -1,5 +1,5 @@
 import { cad } from '../cad.js';
-import { log } from '../logger.js';
+
 import { mcpSuccess, mcpError, ensureCadConnected, escapeLispString } from '../handler-utils.js';
 
 export async function attachPdf(point, pdfPath, scale = 1, rotation = 0) {
@@ -91,7 +91,6 @@ export async function batchAttachPdfs(pdfFiles, basePoint, spacing = 0, directio
   try {
     await ensureCadConnected();
     const results = [];
-    const pt = Array.isArray(basePoint) ? basePoint.join(' ') : basePoint;
     for (let i = 0; i < pdfFiles.length; i++) {
       try {
         const offsetX = direction === 'x' ? 0 : spacing * i;

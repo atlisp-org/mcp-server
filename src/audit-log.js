@@ -8,7 +8,6 @@ import { ensureDir } from './handler-utils.js';
 const AUDIT_DIR = path.join(os.homedir(), '@lisp', 'logs');
 const AUDIT_FILE = path.join(AUDIT_DIR, 'audit.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024;
-const MAX_LOG_AGE = 90 * 24 * 60 * 60 * 1000;
 
 function rotateIfNeeded() {
   try {
@@ -21,7 +20,7 @@ function rotateIfNeeded() {
         fs.unlinkSync(rotated);
       } catch (e) {
         logError(`Audit log compression failed, keeping raw file: ${e.message}`);
-        try { fs.unlinkSync(rotated + '.gz'); } catch {}
+        try { fs.unlinkSync(rotated + '.gz'); } catch (e) { logError(`清理压缩文件失败: ${e.message}`); }
       }
     }
   } catch (e) { logError(`Audit log rotation error: ${e.message}`); }
@@ -97,7 +96,7 @@ export function getAuditStats() {
         const entry = JSON.parse(line);
         toolCounts[entry.tool] = (toolCounts[entry.tool] || 0) + 1;
         if (entry.error) errors++;
-      } catch {}
+      } catch (e) { logError(`审计日志行解析失败，已跳过: ${e.message}`); }
     }
 
     return {
@@ -107,7 +106,7 @@ export function getAuditStats() {
       fileSize: fs.existsSync(AUDIT_FILE) ? fs.statSync(AUDIT_FILE).size : 0,
       filePath: AUDIT_FILE,
     };
-  } catch (e) {
+  } catch {
     return { totalEntries: 0, tools: {}, errors: 0, fileSize: 0, filePath: AUDIT_FILE };
   }
 }

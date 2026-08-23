@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { cad } from './cad.js';
-import { log, error as logError } from './logger.js';
+import { log } from './logger.js';
 import { analyzeLispCode } from './lint-analyzer.js';
 
 const sessions = new Map();
@@ -24,7 +24,7 @@ function ensureCleanup() {
   cleanupTimer.unref();
 }
 
-const SETQ_RE = /\(setq\s+([a-z][a-z0-9:*\-]+)\s+/gi;
+const SETQ_RE = /\(setq\s+([a-z][a-z0-9:*-]*)\s+/gi;
 
 export class ReplSession {
   constructor(sessionId) {

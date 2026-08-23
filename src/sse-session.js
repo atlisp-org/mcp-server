@@ -190,7 +190,7 @@ export class SseSession {
                 return true;
             }
             return true;
-        } catch (e) {
+        } catch {
             this.#active = false;
             this.close();
             return false;
@@ -202,7 +202,7 @@ export class SseSession {
             if (typeof this.#res.flush === 'function') {
                 this.#res.flush();
             }
-        } catch (e) {
+        } catch {
             // Ignore flush errors
         }
     }
@@ -289,7 +289,7 @@ export class SseSession {
         this.#backpressureBuffer = [];
         try {
             this.#res.end();
-        } catch (e) {
+        } catch {
             // Ignore errors during close
         }
     }
@@ -327,7 +327,7 @@ export function createSseResponseHandler(res, acceptSse = false) {
     }
 
     return {
-        send: (data, done = false) => {
+        send: (data, _done = false) => {
             if (acceptSse) {
                 sendSSE(res, data);
             } else {

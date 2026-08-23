@@ -1,8 +1,8 @@
-import config from './config.js';
+import './config.js';
 import { metrics as otelMetrics } from '@opentelemetry/api';
 import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 
 const MAX_HISTORY_VALUES = 1000;
 

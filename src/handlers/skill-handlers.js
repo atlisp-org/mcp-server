@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { error as logError } from '../logger.js';
 import path from 'path';
 import os from 'os';
 
@@ -7,12 +8,12 @@ const REGISTRY_URL = process.env.SKILL_REGISTRY_URL || 'https://raw.githubuserco
 const CACHE_PATH = path.join(os.homedir(), '.atlisp', 'skill-registry-cache.json');
 
 function readCache() {
-    try { if (fs.existsSync(CACHE_PATH)) return JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8')); } catch {}
+    try { if (fs.existsSync(CACHE_PATH)) return JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8')); } catch (e) { logError(`skill 缓存读取失败: ${e.message}`); }
     return null;
 }
 
 function writeCache(data) {
-    try { fs.writeFileSync(CACHE_PATH, JSON.stringify(data, null, 2), 'utf-8'); } catch {}
+    try { fs.writeFileSync(CACHE_PATH, JSON.stringify(data, null, 2), 'utf-8'); } catch (e) { logError(`skill 缓存写入失败: ${e.message}`); }
 }
 
 async function fetchIndex() {
@@ -25,7 +26,7 @@ async function fetchIndex() {
             index.fetchedAt = Date.now();
             writeCache(index);
         }
-    } catch {}
+    } catch (e) { logError(`skill 索引刷新失败: ${e.message}`); }
     return index;
 }
 
@@ -66,7 +67,7 @@ export async function skill_install(a) {
     } catch (e) {
         return { content: [{ type: 'text', text: `下载失败: ${e.message}` }], isError: true };
     }
-    try { fs.mkdirSync(SKILLS_DIR, { recursive: true }); } catch {}
+    try { fs.mkdirSync(SKILLS_DIR, { recursive: true }); } catch (e) { logError(`创建 skills 目录失败: ${e.message}`); }
     const safeName = a.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '-').substring(0, 40);
     const skillFile = path.join(SKILLS_DIR, `skill-${safeName}.md`);
     if (fs.existsSync(skillFile)) {
@@ -102,10 +103,10 @@ export async function skill_list_installed() {
                     } else {
                         results.push({ name: entry.name.replace('.md', ''), description: '', tags: '' });
                     }
-                } catch {}
+                } catch (e) { logError(`读取 skill 描述失败: ${e.message}`); }
             }
         }
-    } catch {}
+    } catch (e) { logError(`扫描 skills 目录失败: ${e.message}`); }
     if (!results.length) return { content: [{ type: 'text', text: '暂无已安装的 skill' }] };
     const lines = [`已安装 ${results.length} 个 skill:\n`];
     for (const s of results) {
@@ -132,11 +133,11 @@ export async function skill_uninstall(a) {
                             if (line.startsWith('name:') && line.slice(5).trim() === a.name) { found = fullPath; break; }
                         }
                     } else if (entry.name.replace('.md', '') === a.name) { found = fullPath; }
-                } catch {}
+                } catch (e) { logError(`匹配 skill 文件失败: ${e.message}`); }
                 if (found) break;
             }
         }
-    } catch {}
+    } catch (e) { logError(`扫描 skills 目录失败: ${e.message}`); }
     if (!found) return { content: [{ type: 'text', text: `未安装 skill: ${a.name}` }], isError: true };
     fs.unlinkSync(found);
     return { content: [{ type: 'text', text: `${a.name} 已卸载` }] };

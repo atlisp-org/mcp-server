@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { SessionTransport } from './session-transport.js';
 import { createMcpServer } from './mcp-handlers.js';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 import { tools, handleToolCall } from './mcp-tools.js';
 import { setActiveSessions } from './metrics.js';
 

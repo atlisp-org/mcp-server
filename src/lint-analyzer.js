@@ -5,7 +5,7 @@ import config from './config.js';
 
 const CUSTOM_RULES = [
   { rule: 'command_shell', severity: 'error', re: /\(\s*command\s+"\s*[_.]*\s*shell\s*"/i, msg: '(command "shell" ...) 会启动系统 Shell' },
-  { rule: 'vl_registry_write', severity: 'error', re: /\(\s*vl-registry-write[\s\)]/i, msg: 'vl-registry-write 会修改 Windows 注册表' },
+  { rule: 'vl_registry_write', severity: 'error', re: /\(\s*vl-registry-write[\s)]/i, msg: 'vl-registry-write 会修改 Windows 注册表' },
   { rule: 'eval_function', severity: 'warn', re: /\beval\s*[(\s]/i, msg: '禁止使用 eval 函数' },
   { rule: 'vl_exit_value', severity: 'warn', re: /\bvl-exit-with-value\b/i, msg: '禁止使用 vl-exit-with-value' },
   { rule: 'vl_exit_error', severity: 'warn', re: /\bvl-exit-with-error\b/i, msg: '禁止使用 vl-exit-with-error' },

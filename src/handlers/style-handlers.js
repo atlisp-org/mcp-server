@@ -1,5 +1,5 @@
 import { cad } from '../cad.js';
-import { log } from '../logger.js';
+
 import { mcpSuccess, mcpError, ensureCadConnected, escapeLispString } from '../handler-utils.js';
 
 export async function createDimensionStyle(name, color = 'bylayer', arrow = 'ClosedFilled', textStyle = '') {
@@ -145,7 +145,7 @@ export async function listMLeaderStyles() {
   } catch (e) { return mcpError(`错误: ${e.message}`); }
 }
 
-export async function createCloudLine(startPoint, endPoint, bulge = 1, arcRadius = 0) {
+export async function createCloudLine(startPoint, endPoint, bulge = 1, _arcRadius = 0) {
   try { await ensureCadConnected(); const start = Array.isArray(startPoint) ? startPoint.join(' ') : startPoint; const end = Array.isArray(endPoint) ? endPoint.join(' ') : endPoint; await cad.sendCommand(`(command "_.revcloud" "${escapeLispString(start)}" "${escapeLispString(end)}" "${bulge}" "")`); return mcpSuccess(JSON.stringify({ startPoint: start, endPoint: end, bulge })); } catch (e) { return mcpError(`错误: ${e.message}`); }
 }
 

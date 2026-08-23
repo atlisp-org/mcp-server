@@ -1,5 +1,5 @@
 import { onDocumentChanged, cad } from './cad.js';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 
 const subscribers = new Map();
 let wasConnected = false;

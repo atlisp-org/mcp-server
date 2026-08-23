@@ -244,7 +244,7 @@ class CadConnectionPool {
             log(`连接池: 发现 ${label}`);
             resultEntries.push(this._instances.get(key));
           }
-        } catch (e) {
+        } catch {
           // Platform not available, skip
         }
       }
@@ -377,7 +377,7 @@ class CadConnectionPool {
    */
   async disconnectAll() {
     this.stopHealthCheck();
-    for (const [key, timer] of this._reconnectTimers) {
+    for (const [, timer] of this._reconnectTimers) {
       clearTimeout(timer);
     }
     this._reconnectTimers.clear();
@@ -401,7 +401,7 @@ class CadConnectionPool {
 
   _scheduleReconnect(key) {
     if (this._reconnectTimers.has(key)) return;
-    let count = this._reconnectCounts.get(key) || 0;
+    const count = this._reconnectCounts.get(key) || 0;
     if (count >= this._maxReconnectAttempts) {
       logError(`连接池: 实例 "${key}" 重试已达上限 (${this._maxReconnectAttempts})，放弃`);
       return;

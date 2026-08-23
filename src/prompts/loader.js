@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { renderPrompt } from './renderer.js';
-import { log, error as logError } from '../logger.js';
+import {  error as logError } from '../logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFS_DIR = path.join(__dirname, 'definitions');
@@ -27,14 +27,14 @@ function safeReadJson(filePath) {
   }
 }
 
-function getCached(key) {
+function _getCached(key) {
   const entry = cache.get(key);
   if (entry && Date.now() - entry.timestamp < CACHE_TTL) return entry.data;
   cache.delete(key);
   return null;
 }
 
-function setCache(key, data) {
+function _setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
@@ -52,7 +52,7 @@ function loadBuiltinDefs() {
         if (def && def.name) {
           builtinDefs[def.name] = def;
         }
-      } catch (e) {}
+      } catch (e) { logError(`内置 prompt 加载失败: ${file}: ${e.message}`); }
     }
   } catch (e) {
     logError(`Error reading prompt definitions directory: ${e.message}`);
@@ -82,7 +82,7 @@ function loadExternalPrompts() {
         if (prompt && prompt.name) {
           externalPrompts.push(prompt);
         }
-      } catch (e) {}
+      } catch (e) { logError(`外部 prompt 加载失败: ${file}: ${e.message}`); }
     }
   } catch (e) {
     logError(`Error reading external prompts directory: ${e.message}`);
@@ -108,7 +108,7 @@ async function loadHandler(handlerFile) {
     handlerCache.set(handlerFile, fn);
     return fn;
   } catch (e) {
-    throw new Error(`Failed to load prompt handler: ${handlerFile} - ${e.message}`);
+    throw new Error(`Failed to load prompt handler: ${handlerFile} - ${e.message}`, { cause: e });
   }
 }
 
@@ -140,7 +140,6 @@ export async function getPrompt(name, args = {}) {
   const extPrompt = findExternalPrompt(name);
   if (extPrompt) {
     if (extPrompt.templates) {
-      const merged = { ...extPrompt, action: args.action || 'default' };
       const action = args.action || 'default';
       const template = extPrompt.templates[action] || extPrompt.templates.default;
       if (template) {

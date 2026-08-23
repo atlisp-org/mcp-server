@@ -25,7 +25,7 @@ export class SessionTransport {
     if (this._closed) return;
     const id = message?.id;
     if (id != null && this._pendingRequests.has(id)) {
-      const { resolve, reject, timeout } = this._pendingRequests.get(id);
+      const { resolve, timeout } = this._pendingRequests.get(id);
       clearTimeout(timeout);
       this._pendingRequests.delete(id);
       resolve(message);
@@ -35,7 +35,7 @@ export class SessionTransport {
   async close() {
     if (this._closed) return;
     this._closed = true;
-    for (const [id, { reject, timeout }] of this._pendingRequests) {
+    for (const { reject, timeout } of this._pendingRequests.values()) {
       clearTimeout(timeout);
       reject(new Error('Transport closed'));
     }

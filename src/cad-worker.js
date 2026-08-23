@@ -18,7 +18,7 @@ function _loadDll(methodName) {
       typeName: 'CadRotHelper.ConnectionManager',
       methodName,
     });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -30,7 +30,7 @@ function _loadEnum() {
       typeName: 'CadRotHelper.RotEnumerator',
       methodName: 'EnumerateAll',
     });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -402,7 +402,7 @@ process.stdin.on('data', (data) => {
       }).catch(err => {
         process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
       });
-    } catch (e) {
+    } catch {
       process.stdout.write(JSON.stringify({ error: 'invalid message' }) + '\n');
     }
   }

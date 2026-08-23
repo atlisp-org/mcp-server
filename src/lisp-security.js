@@ -30,7 +30,7 @@ export const SECURITY_RULES = [
   { re: /\bvl-file-copy\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件复制' },
   { re: /\bvl-file-delete\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件删除' },
   { re: /\bvl-file-rename\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件重命名' },
-  { re: /\bvl-registry-write[\s\)]/i, baseSeverity: THREAT_BLOCK, msg: 'vl-registry-write 会修改注册表' },
+  { re: /\bvl-registry-write[\s)]/i, baseSeverity: THREAT_BLOCK, msg: 'vl-registry-write 会修改注册表' },
   { re: /\bvl-exit-with-value\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 vl-exit-with-value' },
   { re: /\bvl-exit-with-error\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 vl-exit-with-error' },
   { re: /\bvlax-add-cmd\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止注册新命令' },
@@ -52,7 +52,7 @@ try {
   onConfigChange(() => { _cachedLevel = null; });
 } catch (e) { logError('[lisp-security]', e?.message || e); }
 
-function resolveSeverity(rule) {
+function resolveSeverity(_rule) {
   if (_cachedLevel) return _cachedLevel;
   _cachedLevel = getLevel();
   return _cachedLevel;

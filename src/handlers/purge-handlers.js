@@ -1,7 +1,7 @@
 import { cad } from '../cad.js';
 import { escapeLispString } from '../handler-utils.js';
 
-export async function purgeAll(params) {
+export async function purgeAll(_params) {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
     try {
@@ -80,7 +80,7 @@ export async function purgeRegisteredApps(params) {
     }
 }
 
-export async function drawingAudit(params) {
+export async function drawingAudit(_params) {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
     try {

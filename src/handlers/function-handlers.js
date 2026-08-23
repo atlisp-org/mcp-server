@@ -71,7 +71,7 @@ export async function loadAtlibFunctionLib() {
 
 export async function getFunctionUsage(funcName, packageName) {
     try {
-        let results = [];
+        const results = [];
 
         const data = await fetchFunctions();
         if (data) {

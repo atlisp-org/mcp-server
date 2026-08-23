@@ -137,12 +137,12 @@ export async function maximizeViewport(params) {
     }
 }
 
-export async function minimizeViewport(params) {
+export async function minimizeViewport(_params) {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
     try {
         const code = `(command "_.VPMIN")`;
-        const result = await cad.sendCommandWithResult(code);
+        await cad.sendCommandWithResult(code);
         return { content: [{ type: 'text', text: '已最小化视口' }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };

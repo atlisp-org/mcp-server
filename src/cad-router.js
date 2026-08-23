@@ -1,4 +1,4 @@
-import { cad, _setInstanceResolver } from './cad.js';
+import {  _setInstanceResolver } from './cad.js';
 import { pool } from './cad-pool.js';
 import { mcpContext } from './mcp-server-state.js';
 

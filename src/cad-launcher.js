@@ -116,7 +116,7 @@ export async function launchCadProcess(platform, exePath) {
 
 export async function ensureCadInstance({
   preferredPlatforms = AUTO_LAUNCH_PLATFORMS,
-  timeout = 30000,
+  timeout: _timeout = 30000,
 } = {}) {
   const installed = detectInstalledPlatforms();
   if (installed.length === 0) {
