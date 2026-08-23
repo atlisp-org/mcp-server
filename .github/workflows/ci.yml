@@ -3,45 +3,41 @@ name: CI
 on:
   push:
     branches: [main, master]
-    paths:
-      - 'tools/mcp-server/**'
   pull_request:
     branches: [main, master]
-    paths:
-      - 'tools/mcp-server/**'
 
 jobs:
   test:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20]
-    defaults:
-      run:
-        working-directory: tools/mcp-server
+        os: [ubuntu-latest, windows-latest]
+        node-version: [20, 22, 24]
+        exclude:
+          # Windows 仅验证 LTS 最新（edge-js 原生编译慢，减少矩阵膨胀）
+          - os: windows-latest
+            node-version: 20
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}  # Windows 验证性运行，稳定后转为必须
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: tools/mcp-server/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run build
       - run: npm test
 
   lint:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tools/mcp-server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
-          cache-dependency-path: tools/mcp-server/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
-      - run: npx eslint src/ --ext .js
-        continue-on-error: true
+      - run: npm run lint
