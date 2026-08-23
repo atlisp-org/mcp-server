@@ -23,7 +23,7 @@ export function mcpError(text) {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export async function ensureCadConnected() {
-  const { cad, resolveCadConnection } = await import('./cad.js');
+  const { resolveCadConnection } = await import('./cad.js');
   const { pool } = await import('./cad-pool.js');
   const config = (await import('./config.js')).default;
   const conn = resolveCadConnection();

@@ -221,7 +221,7 @@ export async function measureArea(points) {
         return { content: [{ type: 'text', text: '至少需要 3 个点' }], isError: true };
     }
 
-    const coords = pts.map((p, i) => {
+    const coords = pts.map((p, _i) => {
         const parts = String(p).split(',').map(Number);
         return parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])
           ? `(list ${parts[0]} ${parts[1]})`
@@ -261,9 +261,8 @@ export async function publishLayouts(args) {
   const outputDir = args.outputDir || '.';
   const namingRule = args.namingRule || '{layout}';
   const format = args.format || 'PDF';
-  const merge = args.merge !== false;
 
-  let results = [];
+  const results = [];
   for (const layout of layouts) {
     try {
       const safeName = String(layout).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff]/g, '_');
@@ -504,7 +503,7 @@ export async function plotFromFileList(args) {
   if (!cad.connected) { await cad.connect(); }
   if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
 
-  let fileList = [];
+  let fileList;
   if (Array.isArray(args.fileList)) {
     fileList = args.fileList;
   } else if (args.textFile) {

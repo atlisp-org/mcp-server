@@ -1,5 +1,5 @@
 import os from 'os';
-import express from 'express';
+import 'express';
 import { randomUUID, createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -9,14 +9,14 @@ import config, { reloadConfig } from './config.js';
 import { log, error as logError, logRequest, logResponse } from './logger.js';
 import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
-import { sessionManager, setNotify as subMgrSetNotify } from './subscription-manager.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { mcpContext, getOrCreateSessionServer, removeSessionServer, broadcastToAllSessions, sessionServers } from './mcp-server-state.js';
+import { sessionManager } from './subscription-manager.js';
+
+import { mcpContext, getOrCreateSessionServer, removeSessionServer, sessionServers } from './mcp-server-state.js';
 import { SseSession, parseLastEventId } from './sse-session.js';
 import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
 import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from './rate-limiter.js';
-import { tools } from './tools/index.js';
+import { getVisibleTools } from './tools/index.js';
 import { getApiKeyRole, canAccess } from './auth.js';
 import { SERVER_VERSION } from './constants.js';
 
@@ -39,7 +39,7 @@ const htmlCache = {};
 let cachedToolsJson = null; let cachedToolsJsonAt = 0;
 function getToolsJson() {
     if (cachedToolsJson && Date.now() - cachedToolsJsonAt < 30000) return cachedToolsJson;
-    cachedToolsJson = JSON.stringify(tools.map(t => ({
+    cachedToolsJson = JSON.stringify(getVisibleTools().map(t => ({
         name: t.name, description: t.description, inputSchema: t.inputSchema
     })));
     cachedToolsJsonAt = Date.now();
@@ -127,7 +127,7 @@ function originMatches(pattern, origin) {
     if (!origin) return false;
     const getHost = s => s.replace(/^https?:\/\//, '').replace(/:\d+$/, '').toLowerCase();
     const oHost = getHost(origin);
-    let pHost = getHost(pattern);
+    const pHost = getHost(pattern);
     if (pHost.startsWith('*.')) {
         const suffix = pHost.slice(1);
         return oHost === suffix.slice(1) || oHost.endsWith(suffix);
@@ -168,7 +168,7 @@ export function createCorsMiddleware() {
 }
 
 export function createErrorHandler() {
-    return (err, req, res, next) => {
+    return (err, req, res, _next) => {
         logError(`Unhandled error: ${err.message}`, { stack: err.stack, path: req.path });
         res.status(500).json({ error: 'Internal server error', message: err.message });
     };
@@ -221,7 +221,7 @@ export function setupRoutes(app) {
         let cadResponseTime = 0;
         if (cad.connected) {
             const t0 = Date.now();
-            try { await cad.ping(); } catch {}
+            try { await cad.ping(); } catch (e) { logError('health ping 失败:', e.message); }
             cadResponseTime = Date.now() - t0;
         }
 
@@ -229,7 +229,7 @@ export function setupRoutes(app) {
         const cpuUsage = process.cpuUsage();
 
         let sseCount = 0;
-        try { sseCount = sessionManager?.count?.() || 0; } catch {}
+        try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError('获取 SSE 会话数失败:', e.message); }
         res.json({
             status: 'ok',
             cad: {
@@ -254,7 +254,7 @@ export function setupRoutes(app) {
             },
             mcp: {
                 sessions: sessionServers.size,
-                tools: tools.length,
+                tools: getVisibleTools().length,
                 sseSessions: sseCount
             },
             pool: {
@@ -275,12 +275,12 @@ export function setupRoutes(app) {
         const memUsage = process.memoryUsage();
         const poolStats = pool ? pool.getStats() : {};
         let sseCount = 0;
-        try { sseCount = sessionManager?.count?.() || 0; } catch {}
+        try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError('获取 SSE 会话数失败:', e.message); }
         res.json({
             status: 'ok', timestamp: new Date().toISOString(),
             cad: { connected: cad.connected, platform: cad.getPlatform?.(), version: cad.getVersion?.(), commandQueueSize: cad._getQueueSize ? cad._getQueueSize() : 0, restartCount: cad._getRestartCount ? cad._getRestartCount() : 0 },
             system: { uptime: process.uptime(), memory: { rssMB: Math.round(memUsage.rss / 1024 / 1024), heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024), heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024) }, cpu: process.cpuUsage() },
-            mcp: { sessions: sessionServers.size, tools: tools.length, sseSessions: sseCount },
+            mcp: { sessions: sessionServers.size, tools: getVisibleTools().length, sseSessions: sseCount },
             pool: poolStats,
         });
     });
@@ -323,7 +323,7 @@ export function setupRoutes(app) {
     app.get('/api/docs', (req, res) => {
         const html = loadHtml('api-docs', {
             VERSION: SERVER_VERSION,
-            TOOLS_COUNT: tools.length,
+            TOOLS_COUNT: getVisibleTools().length,
         });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
@@ -345,7 +345,7 @@ export function setupRoutes(app) {
             SESSIONS_COUNT: sessionServers.size,
             CAD_STATUS_CLASS: cadConnected ? 'status-ok' : 'status-error',
             CAD_STATUS_TEXT: cadStatusText,
-            TOOLS_COUNT: tools.length,
+            TOOLS_COUNT: getVisibleTools().length,
         });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
@@ -431,7 +431,7 @@ async function getMcpResponse(sessionId, body) {
         let promise = pendingMcpRequests.get(dedupKey);
         if (!promise) {
             promise = (async () => {
-                const { server, transport } = await getOrCreateSessionServer(sessionId);
+                const { transport } = await getOrCreateSessionServer(sessionId);
                 transport.resetCleanupTimer();
                 return mcpContext.run({ sessionId }, async () => {
                     return transport.handleRequest(body);
@@ -443,7 +443,7 @@ async function getMcpResponse(sessionId, body) {
         return promise;
     }
 
-    const { server, transport } = await getOrCreateSessionServer(sessionId);
+    const { transport } = await getOrCreateSessionServer(sessionId);
     transport.resetCleanupTimer();
     return mcpContext.run({ sessionId }, async () => {
         return transport.handleRequest(body);
@@ -452,7 +452,7 @@ async function getMcpResponse(sessionId, body) {
 
 async function handleSse(req, res) {
     const lastEventId = parseLastEventId(req);
-    let sessionId = randomUUID();
+    const sessionId = randomUUID();
     let resumeMessages = [];
 
     if (lastEventId !== null) {
@@ -493,7 +493,7 @@ async function handleMessage(req, res) {
         return res.status(404).json({ error: 'Session not found' });
     }
     sessionManager.createSession(sessionId);
-    const { server, transport } = await getOrCreateSessionServer(sessionId);
+    const { transport } = await getOrCreateSessionServer(sessionId);
     transport.resetCleanupTimer();
 
     const body = req.body;

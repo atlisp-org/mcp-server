@@ -5,6 +5,8 @@
   "cad.noDocument": "No document open in CAD",
   "cad.sendFailed": "Send failed",
   "cad.circuitBreakerOpen": "CAD unavailable, retry later",
+  "cad.stalled": "CAD stalled",
+  "cad.stallTimeout": "Message {0} timed out ({1}ms)",
 
   "error.invalidParams": "Invalid parameters",
   "error.methodNotFound": "Method not found",

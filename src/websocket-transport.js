@@ -4,7 +4,7 @@ import { getOrCreateSessionServer, removeSessionServer, mcpContext } from './mcp
 import { log, error as logError } from './logger.js';
 import { cad, onDocumentChanged } from './cad.js';
 import { SERVER_NAME, SERVER_VERSION, SERVER_CAPABILITIES } from './constants.js';
-import { tools } from './tools/index.js';
+import { getVisibleTools } from './tools/index.js';
 import { subscribe, unsubscribe } from './subscription-manager.js';
 import config from './config.js';
 
@@ -62,7 +62,7 @@ function sendWelcome(ws, clientId) {
                 server: { name: SERVER_NAME, version: SERVER_VERSION },
                 capabilities: SERVER_CAPABILITIES,
                 clientId,
-                toolCount: tools.length,
+                toolCount: getVisibleTools().length,
                 cadConnected: cad.connected,
                 cadPlatform: cad.connected ? cad.getPlatform() : null,
                 cadVersion: cad.connected ? cad.getVersion() : null,
@@ -95,7 +95,7 @@ function startPingPong(ws, clientId) {
         }
         isAlive = false;
         ws._isAlive = false;
-        try { ws.ping(); } catch {}
+        try { ws.ping(); } catch (e) { logError('ws ping 失败:', e.message); }
     }, PING_INTERVAL);
 
     ws._pingInterval = interval;
@@ -349,9 +349,9 @@ export function createWebSocketServer(httpServer) {
 export function closeWebSocketServer() {
     stopCadPolling();
     if (_wss) {
-        for (const [clientId, ws] of connectedClients) {
+        for (const ws of connectedClients.values()) {
             stopPingPong(ws);
-            try { ws.close(1001, 'Server shutting down'); } catch {}
+            try { ws.close(1001, 'Server shutting down'); } catch (e) { logError('ws 关闭失败:', e.message); }
         }
         connectedClients.clear();
         _wss.close(() => {

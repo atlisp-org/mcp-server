@@ -12,20 +12,20 @@ const { version } = require(path.join(__dirname, '..', 'package.json'));
 import express from 'express';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { cad, onDocumentChanged } from './cad.js';
-import { CAD_PLATFORMS, FILE_EXTENSIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION } from './constants.js';
+import {  SERVER_NAME } from './constants.js';
 import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
-import { listResources, readResource, RESOURCES, clearCache } from './handlers/resource-handlers.js';
+import {  clearCache } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 import { sessionManager } from './subscription-manager.js';
-import { SseSession } from './sse-session.js';
+
 
 import config from './config.js';
 import { setupRoutes } from './routes.js';
-import { mcpContext, getOrCreateSessionServer, removeSessionServer, broadcastToAllSessions, sessionServers, createStdioServer } from './mcp-server-state.js';
+import { mcpContext, removeSessionServer, sessionServers, createStdioServer } from './mcp-server-state.js';
 import { tools, handleToolCall } from './mcp-tools.js';
 import { createWebSocketServer } from './websocket-transport.js';
-import { loadPlugins, initPlugins, getPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher } from './plugin-loader.js';
-import { registerTool, callCustomTool, getCustomHandlers } from './tool-registry.js';
+import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher } from './plugin-loader.js';
+import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
 import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
 
@@ -175,6 +175,9 @@ For more info: https://atlisp.cn
 
 if (config.apiKey) log('API Key authentication enabled');
 
+const { setLocale } = await import('./i18n.js');
+setLocale(config.locale || 'zh-CN');
+
 if (config.autoConnect) {
     log('Attempting to connect to CAD on startup...');
     const { ensureCadConnected } = await import('./handler-utils.js');
@@ -225,7 +228,7 @@ export async function startServer() {
         });
         console.error(`${SERVER_NAME} 运行在 stdio 模式`);
 
-        subMgr.setNotify((uri, data) => {
+        subMgr.setNotify((uri, _data) => {
             mcpServer.sendResourceUpdated({ uri }).catch(err => {
                 logError(`Failed to send resource update: ${err.message}`);
             });
@@ -240,7 +243,7 @@ export async function startServer() {
             }
         });
 
-        subMgr.setNotify((uri, data) => {
+        subMgr.setNotify((uri, _data) => {
             scheduleResourceUpdated(uri);
             for (const session of sessionManager.listActive()) {
                 sessionManager.sendToClient(session.clientId, 'resource_updated', { uri });

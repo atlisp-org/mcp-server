@@ -257,3 +257,22 @@ export const tools = [
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
+
+import config from '../config.js';
+
+const _visibleCache = { cats: null, result: null };
+
+/**
+ * 按 config.toolCategories 过滤后的可见工具（空列表 = 全部暴露）。
+ * 仅影响 tools/list 等发现接口；工具调用校验仍使用完整 toolsByName。
+ */
+export function getVisibleTools() {
+  const cats = config?.toolCategories;
+  if (!Array.isArray(cats) || cats.length === 0) return tools;
+  const key = cats.join(',');
+  if (_visibleCache.cats !== key) {
+    _visibleCache.cats = key;
+    _visibleCache.result = tools.filter(t => cats.includes(t.annotations?.category));
+  }
+  return _visibleCache.result;
+}

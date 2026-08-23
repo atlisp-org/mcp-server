@@ -6,8 +6,10 @@ import { randomUUID } from 'crypto';
 import config from './config.js';
 import { setCadConnected } from './metrics.js';
 import { CircuitBreaker } from './cad-circuit-breaker.js';
-import { log, error as logError } from './logger.js';
-import { createError, ERROR_CODES, MCPError } from './errors.js';
+import {  error as logError } from './logger.js';
+import {  ERROR_CODES, MCPError } from './errors.js';
+import { withSpan } from './tracing.js';
+import { t } from './i18n.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
@@ -24,7 +26,6 @@ const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const PRIORITY_HIGH = 0;
 const PRIORITY_NORMAL = 1;
-const PRIORITY_LOW = 2;
 const MAX_QUEUE_SIZE = 500;
 
 const READ_PREFIXES = new Set([
@@ -337,7 +338,7 @@ class CadConnection {
    * @returns {Promise<boolean>}
    */
   async sendCommand(code) {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
@@ -357,7 +358,7 @@ class CadConnection {
    * @returns {Promise<string|{ text: string, rawBase64: string }>}
    */
   async sendCommandWithResult(code, encoding = null, raw = false) {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
@@ -389,11 +390,11 @@ class CadConnection {
     return { stalled: remainingMs > 0, reason: this._stallReason, remainingMs: Math.max(0, remainingMs) };
   }
 
-  _stallError(reason = this._stallReason || 'CAD 停滞') {
+  _stallError(reason = this._stallReason || t('cad.stalled')) {
     const info = this.getStallInfo();
     return new MCPError(
       ERROR_CODES.CAD_BUSY,
-      `CAD 停滞中（可能等待输入或弹窗）：${reason}。冷却期内命令将快速失败，可人工处理 CAD 后重试，或打开新 CAD 实例继续任务`,
+      `${t('cad.stalled')}中（可能等待输入或弹窗）：${reason}。冷却期内命令将快速失败，可人工处理 CAD 后重试，或打开新 CAD 实例继续任务`,
       { reason: info.reason || reason, remainingMs: info.remainingMs }
     );
   }
@@ -417,7 +418,7 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'isBusy', platform: this._platform });
       return result && result.isBusy;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -427,27 +428,27 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'hasdoc', platform: this._platform });
       return result || { hasDoc: false, docCount: 0 };
-    } catch (e) {
+    } catch {
       return { hasDoc: false, docCount: 0 };
     }
   }
 
   async newDoc() {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     try {
       const result = await this._sendMessage({ type: 'newdoc', platform: this._platform });
       return result && result.success;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
 
   async bringToFront() {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     try {
       const result = await this._sendMessage({ type: 'bringToFront', platform: this._platform });
       return result && result.success;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -458,7 +459,7 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'getActiveDocInfo', platform: this._platform });
       return result || { docName: '', docPath: '', docCount: 0 };
-    } catch (e) {
+    } catch {
       return { docName: '', docPath: '', docCount: 0 };
     }
   }
@@ -477,7 +478,7 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'ping' });
       return result && result.pong;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -521,7 +522,7 @@ class CadConnection {
         this._cb.recordFailure();
         this._clearStall();
         const exitError = new Error(`Primary worker exited with code ${code}`);
-        for (const [id, entry] of this._pendingRequests) {
+        for (const entry of this._pendingRequests.values()) {
           clearTimeout(entry.timeout);
           entry._skipCb = true;
           entry.reject(exitError);
@@ -578,7 +579,7 @@ class CadConnection {
   }
 
   _resetWorker() {
-    for (const [id, { reject, timeout }] of this._pendingRequests) {
+    for (const { reject, timeout } of this._pendingRequests.values()) {
       clearTimeout(timeout);
       reject(new Error('Worker reset'));
     }
@@ -710,7 +711,9 @@ class CadConnection {
       await this._resetWorker();
       await this._getWorker(false);
     }
-    return this._sendMessageInternal(msg);
+    return withSpan(`cad.${msg.type}`, { 'cad.msg_type': msg.type }, () =>
+      this._sendMessageInternal(msg)
+    );
   }
 
   _sendMessageInternal(msg, noCircuitBreaker = false, timeoutMs = null) {
@@ -726,13 +729,14 @@ class CadConnection {
         const p = self._pendingRequests.get(requestId);
         if (p) {
           self._pendingRequests.delete(requestId);
+          if (p.timeout !== timeout) clearTimeout(p.timeout);
           if (!noCircuitBreaker) self._cb.recordFailure();
           if (!noCircuitBreaker && msg.type !== 'ping') {
-            self._markStalled(`消息 ${msg.type} 超时 (${effectiveTimeout}ms)`);
-            reject(self._stallError());
+            self._markStalled(t('cad.stallTimeout', [msg.type, effectiveTimeout]));
+            p.reject(self._stallError());
             return;
           }
-          reject(new Error('Timeout waiting for worker'));
+          p.reject(new Error('Timeout waiting for worker'));
         }
       }, effectiveTimeout);
 

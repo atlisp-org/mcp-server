@@ -11,6 +11,7 @@ import { pool } from './cad-pool.js';
 import { writeAuditEntry } from './audit-log.js';
 import { mcpErrorResponse, ERROR_CODES, MCPError } from './errors.js';
 import { callCustomTool } from './tool-registry.js';
+import { withSpan } from './tracing.js';
 
 function resolveConn(instance) {
   if (instance) return pool.getConnection(instance) || resolveCadConnection();
@@ -51,7 +52,7 @@ async function endUndo(instance) {
   try { await conn.sendCommand('(command "_.UNDO" "_END")'); } catch (e) { logError('[tool-executor]', e?.message || e); }
 }
 
-export async function handleToolCall(name, args, options = {}) {
+async function runToolCall(name, args, options) {
     const handler = TOOL_HANDLERS[name];
     if (!handler) {
         const customResult = callCustomTool(name, args);
@@ -110,4 +111,15 @@ export async function handleToolCall(name, args, options = {}) {
             if (undoBegun) await endUndo(instance);
         }
     });
+}
+
+/**
+ * 工具调用入口：包一层 OTel span（未启用 tracing 时零开销透传）
+ */
+export function handleToolCall(name, args, options = {}) {
+  return withSpan(`tool.${name}`, {
+    'tool.name': name,
+    'session.id': options.sessionId || '',
+    'tool.readOnly': READ_ONLY_TOOLS.has(name),
+  }, () => runToolCall(name, args, options));
 }

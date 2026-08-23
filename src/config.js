@@ -28,6 +28,10 @@ const envSchema = z.object({
     CONFIG_FILE: z.string().optional().default(''),
     API_KEY_RATE_LIMIT: z.coerce.number().optional().default(1000),
     METRICS_ENABLED: z.coerce.boolean().optional().default(true),
+    TRACING_ENABLED: z.coerce.boolean().optional().default(false),
+    TRACING_ENDPOINT: z.string().optional().default('http://127.0.0.1:4318/v1/traces'),
+    TOOL_CATEGORIES: z.string().optional().default(''),
+    LOCALE: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     REQUEST_LOG_ENABLED: z.coerce.boolean().optional().default(true),
     SSL_KEY_PATH: z.string().optional().default(''),
     SSL_CERT_PATH: z.string().optional().default(''),
@@ -76,6 +80,8 @@ const configSchema = z.object({
     configFile: z.string().optional(),
     apiKeyRateLimit: z.number().optional(),
     metricsEnabled: z.boolean().optional(),
+    tracingEnabled: z.boolean().optional(),
+    tracingEndpoint: z.string().optional(),
     apiKeys: z.array(z.object({
         key: z.string(),
         limit: z.number(),
@@ -95,6 +101,8 @@ const configSchema = z.object({
     lintConfigPath: z.string().optional(),
     lintLevel: z.string().optional(),
     noLint: z.boolean().optional(),
+    toolCategories: z.array(z.string()).optional(),
+    locale: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
     maxEntityLimit: z.number().optional(),
@@ -211,6 +219,13 @@ const config = {
     apiKeyRateLimit: fileConfig?.apiKeyRateLimit ?? env.API_KEY_RATE_LIMIT,
     apiKeys: fileConfig?.apiKeys ?? [],
     metricsEnabled: fileConfig?.metricsEnabled ?? env.METRICS_ENABLED,
+    tracingEnabled: fileConfig?.tracingEnabled ?? env.TRACING_ENABLED,
+    tracingEndpoint: fileConfig?.tracingEndpoint ?? env.TRACING_ENDPOINT,
+    toolCategories: fileConfig?.toolCategories
+      ?? (env.TOOL_CATEGORIES
+        ? env.TOOL_CATEGORIES.split(',').map(s => s.trim()).filter(Boolean)
+        : []),
+    locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
     sslKey: fileConfig?.sslKey ?? env.SSL_KEY_PATH ?? cliArgs.sslKey,
     sslCert: fileConfig?.sslCert ?? env.SSL_CERT_PATH ?? cliArgs.sslCert,
@@ -270,7 +285,7 @@ export function validateConfig() {
     return true;
 }
 
-let configWatchers = [];
+const configWatchers = [];
 let configReloadLock = false;
 
 if (configFilePath && fs.existsSync(configFilePath)) {
@@ -282,7 +297,7 @@ if (configFilePath && fs.existsSync(configFilePath)) {
                 const newFileConfig = loadConfigFile(configFilePath);
                 if (newFileConfig) {
                     Object.assign(config, newFileConfig);
-                    configWatchers.forEach(fn => { try { fn(config); } catch {} });
+                    configWatchers.forEach(fn => { try { fn(config); } catch (e) { console.error('[config] watcher 回调失败:', e.message); } });
                 }
                 configReloadLock = false;
             }
@@ -304,7 +319,7 @@ export function reloadConfig() {
     const newFileConfig = loadConfigFile(config.configFile);
     if (newFileConfig) {
         Object.assign(config, newFileConfig);
-        configWatchers.forEach(fn => { try { fn(config); } catch {} });
+        configWatchers.forEach(fn => { try { fn(config); } catch (e) { console.error('[config] watcher 回调失败:', e.message); } });
         configReloadLock = false;
         return true;
     }
