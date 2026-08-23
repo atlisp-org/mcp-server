@@ -140,7 +140,6 @@ export const TOOL_INDUSTRIES = {
   import_dgn: ['测绘', '土木道桥', '通用'],
   export_dxf: ['测绘', '土木道桥', '通用'],
   export_dgn: ['测绘', '土木道桥', '通用'],
-  create_3d_face: ['测绘', '机械', '通用'],
 
   // 土木道桥：测量、多段线/样条、视图缩放、清理
   measure_distance: ['土木道桥', '通用'],
