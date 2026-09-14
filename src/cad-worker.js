@@ -88,6 +88,32 @@ function log(msg) {
     }
 }
 
+// 内存监控
+const MEMORY_CHECK_INTERVAL = 10000; // 每 10 秒检查一次
+const MEMORY_WARNING_THRESHOLD = 100 * 1024 * 1024; // 100MB 警告阈值
+const MEMORY_CRITICAL_THRESHOLD = 200 * 1024 * 1024; // 200MB 严重阈值
+
+function checkMemoryUsage() {
+    const memUsage = process.memoryUsage();
+    const heapUsed = memUsage.heapUsed;
+    
+    if (heapUsed > MEMORY_CRITICAL_THRESHOLD) {
+        log(`[Worker] 内存严重: ${(heapUsed / 1024 / 1024).toFixed(2)}MB，建议重启 worker`);
+        // 尝试强制垃圾回收
+        if (global.gc) {
+            global.gc();
+            log(`[Worker] 已执行强制垃圾回收`);
+        }
+    } else if (heapUsed > MEMORY_WARNING_THRESHOLD) {
+        log(`[Worker] 内存警告: ${(heapUsed / 1024 / 1024).toFixed(2)}MB`);
+    }
+    
+    return heapUsed;
+}
+
+// 定期检查内存使用
+setInterval(checkMemoryUsage, MEMORY_CHECK_INTERVAL);
+
 const cadConnect = edge.func(function() {/*
   async (input) => {
       try {
@@ -387,26 +413,84 @@ const cadStartMonitor = edge.func(function() {/*
 
 process.stdin.setEncoding('utf8');
 
+// Worker进程稳定性：添加错误处理和进程管理
+process.on('uncaughtException', (err) => {
+  log(`[Worker] Uncaught exception: ${err.message}`);
+  // 不要立即退出，等待当前请求完成
+});
+
+process.on('unhandledRejection', (reason) => {
+  log(`[Worker] Unhandled rejection: ${reason}`);
+});
+
 let stdinBuffer = '';
+let isProcessing = false;
+let requestQueue = [];
+const QUEUE_TIMEOUT = 30000; // 队列处理超时时间 30 秒
+let processingStartTime = 0;
+
 process.stdin.on('data', (data) => {
   stdinBuffer += data;
   const lines = stdinBuffer.split('\n');
   stdinBuffer = lines.pop() || '';
+  
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
       const msg = JSON.parse(line);
       const requestId = msg.requestId;
-      handleMessage(msg).then(result => {
-        process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
-      }).catch(err => {
-        process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
-      });
-    } catch {
-      process.stdout.write(JSON.stringify({ error: 'invalid message' }) + '\n');
+      // 添加到队列而不是立即处理
+      requestQueue.push({ msg, requestId, timestamp: Date.now() });
+      
+      // 如果没有在处理，开始处理队列
+      if (!isProcessing) {
+        processQueue();
+      }
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ error: 'invalid message', requestId: undefined }) + '\n');
     }
   }
 });
+
+async function processQueue() {
+  if (isProcessing || requestQueue.length === 0) return;
+  
+  isProcessing = true;
+  processingStartTime = Date.now();
+  
+  while (requestQueue.length > 0) {
+    // 检查队列处理超时
+    if (Date.now() - processingStartTime > QUEUE_TIMEOUT) {
+      log(`[Worker] 队列处理超时，剩余 ${requestQueue.length} 个请求`);
+      // 清空队列并返回错误
+      while (requestQueue.length > 0) {
+        const { requestId } = requestQueue.shift();
+        process.stdout.write(JSON.stringify({ 
+          error: 'Queue processing timeout', 
+          requestId,
+          remaining: requestQueue.length 
+        }) + '\n');
+      }
+      break;
+    }
+
+    const { msg, requestId } = requestQueue.shift();
+    try {
+      // 为每个请求添加超时
+      const result = await Promise.race([
+        handleMessage(msg),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), QUEUE_TIMEOUT)
+        )
+      ]);
+      process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
+    } catch (err) {
+      process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
+    }
+  }
+  
+  isProcessing = false;
+}
 
 const cadIsBusy = edge.func(function() {/*
   async (input) => {
@@ -676,6 +760,21 @@ async function executeLisp(msg, withResult) {
 const MESSAGE_HANDLERS = {
   ping() {
     return { pong: true };
+  },
+
+  healthCheck() {
+    const memUsage = process.memoryUsage();
+    return {
+      healthy: true,
+      uptime: process.uptime(),
+      memory: {
+        heapUsed: memUsage.heapUsed,
+        heapTotal: memUsage.heapTotal,
+        rss: memUsage.rss,
+      },
+      queueSize: requestQueue.length,
+      isProcessing: isProcessing,
+    };
   },
 
   async connect(msg) {

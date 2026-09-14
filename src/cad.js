@@ -19,14 +19,16 @@ const CAD_COMMAND_TIMEOUT = config.cadCommandTimeout;
 const STALL_COOLDOWN = config.stallCooldown;
 const HEARTBEAT_PING_TIMEOUT = config.heartbeatPingTimeout;
 const HEARTBEAT_INTERVAL = config.heartbeatInterval;
-const MAX_RESTART_ATTEMPTS = 5;
-const RESTART_BACKOFF_BASE = 1000;
+const MAX_RESTART_ATTEMPTS = 10; // 增加重启次数
+const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
+const MAX_REQUESTS_PER_WORKER = 100; // 每个worker最大处理请求数，超过后轮换
 
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const PRIORITY_HIGH = 0;
 const PRIORITY_NORMAL = 1;
-const MAX_QUEUE_SIZE = 500;
+const PRIORITY_LOW = 2;
+const MAX_QUEUE_SIZE = 1000; // 增加队列大小，减少拒绝请求
 
 const READ_PREFIXES = new Set([
   '(tblnext', '(ssget', '(entget', '(entsel', '(tblsearch',
@@ -483,6 +485,15 @@ class CadConnection {
     }
   }
 
+  async healthCheck() {
+    try {
+      const result = await this._sendMessage({ type: 'healthCheck' });
+      return result;
+    } catch (e) {
+      return { healthy: false, error: e.message };
+    }
+  }
+
   _reset() {
     this.connected = false;
     setCadConnected(false);
@@ -510,6 +521,8 @@ class CadConnection {
     });
     w.connected = true;
     w._workerType = type;
+    w._spawnTime = Date.now();
+    w._requestCount = 0;
 
     this._setupStdoutHandler(w);
 
@@ -543,6 +556,11 @@ class CadConnection {
           this._readWorkers.push(rw);
         }
       }
+    });
+
+    w.on('error', (err) => {
+      logError(`[${this._connectionId}] ${type} worker error:`, err.message);
+      w.connected = false;
     });
 
     return w;
@@ -610,6 +628,34 @@ class CadConnection {
     this._readRestartTimers = [];
   }
 
+  _rotateWorker(oldWorker) {
+    // 优雅地关闭旧 worker
+    try {
+      oldWorker.connected = false;
+      oldWorker.kill();
+    } catch (e) {
+      logError('[cad]', '轮换 worker 时关闭旧 worker 失败:', e?.message || e);
+    }
+
+    // 如果是 primary worker，创建新的
+    if (oldWorker === this._primaryWorker) {
+      this._primaryWorker = this._spawnWorker('primary');
+      this._cb.recordSuccess();
+      if (!this._heartbeatTimer) this._startHeartbeat();
+      this._restartCount = 0;
+    } else {
+      // 如果是 read worker，从列表中移除并创建新的
+      const idx = this._readWorkers.indexOf(oldWorker);
+      if (idx >= 0) this._readWorkers.splice(idx, 1);
+      const poolSize = this._workerPoolSize;
+      const alive = this._readWorkers.filter(rw => rw.connected).length;
+      if (alive < poolSize - 1) {
+        const rw = this._spawnWorker('read');
+        this._readWorkers.push(rw);
+      }
+    }
+  }
+
   _setupStdoutHandler(w) {
     let buffer = '';
     const self = this;
@@ -657,15 +703,26 @@ class CadConnection {
   _startHeartbeat() {
     if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
     const self = this;
+    let consecutiveFailures = 0;
+    
     this._heartbeatTimer = setInterval(async () => {
       if (self._stalledUntil > Date.now()) return;
+      
       try {
         const result = await self._sendMessageInternal({ type: 'ping' }, true, HEARTBEAT_PING_TIMEOUT);
         if (!result?.pong) {
-          logError(`[${self._connectionId}] heartbeat failed, worker may be dead`);
-          self._resetWorker();
+          consecutiveFailures++;
+          logError(`[${self._connectionId}] heartbeat failed (consecutive: ${consecutiveFailures})`);
+          if (consecutiveFailures >= 3) {
+            logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
+            self._resetWorker();
+            consecutiveFailures = 0;
+          }
           return;
         }
+        
+        consecutiveFailures = 0; // 重置连续失败计数
+        
         if (self._platform) {
           try {
             const docResult = await self._sendMessageInternal({ type: 'getActiveDocInfo', platform: self._platform }, true, HEARTBEAT_PING_TIMEOUT);
@@ -677,8 +734,13 @@ class CadConnection {
           }
         }
       } catch (e) {
-        logError(`[${self._connectionId}] heartbeat error:`, e.message);
-        self._resetWorker();
+        consecutiveFailures++;
+        logError(`[${self._connectionId}] heartbeat error (consecutive: ${consecutiveFailures}):`, e.message);
+        if (consecutiveFailures >= 3) {
+          logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
+          self._resetWorker();
+          consecutiveFailures = 0;
+        }
       }
     }, HEARTBEAT_INTERVAL);
   }
@@ -722,6 +784,16 @@ class CadConnection {
     const requestId = randomUUID();
     const self = this;
 
+    // 增加请求计数
+    w._requestCount = (w._requestCount || 0) + 1;
+
+    // 检查是否需要轮换 worker
+    if (w._requestCount >= MAX_REQUESTS_PER_WORKER && !noCircuitBreaker) {
+      logError(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
+      // 标记需要轮换，但在当前请求完成后执行
+      w._needsRotation = true;
+    }
+
     const effectiveTimeout = timeoutMs ?? (msg.type === 'ping' ? MESSAGE_TIMEOUT : CAD_COMMAND_TIMEOUT);
 
     return new Promise((resolve, reject) => {
@@ -741,8 +813,26 @@ class CadConnection {
       }, effectiveTimeout);
 
       const entry = {
-        resolve: (v) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); resolve(v); },
-        reject: (e) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); reject(e); },
+        resolve: (v) => { 
+          if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); 
+          clearTimeout(timeout);
+          // 检查是否需要轮换 worker
+          if (w._needsRotation && !isReadOnly) {
+            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+            self._rotateWorker(w);
+          }
+          resolve(v); 
+        },
+        reject: (e) => { 
+          if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); 
+          clearTimeout(timeout);
+          // 检查是否需要轮换 worker
+          if (w._needsRotation && !isReadOnly) {
+            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+            self._rotateWorker(w);
+          }
+          reject(e); 
+        },
         timeout,
       };
       self._pendingRequests.set(requestId, entry);

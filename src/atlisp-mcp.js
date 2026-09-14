@@ -190,8 +190,23 @@ if (config.autoConnect) {
 }
 
 export async function startServer() {
+    const startTime = Date.now();
+    const memBefore = process.memoryUsage();
+
+    console.error('\n========== @lisp MCP Server 启动 ==========');
+    console.error(`版本: ${version}`);
+    console.error(`Node.js: ${process.version}`);
+    console.error(`平台: ${process.platform} ${process.arch}`);
+    console.error(`PID: ${process.pid}`);
+    console.error(`工作目录: ${process.cwd()}`);
+    console.error('');
+
+    // 加载插件
+    console.error('[1/5] 加载插件...');
     await loadPlugins();
     initPlugins({ cad, config, log, registerTool, tools });
+    const pluginCount = getPlugins().length;
+    console.error(`  ✓ 已加载 ${pluginCount} 个插件`);
 
     // Watch for plugin file changes
     onPluginChange((type, name) => {
@@ -213,10 +228,30 @@ export async function startServer() {
                     broadcastPromptsListChanged();
                 }
             });
+            console.error('  ✓ Prompt 目录监听已启用');
         }
     } catch (e) {
         logError(`Failed to start prompt watcher: ${e.message}`);
     }
+
+    // 显示配置信息
+    console.error('\n[2/5] 配置信息:');
+    console.error(`  传输模式: ${config.transport}`);
+    console.error(`  端口: ${config.port}`);
+    console.error(`  主机: ${config.host}`);
+    console.error(`  安全级别: ${config.securityLevel || 'strict'}`);
+    console.error(`  Lint 预设: ${config.lintPreset || 'recommended'}`);
+    console.error(`  自动连接: ${config.autoConnect ? '是' : '否'}`);
+    console.error(`  API Key: ${config.apiKey ? '已启用' : '未设置'}`);
+    console.error(`  调试模式: ${process.env.DEBUG === 'true' || process.env.DEBUG === '1' ? '是' : '否'}`);
+
+    // 显示工具信息
+    console.error('\n[3/5] 工具注册:');
+    console.error(`  ✓ 已注册 ${tools.length} 个工具`);
+
+    // 显示资源信息
+    console.error('\n[4/5] 资源列表:');
+    console.error(`  ✓ ${Object.keys(RESOURCES).length} 个资源 URI`);
 
     if (config.transport === 'stdio') {
         const mcpServer = createStdioServer({ tools, handleToolCall });
@@ -226,7 +261,8 @@ export async function startServer() {
         await mcpContext.run({ sessionId }, async () => {
             await mcpServer.connect(transport);
         });
-        console.error(`${SERVER_NAME} 运行在 stdio 模式`);
+        console.error('\n[5/5] 服务器就绪:');
+        console.error(`  ${SERVER_NAME} 运行在 stdio 模式`);
 
         subMgr.setNotify((uri, _data) => {
             mcpServer.sendResourceUpdated({ uri }).catch(err => {
@@ -263,6 +299,7 @@ export async function startServer() {
                 cert: fs.readFileSync(config.sslCert, 'utf-8'),
             };
             httpsServer = https.createServer(sslOptions, app);
+            console.error('  ✓ SSL 已启用');
         }
 
         const rawServer = httpsServer || http.createServer(app);
@@ -280,7 +317,22 @@ export async function startServer() {
         const httpServer = rawServer.listen(config.port, config.host, async () => {
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
-            console.error(`@lisp MCP Server 启动 - ${proto}://${config.host}:${config.port} (${mode}模式)`);
+
+            console.error('\n[5/5] 服务器就绪:');
+            console.error(`  ✓ ${proto}://${config.host}:${config.port} (${mode}模式)`);
+            console.error(`  ✓ PID: ${process.pid}`);
+            console.error(`  ✓ 运行时间: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+
+            // 显示内存使用情况
+            const memAfter = process.memoryUsage();
+            console.error('\n内存使用:');
+            console.error(`  RSS: ${(memAfter.rss / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  堆已用: ${(memAfter.heapUsed / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  堆总计: ${(memAfter.heapTotal / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  外部: ${(memAfter.external / 1024 / 1024).toFixed(1)} MB`);
+
+            console.error('\n==========================================\n');
+
             startHealthReporter();
         });
 

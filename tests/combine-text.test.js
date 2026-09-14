@@ -54,6 +54,7 @@ describe('combineText', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCad.connected = false;
+    mockConnect.mockResolvedValue(true);
   });
 
   it('returns empty blocks when no texts', async () => {

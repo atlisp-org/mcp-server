@@ -9,11 +9,11 @@ const envSchema = z.object({
     TRANSPORT: z.enum(['http', 'stdio', 'ws']).optional().default('http'),
     MCP_API_KEY: z.string().optional().default(''),
     ENABLE_SSE: z.coerce.boolean().optional().default(true),
-    MESSAGE_TIMEOUT: z.coerce.number().optional().default(300000),
-    CAD_COMMAND_TIMEOUT: z.coerce.number().optional().default(120000),
-    STALL_COOLDOWN: z.coerce.number().optional().default(30000),
-    HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(10000),
-    HEARTBEAT_INTERVAL: z.coerce.number().optional().default(30000),
+    MESSAGE_TIMEOUT: z.coerce.number().optional().default(60000),      // 1分钟，减少超时时间
+    CAD_COMMAND_TIMEOUT: z.coerce.number().optional().default(30000),  // 30秒，减少超时时间
+    STALL_COOLDOWN: z.coerce.number().optional().default(15000),       // 15秒，减少冷却时间
+    HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(5000), // 5秒，减少心跳超时
+    HEARTBEAT_INTERVAL: z.coerce.number().optional().default(15000),   // 15秒，增加心跳频率
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
     ENABLE_CORS: z.coerce.boolean().optional().default(true),
