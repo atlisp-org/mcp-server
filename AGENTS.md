@@ -57,7 +57,7 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 ## 测试
 
 ```bash
-npm test              # 运行全部 vitest 测试 (53 个测试文件, 684 用例)
+npm test              # 运行全部 vitest 测试 (58 个测试文件, 784 用例)
 npm run test:watch    # 监视模式
 npm run test:coverage # 覆盖率报告 (coverage/)
 npm run lint          # eslint 检查（CI 强制，必须 0 问题）

@@ -2,6 +2,15 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.2] - 2026-09-14
+
+### 更新内容
+
+- test: 新增 edit/draw/text/constraint handlers 测试 (7f40ecc)
+- test: 覆盖率 40.07% → 42.4% (+2.33%)
+- test: 测试用例 692 → 784 (+92)
+- chore: bump version to 1.9.2 (acbe763)
+
 ## [1.9.1] - 2026-09-14
 
 ### 更新内容
