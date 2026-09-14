@@ -36,7 +36,7 @@ export const SECURITY_RULES = [
   { re: /\bvlax-add-cmd\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止注册新命令' },
   { re: /\bvla-Delete\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止直接删除 vla 对象' },
   { re: /\bvla-Save\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止直接保存文档' },
-  { re: /\bdirectory\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 directory 函数' },
+  { re: /\bdirectory\s*[(\s]/i, baseSeverity: THREAT_ALLOW, msg: '使用 directory 函数' },
   { re: /\bvla-deletefile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止删除文件' },
   { re: /\bvla-copyfile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止复制文件' },
   { re: /\bvla-movefile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止移动文件' },

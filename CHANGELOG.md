@@ -2,6 +2,19 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.1] - 2026-09-14
+
+### 更新内容
+
+- fix: ensureDocument COM 异常时自动创建新文档作为降级方案 (cad-worker.js)
+- fix: newDocument 返回值兼容旧布尔值和新对象格式 (cad-handlers.js)
+- fix: createLayer 检查 entmake 返回值，nil 时明确报错 (layer-handlers.js)
+- fix: openDwg 简化路径校验逻辑，移除 INVALIDPATH 冗余分支 (file-handlers.js)
+- fix: 安全规则 directory 函数从 BLOCK 放宽为 ALLOW (lisp-security.js)
+- fix: 熔断器参数调优——阈值 5、恢复窗口 10s (cad-circuit-breaker.js)
+- chore: ESLint 未使用变量修复
+- docs: README 新增真机测试验证章节
+
 ## [1.9.0] - 2026-08-23
 
 ### 更新内容

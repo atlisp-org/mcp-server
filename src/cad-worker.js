@@ -425,7 +425,7 @@ process.on('unhandledRejection', (reason) => {
 
 let stdinBuffer = '';
 let isProcessing = false;
-let requestQueue = [];
+const requestQueue = [];
 const QUEUE_TIMEOUT = 30000; // 队列处理超时时间 30 秒
 let processingStartTime = 0;
 
@@ -446,7 +446,7 @@ process.stdin.on('data', (data) => {
       if (!isProcessing) {
         processQueue();
       }
-    } catch (e) {
+    } catch {
       process.stdout.write(JSON.stringify({ error: 'invalid message', requestId: undefined }) + '\n');
     }
   }
@@ -526,6 +526,7 @@ const cadHasDoc = edge.func(function() {/*
           }
       } catch (Exception ex) {
           System.Diagnostics.Debug.WriteLine("cadHasDoc error: " + ex.Message);
+          System.Diagnostics.Debug.WriteLine("cadHasDoc stacktrace: " + ex.StackTrace);
       }
       return new { hasDoc = false, docCount = 0 };
   }
@@ -674,13 +675,30 @@ function validateCode(code) {
 
 async function ensureDocument(platform) {
   if (_monikerSession) return true;
-  const docCheck = await new Promise((resolve, reject) => {
-    cadHasDoc(platform || 'AutoCAD', (e, r) => {
-      if (e) reject(e);
-      else resolve(r);
+  try {
+    const docCheck = await new Promise((resolve, reject) => {
+      cadHasDoc(platform || 'AutoCAD', (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
     });
-  });
-  return docCheck.hasDoc;
+    return docCheck.hasDoc;
+  } catch (error) {
+    // COM 调用失败时，尝试创建新文档
+    console.error('ensureDocument COM error:', error);
+    try {
+      const newDocResult = await new Promise((resolve, reject) => {
+        cadNewDoc(platform || 'AutoCAD', (e, r) => {
+          if (e) reject(e);
+          else resolve(r);
+        });
+      });
+      return newDocResult && newDocResult.success;
+    } catch (newDocError) {
+      console.error('Auto-create document failed:', newDocError);
+      return false;
+    }
+  }
 }
 
 async function executeWithRetry(fn, label) {
@@ -691,9 +709,9 @@ async function executeWithRetry(fn, label) {
     if (isBusy) {
       try {
         return await fn();
-      } catch (e) {
-        log(`${label} error: ${e.message}`);
-        lastError = e;
+    } catch (_e) {
+        log(`${label} error: ${_e.message}`);
+        lastError = _e;
       }
     }
     await new Promise(r => setTimeout(r, 500));

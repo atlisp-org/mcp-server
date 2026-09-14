@@ -13,17 +13,12 @@ export async function openDwg(filePath) {
 
     const code = `(progn
         (vl-load-com)
-        (if (vl-file-directory-p (vl-filename-directory "${escapeLispString(filePath)}"))
+        (if (findfile "${escapeLispString(filePath)}")
             (progn
-                (if (findfile "${escapeLispString(filePath)}")
-                    (progn
-                        (command "._OPEN" "${escapeLispString(filePath)}")
-                        "OPENED"
-                    )
-                    "NOTFOUND"
-                )
+                (command "._OPEN" "${escapeLispString(filePath)}")
+                "OPENED"
             )
-            "INVALIDPATH"
+            "NOTFOUND"
         )
     )`;
     try {
@@ -34,9 +29,7 @@ export async function openDwg(filePath) {
         if (result === 'NOTFOUND' || result === '"NOTFOUND"') {
             return { content: [{ type: 'text', text: `文件不存在: ${filePath}` }], isError: true };
         }
-        if (result === 'INVALIDPATH' || result === '"INVALIDPATH"') {
-            return { content: [{ type: 'text', text: `路径无效: ${filePath}` }], isError: true };
-        }
+
         return { content: [{ type: 'text', text: `打开失败: ${result}` }], isError: true };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };

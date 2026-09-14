@@ -60,13 +60,7 @@ describe('file-handlers', () => {
       expect(result.content[0].text).toContain('不存在');
     });
 
-    it('returns error for invalid path', async () => {
-      mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"INVALIDPATH"');
-      const result = await openDwg('Z:\\invalid\\path.dwg');
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('路径无效');
-    });
+
   });
 
   describe('saveDwg', () => {

@@ -1,8 +1,8 @@
 const CB_CLOSED = 0;
 const CB_OPEN = 1;
 const CB_HALF_OPEN = 2;
-const CB_FAILURE_THRESHOLD = 10; // 增加失败阈值，减少误触发
-const CB_RESET_TIMEOUT = 5000;   // 减少恢复时间，加快恢复
+const CB_FAILURE_THRESHOLD = 5; // 降低失败阈值，加快熔断触发
+const CB_RESET_TIMEOUT = 10000;   // 增加恢复窗口，减少频繁重连
 
 export class CircuitBreaker {
   constructor(connectionId, onOpen, onHalfOpen) {

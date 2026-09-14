@@ -87,11 +87,17 @@ export const atCommand = withCadConnection(async (command) => {
 });
 
 export const newDocument = withCadConnection(async () => {
-    const result = await cad.newDoc();
-    if (result) {
-        return mcpSuccess('已在 CAD 中新建空白文档');
+    try {
+        const result = await cad.newDoc();
+        // 兼容旧返回值（布尔值）和新返回值（对象）
+        if (result === true || (result && result.success)) {
+            return mcpSuccess('已在 CAD 中新建空白文档');
+        }
+        const errorMsg = result && result.error ? result.error : '未知错误';
+        return mcpError(`新建文档失败: ${errorMsg}`);
+    } catch (e) {
+        return mcpError(`新建文档异常: ${e.message}`);
     }
-    return mcpError('新建文档失败');
 });
 
 export const bringToFront = withCadConnection(async () => {

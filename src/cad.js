@@ -27,7 +27,7 @@ const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const PRIORITY_HIGH = 0;
 const PRIORITY_NORMAL = 1;
-const PRIORITY_LOW = 2;
+const _PRIORITY_LOW = 2;
 const MAX_QUEUE_SIZE = 1000; // 增加队列大小，减少拒绝请求
 
 const READ_PREFIXES = new Set([

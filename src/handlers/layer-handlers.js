@@ -6,7 +6,7 @@ export const createLayer = withCadConnection(async (name, color = 7, linetype = 
         (vl-load-com)
              (if (not (tblsearch "LAYER" "${escapeLispString(name)}"))
             (progn
-                (entmake
+                (setq result (entmake
                     (list
                         (cons 0 "LAYER")
                         (cons 70 0)
@@ -14,8 +14,8 @@ export const createLayer = withCadConnection(async (name, color = 7, linetype = 
                         (cons 62 ${color})
                         (cons 6 "${escapeLispString(linetype)}")
                     )
-                )
-                "CREATED"
+                ))
+                (if result "CREATED" "FAILED")
             )
             "EXISTS"
         )
@@ -26,6 +26,9 @@ export const createLayer = withCadConnection(async (name, color = 7, linetype = 
     }
     if (result === 'EXISTS' || result === '"EXISTS"') {
         return mcpSuccess(`图层已存在: ${name}`);
+    }
+    if (result === 'FAILED' || result === '"FAILED"') {
+        return mcpError(`创建失败: entmake 返回 nil`);
     }
     return mcpError(`创建失败: ${result}`);
 });

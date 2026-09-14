@@ -14,7 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { cad, onDocumentChanged } from './cad.js';
 import {  SERVER_NAME } from './constants.js';
 import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
-import {  clearCache } from './handlers/resource-handlers.js';
+import {  clearCache, RESOURCES } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 import { sessionManager } from './subscription-manager.js';
 
@@ -24,7 +24,7 @@ import { setupRoutes } from './routes.js';
 import { mcpContext, removeSessionServer, sessionServers, createStdioServer } from './mcp-server-state.js';
 import { tools, handleToolCall } from './mcp-tools.js';
 import { createWebSocketServer } from './websocket-transport.js';
-import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher } from './plugin-loader.js';
+import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher, getPlugins } from './plugin-loader.js';
 import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
 import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
@@ -191,7 +191,7 @@ if (config.autoConnect) {
 
 export async function startServer() {
     const startTime = Date.now();
-    const memBefore = process.memoryUsage();
+    const _memBefore = process.memoryUsage();
 
     console.error('\n========== @lisp MCP Server 启动 ==========');
     console.error(`版本: ${version}`);
