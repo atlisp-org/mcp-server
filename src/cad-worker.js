@@ -663,7 +663,7 @@ function validateCode(code) {
   if (!parenCheck.valid) {
     return { valid: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
   }
-  const securityLevel = process.env.SECURITY_LEVEL || 'strict';
+  const securityLevel = process.env.SECURITY_LEVEL || 'relaxed';
   if (securityLevel !== 'relaxed') {
     const injectionCheck = validateLispCodeWorker(code);
     if (!injectionCheck.valid) {

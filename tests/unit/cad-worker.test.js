@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'crypto';
 
 const mocks = vi.hoisted(() => {
@@ -53,6 +53,14 @@ describe('cad-worker', () => {
     });
 
     describe('validateCode', () => {
+        beforeEach(() => {
+            process.env.SECURITY_LEVEL = 'strict';
+        });
+
+        afterEach(() => {
+            delete process.env.SECURITY_LEVEL;
+        });
+
         it('passes valid code', () => {
             mocks.lispCheckParens.mockReturnValue({ valid: true });
             mocks.lispValidate.mockReturnValue({ valid: true });

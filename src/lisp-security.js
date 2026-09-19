@@ -14,7 +14,7 @@ const CVT = {
 };
 
 function getLevel() {
-  const level = config?.securityLevel || 'strict';
+  const level = config?.securityLevel || 'relaxed';
   return CVT[level] || THREAT_BLOCK;
 }
 

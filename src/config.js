@@ -45,7 +45,7 @@ const envSchema = z.object({
     LINT_CONFIG_PATH: z.string().optional().default(''),
     LINT_LEVEL: z.string().optional().default(''),
     NO_LINT: z.coerce.boolean().optional().default(false),
-    SECURITY_LEVEL: z.string().optional().default('strict'),
+    SECURITY_LEVEL: z.string().optional().default('relaxed'),
     CLIENT_ID: z.string().optional().default(''),
     MAX_ENTITY_LIMIT: z.coerce.number().optional().default(20000),
     READ_BATCH_WINDOW: z.coerce.number().optional().default(50),
@@ -258,7 +258,7 @@ const config = {
     lintConfigPath: fileConfig?.lintConfigPath ?? cliArgs.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
     lintLevel: fileConfig?.lintLevel ?? cliArgs.lintLevel ?? (env.LINT_LEVEL || undefined),
     noLint: fileConfig?.noLint ?? cliArgs.noLint ?? env.NO_LINT,
-    securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'strict'),
+    securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'relaxed'),
     clientId: fileConfig?.clientId ?? (env.CLIENT_ID || ''),
     maxEntityLimit: fileConfig?.maxEntityLimit ?? env.MAX_ENTITY_LIMIT,
     readBatchWindow: fileConfig?.readBatchWindow ?? env.READ_BATCH_WINDOW,
@@ -279,6 +279,7 @@ if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;
 if (config.lintPreset) process.env.LINT_PRESET = config.lintPreset;
 if (config.lintLevel) process.env.LINT_LEVEL = config.lintLevel;
 if (config.noLint) process.env.NO_LINT = 'true';
+if (config.securityLevel) process.env.SECURITY_LEVEL = config.securityLevel;
 
 export function validateConfig() {
     const errors = [];

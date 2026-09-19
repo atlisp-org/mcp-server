@@ -65,7 +65,7 @@ export function analyzeLispCode(code, options = {}) {
     return { valid: true, errors: [], warnings: [], issues: [], summary: 'lint 已跳过' };
   }
 
-  const securityLevel = config?.securityLevel || 'strict';
+  const securityLevel = config?.securityLevel || 'relaxed';
 
   if (securityLevel === 'relaxed' && !options.force) {
     return { valid: true, errors: [], warnings: [], issues: [], summary: '安全限制已关闭 (relaxed)' };

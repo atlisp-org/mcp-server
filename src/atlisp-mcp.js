@@ -71,7 +71,7 @@ Options:
   --lint-off                   Same as --no-lint
   --api-key <key>              API key for authentication
   --client-id <id>             Client identifier for remote health report
-  --security-level <type>      Security level: strict, standard, relaxed (default: strict)
+  --security-level <type>      Security level: strict, standard, relaxed (default: relaxed)
   --install-autostart          Register server to auto-start after user login
   --uninstall-autostart        Remove auto-start registration
   --autostart-status           Check if auto-start is installed
@@ -87,7 +87,7 @@ Environment Variables:
   METRICS_ENABLED       Enable /metrics endpoint (true/false, default: true)
   SSL_KEY_PATH          SSL key file path
   SSL_CERT_PATH         SSL certificate file path
-  SECURITY_LEVEL        Security level: strict, standard, relaxed (default: strict)
+  SECURITY_LEVEL        Security level: strict, standard, relaxed (default: relaxed)
   CONFIG_FILE           Path to config file
   LINT_PRESET           Lint preset (recommended/strict/relaxed)
   LINT_CONFIG_PATH      Path to atlisp-lint.json
@@ -245,7 +245,7 @@ export async function startServer() {
     console.error(`  传输模式: ${config.transport}`);
     console.error(`  端口: ${config.port}`);
     console.error(`  主机: ${config.host}`);
-    console.error(`  安全级别: ${config.securityLevel || 'strict'}`);
+    console.error(`  安全级别: ${config.securityLevel || 'relaxed'}`);
     console.error(`  Lint 预设: ${config.lintPreset || 'recommended'}`);
     console.error(`  自动连接: ${config.autoConnect ? '是' : '否'}`);
     console.error(`  API Key: ${config.apiKey ? '已启用' : '未设置'}`);

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import config from '../../src/config.js';
 import {
   THREAT_BLOCK,
   THREAT_WARN,
@@ -13,10 +14,16 @@ import {
   addToAllowlist,
   removeFromAllowlist,
   clearSessionAllowlist,
+  refreshConfig,
   RULES,
 } from '../../src/lisp-security.js';
 
 describe('lisp-security', () => {
+  beforeEach(() => {
+    config.securityLevel = 'relaxed';
+    refreshConfig();
+  });
+
   describe('常量与规则表', () => {
     it('威胁等级与安全级别定义完整', () => {
       expect(THREAT_BLOCK).toBe('block');
@@ -26,8 +33,8 @@ describe('lisp-security', () => {
       expect(RULES.length).toBeGreaterThanOrEqual(21);
     });
 
-    it('默认严格模式：危险代码被阻止', () => {
-      expect(getEffectiveSeverity()).toBe(THREAT_BLOCK);
+    it('默认 relaxed 模式：危险代码放行', () => {
+      expect(getEffectiveSeverity()).toBe(THREAT_ALLOW);
     });
   });
 
@@ -73,6 +80,16 @@ describe('lisp-security', () => {
   });
 
   describe('validateLispCodeWorker', () => {
+    beforeEach(() => {
+      config.securityLevel = 'strict';
+      refreshConfig();
+    });
+
+    afterEach(() => {
+      config.securityLevel = 'relaxed';
+      refreshConfig();
+    });
+
     it.each([
       ['(startapp "calc")', /startapp/],
       ['(eval (read "bad"))', /eval/],
@@ -100,8 +117,15 @@ describe('lisp-security', () => {
     const SID = 'session-ut-1';
 
     beforeEach(() => {
+      config.securityLevel = 'strict';
+      refreshConfig();
       clearSessionAllowlist(SID);
       clearSessionAllowlist('session-ut-2');
+    });
+
+    afterEach(() => {
+      config.securityLevel = 'relaxed';
+      refreshConfig();
     });
 
     it('返回逐条结果与汇总', () => {
