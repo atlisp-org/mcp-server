@@ -32,6 +32,7 @@ import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
 import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
+import peerManager from './peer-manager.js';
 
 export { tools, handleToolCall } from './mcp-tools.js';
 export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
@@ -202,11 +203,16 @@ export async function startServer() {
     console.error('');
 
     // 加载插件
-    console.error('[1/5] 加载插件...');
+    console.error('[1/6] 加载插件...');
     await loadPlugins();
     initPlugins({ cad, config, log, registerTool, tools });
     const pluginCount = getPlugins().length;
     console.error(`  ✓ 已加载 ${pluginCount} 个插件`);
+
+    // 启动 Peer 发现
+    console.error('[2/6] 启动 Peer 发现...');
+    peerManager.start();
+    console.error(`  ✓ Peer 发现已启动 (端口: ${config.peerDiscovery?.port || 9811})`);
 
     // Watch for plugin file changes
     onPluginChange((type, name) => {
@@ -235,7 +241,7 @@ export async function startServer() {
     }
 
     // 显示配置信息
-    console.error('\n[2/5] 配置信息:');
+    console.error('\n[3/6] 配置信息:');
     console.error(`  传输模式: ${config.transport}`);
     console.error(`  端口: ${config.port}`);
     console.error(`  主机: ${config.host}`);
@@ -246,11 +252,11 @@ export async function startServer() {
     console.error(`  调试模式: ${process.env.DEBUG === 'true' || process.env.DEBUG === '1' ? '是' : '否'}`);
 
     // 显示工具信息
-    console.error('\n[3/5] 工具注册:');
+    console.error('\n[4/6] 工具注册:');
     console.error(`  ✓ 已注册 ${tools.length} 个工具`);
 
     // 显示资源信息
-    console.error('\n[4/5] 资源列表:');
+    console.error('\n[5/6] 资源列表:');
     console.error(`  ✓ ${Object.keys(RESOURCES).length} 个资源 URI`);
 
     if (config.transport === 'stdio') {
@@ -261,7 +267,7 @@ export async function startServer() {
         await mcpContext.run({ sessionId }, async () => {
             await mcpServer.connect(transport);
         });
-        console.error('\n[5/5] 服务器就绪:');
+        console.error('\n[6/6] 服务器就绪:');
         console.error(`  ${SERVER_NAME} 运行在 stdio 模式`);
 
         subMgr.setNotify((uri, _data) => {
@@ -318,7 +324,7 @@ export async function startServer() {
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
 
-            console.error('\n[5/5] 服务器就绪:');
+            console.error('\n[6/6] 服务器就绪:');
             console.error(`  ✓ ${proto}://${config.host}:${config.port} (${mode}模式)`);
             console.error(`  ✓ PID: ${process.pid}`);
             console.error(`  ✓ 运行时间: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
@@ -340,6 +346,7 @@ export async function startServer() {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
             stopHealthReporter();
             stopPluginWatcher();
+            peerManager.stop();
             if (promptsWatcher) { promptsWatcher.close(); promptsWatcher = null; }
             sessionManager.closeAll();
             for (const [sid] of sessionServers) {

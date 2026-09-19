@@ -53,6 +53,10 @@ const envSchema = z.object({
     AUTO_CONNECT: z.coerce.boolean().optional().default(false),
     AUTO_LAUNCH: z.coerce.boolean().optional().default(true),
     LAUNCH_TIMEOUT: z.coerce.number().optional().default(30000),
+    PEER_DISCOVERY_ENABLED: z.coerce.boolean().optional().default(true),
+    PEER_DISCOVERY_PORT: z.coerce.number().optional().default(9811),
+    PEER_DISCOVERY_INTERVAL: z.coerce.number().optional().default(5000),
+    PEER_DISCOVERY_SILENT: z.coerce.boolean().optional().default(false),
 });
 
 const configSchema = z.object({
@@ -111,6 +115,20 @@ const configSchema = z.object({
     autoConnect: z.boolean().optional(),
     autoLaunch: z.boolean().optional(),
     launchTimeout: z.number().optional(),
+    peerDiscovery: z.object({
+        enabled: z.boolean().optional(),
+        port: z.number().optional(),
+        broadcastInterval: z.number().optional(),
+        silent: z.boolean().optional(),
+        peers: z.array(z.object({
+            id: z.string().optional(),
+            host: z.string(),
+            port: z.number().optional(),
+            hostname: z.string().optional(),
+            version: z.string().optional(),
+            apikey: z.string().optional(),
+        })).optional(),
+    }).optional(),
 });
 
 function parseArgs() {
@@ -248,6 +266,13 @@ const config = {
     autoConnect: fileConfig?.autoConnect ?? env.AUTO_CONNECT,
     autoLaunch: fileConfig?.autoLaunch ?? env.AUTO_LAUNCH,
     launchTimeout: fileConfig?.launchTimeout ?? env.LAUNCH_TIMEOUT,
+    peerDiscovery: {
+        enabled: fileConfig?.peerDiscovery?.enabled ?? env.PEER_DISCOVERY_ENABLED,
+        port: fileConfig?.peerDiscovery?.port ?? env.PEER_DISCOVERY_PORT,
+        broadcastInterval: fileConfig?.peerDiscovery?.broadcastInterval ?? env.PEER_DISCOVERY_INTERVAL,
+        silent: fileConfig?.peerDiscovery?.silent ?? env.PEER_DISCOVERY_SILENT,
+        peers: fileConfig?.peerDiscovery?.peers ?? [],
+    },
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

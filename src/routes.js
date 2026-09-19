@@ -9,6 +9,7 @@ import config, { reloadConfig } from './config.js';
 import { log, error as logError, logRequest, logResponse } from './logger.js';
 import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
+import peerManager from './peer-manager.js';
 import { sessionManager } from './subscription-manager.js';
 
 import { mcpContext, getOrCreateSessionServer, removeSessionServer, sessionServers } from './mcp-server-state.js';
@@ -372,6 +373,35 @@ export function setupRoutes(app) {
         req.on('close', () => {
             unsubscribeEvents(sessionId);
         });
+    });
+
+    // === Peer Discovery API ===
+    app.get('/peers', (req, res) => {
+        const stats = peerManager.getStats();
+        res.json(stats);
+    });
+
+    app.post('/peers/scan', async (req, res) => {
+        try {
+            const found = await peerManager.scanLan(req.body || {});
+            res.json({ discovered: found.length, peers: found });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/peers/connect', (req, res) => {
+        const { host, port, apikey } = req.body || {};
+        if (!host) {
+            return res.status(400).json({ error: 'host is required' });
+        }
+        const peer = peerManager.addPeer(host, port || 8110, { apikey });
+        res.json({ connected: peer.healthy, peer });
+    });
+
+    app.delete('/peers/:id', (req, res) => {
+        const removed = peerManager.removePeer(req.params.id);
+        res.json({ removed });
     });
 
     app.use(createErrorHandler());

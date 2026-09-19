@@ -42,6 +42,7 @@ import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 import { tools as lint_tools } from './lint-tools.js';
 import { tools as debug_tools } from './debug-tools.js';
 import { tools as concurrent_tools } from './concurrent-tools.js';
+import { tools as peer_tools } from './peer-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -254,6 +255,7 @@ export const tools = [
   ...lint_tools,
   ...debug_tools,
   ...concurrent_tools,
+  ...peer_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
