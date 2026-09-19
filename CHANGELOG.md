@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.6] - 2026-09-19
+
+### 更新内容
+
+- feat: windowless Windows autostart with Win7 fallback (7f29199)
+- feat: default security level to relaxed (9770043)
+
 ## [1.9.5] - 2026-09-19
 
 ### 更新内容
