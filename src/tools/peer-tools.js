@@ -90,5 +90,18 @@ export const tools = [
         timeout: { type: 'number', description: '单主机超时毫秒（默认 1000）' }
       }
     }
+  },
+  {
+    name: 'peer_broadcast',
+    description: '向所有已连接的 peer 广播执行相同的 LISP 代码。当用户说"在所有 CAD 上执行/批量执行"时调用。返回每个 peer 的执行结果。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: '要执行的 AutoLISP 代码' },
+        encoding: { type: 'string', description: '编码: utf-8/gbk/gb2312（默认 utf-8）' },
+        healthyOnly: { type: 'boolean', description: '仅向健康的 peer 发送（默认 true）' }
+      },
+      required: ['code']
+    }
   }
 ];

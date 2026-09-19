@@ -195,3 +195,62 @@ export async function peer_summary(a) {
 
     return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
+
+export async function peer_broadcast(a) {
+    const peers = peerManager.getPeers();
+    const healthyOnly = a.healthyOnly !== false;
+    const targets = healthyOnly ? peers.filter(p => p.healthy) : peers;
+
+    if (!targets.length) {
+        return { content: [{ type: 'text', text: healthyOnly ? '没有健康的 peer 可用。' : '没有 peer 可用。' }] };
+    }
+
+    const results = await Promise.allSettled(
+        targets.map(async (peer) => {
+            try {
+                const result = await callRemoteTool(peer.host, peer.port, 'eval_lisp_with_result', {
+                    code: a.code,
+                    encoding: a.encoding
+                });
+                return {
+                    host: peer.host,
+                    hostname: peer.hostname,
+                    success: !result.isError,
+                    result: result.content?.[0]?.text || JSON.stringify(result)
+                };
+            } catch (e) {
+                return {
+                    host: peer.host,
+                    hostname: peer.hostname,
+                    success: false,
+                    result: e.message
+                };
+            }
+        })
+    );
+
+    const lines = [
+        '========================================',
+        '       广播执行结果',
+        '========================================',
+        '',
+        `目标: ${targets.length} 个 peer`,
+        '',
+    ];
+
+    let successCount = 0;
+    for (const r of results) {
+        const data = r.status === 'fulfilled' ? r.value : { host: 'unknown', success: false, result: r.reason?.message };
+        const icon = data.success ? '✓' : '✗';
+        if (data.success) successCount++;
+        lines.push(`${icon} ${data.hostname || data.host} (${data.host})`);
+        lines.push(`  结果: ${data.result?.substring(0, 100) || '无'}`);
+        lines.push('');
+    }
+
+    lines.push('========================================');
+    lines.push(`成功: ${successCount}/${targets.length}`);
+    lines.push(`时间: ${new Date().toLocaleString('zh-CN')}`);
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+}
