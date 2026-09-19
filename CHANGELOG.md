@@ -2,6 +2,48 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.5] - 2026-09-19
+
+### 更新内容
+
+- chore: bump version to 1.9.4 (402eb11)
+- feat: add peer_broadcast tool (6a3f0fe)
+- fix: add peer_summary to mcp-tools handler mapping (8f7a96b)
+- feat: add peer discovery and communication (8af2822)
+- refactor: 抽取 handlers 子模块 (entity/metadata/analysis/standards) + 更新 sampling 测试 (a6f4ad9)
+- test: 新增 mcp-tools 单元测试 + 完善 sampling 测试 (13b88e0)
+- docs: 更新文档 - v1.9.2 多平台测试验证 (e76a576)
+- chore: bump version to 1.9.2 (acbe763)
+- test: 新增 edit/draw/text/constraint handlers 测试 (7f40ecc)
+- v1.9.1: CAD 连接健壮性增强 + handler 改进 (f732900)
+- v1.9.0: MCP 服务器稳定性增强 (2647b72)
+- chore: release v1.9.0 (ce6b945)
+- chore: 剩余 lint 修复（resource-handlers、tools/grouping） (bc9ea07)
+- docs: 文档更新 + CHANGELOG (57e08d6)
+- feat: i18n 国际化 + OTel tracing + 工具分类过滤 (f64b68e)
+- chore: 全量 eslint 修复 + 小修 (362fe7a)
+- chore: 测试/lint/构建基建 + CI 修复 (83002b3)
+- feat: CAD 停滞快速失败与恢复 + 工具分类/服务化等多项整理 (1a4be01)
+- feat: lazy CAD connection — no connect on startup, auto-discover and auto-launch on demand (1f4cf5f)
+- fix: 工具分类整理——57 个其他工具全部归位 (91d5b70)
+- refactor: 项目完善 P0-P4 全部完成 (eb2d991)
+- fix: escape inner quotes in reg add command for --install-autostart on Windows (edb760f)
+- feat: add port lockfile and autostart support (e8d44ee)
+- chore: bump version to 1.8.30 (22c3b03)
+- v1.8.29 (fb249a0)
+- chore: bump to v1.8.29, increase MESSAGE_TIMEOUT default to 5min (e0e189a)
+- feat: use iconv-lite for GBK→UTF-8 decoding in eval_lisp_with_result (6540ab3)
+- refactor: architecture optimization P0-P3 + new features + test coverage (64fb685)
+- feat: support multi-domain CORS with wildcard matching (5ed8ced)
+- chore: bump to v1.8.23 (ea9ee48)
+- feat: add interactive debug session protocol (5 tools) (7a8b98e)
+- feat: add CLI options for api-key/metrics/ssl, improve help text and env var docs (9846c28)
+- feat: add --security-level option (strict/standard/relaxed) to control dangerous function execution (bfd85d2)
+- feat: 多CAD实例并行执行 + MCP规范合规完善 (6abf7e6)
+- chore: bump to v1.8.20 (6f89761)
+- feat: 14项优化与新功能 (P0修复/P1性能/P2增强/P3工程质量) (73cc657)
+- feat: 更新 AGENTS.md 与实际代码同步，新增 test-autolisp MCP Prompt (10395a1)
+
 ## [1.9.2] - 2026-09-14
 
 ### 更新内容
