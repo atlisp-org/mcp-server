@@ -213,7 +213,7 @@ atlisp-mcp --autostart-status
 
 支持三种平台：Windows（Registry Run 键）、macOS（LaunchAgent）、Linux（XDG Autostart）。
 
-**Windows 隐藏窗口**：自 v1.8.32 起，Windows 下自动启动使用 `powershell -WindowStyle Hidden` 包装，启动后无终端窗口闪现，在后台静默运行。
+**Windows 隐藏窗口**：Windows 10 1809+ 使用 `conhost.exe --headless` 承载 node，无任何控制台窗口，且为微软签名组件，不写脚本、不建计划任务；Windows 7/8/8.1（内核 6.x）无 `--headless`，回退到 `powershell -WindowStyle Hidden`（该平台无 Windows Terminal，可可靠隐藏）。两者均注册到 HKCU 启动项，登录后静默后台运行。
 
 ### 健康检查
 
