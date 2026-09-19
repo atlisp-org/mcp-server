@@ -22,7 +22,7 @@ import * as subMgr from './subscription-manager.js';
 
 import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
 import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
-import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_cad_info, peer_cad_pool, peer_stats } from './handlers/peer-handlers.js';
+import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_cad_info, peer_cad_pool, peer_stats, peer_summary } from './handlers/peer-handlers.js';
 
 // 注册实例切换回调：通知已订阅客户端刷新资源
 // 缓存已在 cad-pool.setActive() 中通过 setInstanceKey() 自动隔离
@@ -699,6 +699,7 @@ export const TOOL_HANDLERS = {
     peer_cad_info,
     peer_cad_pool,
     peer_stats,
+    peer_summary,
 
     // === Meta Tools ===
     search_tools,
