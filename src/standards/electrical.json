@@ -1,0 +1,65 @@
+{
+  "name": "电气行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50114-2010",
+  "description": "适用于电气行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "电气行业图层命名规范",
+      "rules": [
+        { "name": "E-LIGHT", "prefix": "E-LIGHT", "required": true, "color": 2, "linetype": "Continuous", "description": "照明线路" },
+        { "name": "E-POWER", "prefix": "E-POWER", "required": true, "color": 1, "linetype": "Continuous", "description": "动力线路" },
+        { "name": "E-CABLE", "prefix": "E-CABLE", "required": true, "color": 6, "linetype": "Continuous", "description": "电缆" },
+        { "name": "E-SWITCH", "prefix": "E-SWITCH", "required": true, "color": 3, "linetype": "Continuous", "description": "开关" },
+        { "name": "E-OUTL", "prefix": "E-OUTL", "required": true, "color": 1, "linetype": "Continuous", "description": "配电柜轮廓" },
+        { "name": "E-SYMB", "prefix": "E-SYMB", "required": true, "color": 6, "linetype": "Continuous", "description": "电气符号" },
+        { "name": "E-DIM", "prefix": "E-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "E-TEXT", "prefix": "E-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "E-GND", "prefix": "E-GND", "required": false, "color": 3, "linetype": "Continuous", "description": "接地" },
+        { "name": "E-GRID", "prefix": "E-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "轴网" },
+        { "name": "E-DEF", "prefix": "E-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "电气行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "动力线路、轮廓" },
+        { "color": 2, "name": "Yellow", "usage": "照明线路" },
+        { "color": 3, "name": "Green", "usage": "开关、接地" },
+        { "color": 4, "name": "Cyan", "usage": "标注" },
+        { "color": 5, "name": "Blue", "usage": "文字" },
+        { "color": 6, "name": "Magenta", "usage": "电缆、符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框" },
+        { "color": 8, "name": "Gray", "usage": "轴网" }
+      ]
+    },
+    "linetypes": {
+      "description": "电气行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "线路、轮廓" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线" }
+      ]
+    },
+    "textstyles": {
+      "description": "电气行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "电气行业标注样式规范",
+      "rules": [
+        { "name": "DIM-ELEC", "usage": "电气标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "电气行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-E-图纸类型-序号.dwg", "example": "P2024-E-FP-01.dwg" }
+      ]
+    }
+  }
+}

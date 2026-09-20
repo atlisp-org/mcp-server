@@ -1,0 +1,69 @@
+{
+  "name": "景观园林行业制图规范",
+  "version": "1.0",
+  "standard": "CJ/T 292-2010",
+  "description": "适用于景观园林行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "景观园林行业图层命名规范",
+      "rules": [
+        { "name": "L-PLANT", "prefix": "L-PLANT", "required": true, "color": 3, "linetype": "Continuous", "description": "植物" },
+        { "name": "L-TREE", "prefix": "L-TREE", "required": true, "color": 3, "linetype": "Continuous", "description": "树木" },
+        { "name": "L-SHRB", "prefix": "L-SHRB", "required": false, "color": 3, "linetype": "Continuous", "description": "灌木" },
+        { "name": "L-FLWR", "prefix": "L-FLWR", "required": false, "color": 3, "linetype": "Continuous", "description": "花卉" },
+        { "name": "L-PAVE", "prefix": "L-PAVE", "required": true, "color": 1, "linetype": "Continuous", "description": "铺装" },
+        { "name": "L-WATE", "prefix": "L-WATE", "required": false, "color": 5, "linetype": "Continuous", "description": "水景" },
+        { "name": "L-STRU", "prefix": "L-STRU", "required": true, "color": 1, "linetype": "Continuous", "description": "构筑物" },
+        { "name": "L-FURN", "prefix": "L-FURN", "required": false, "color": 6, "linetype": "Continuous", "description": "景观家具" },
+        { "name": "L-TOPO", "prefix": "L-TOPO", "required": false, "color": 3, "linetype": "Continuous", "description": "地形" },
+        { "name": "L-DIM", "prefix": "L-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "L-TEXT", "prefix": "L-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "L-SYMB", "prefix": "L-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "L-GRID", "prefix": "L-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "网格" },
+        { "name": "L-DEF", "prefix": "L-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "景观园林行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "铺装、构筑物" },
+        { "color": 2, "name": "Yellow", "usage": "" },
+        { "color": 3, "name": "Green", "usage": "植物、地形" },
+        { "color": 4, "name": "Cyan", "usage": "标注" },
+        { "color": 5, "name": "Blue", "usage": "文字、水景" },
+        { "color": 6, "name": "Magenta", "usage": "景观家具、符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框" },
+        { "color": 8, "name": "Gray", "usage": "网格" }
+      ]
+    },
+    "linetypes": {
+      "description": "景观园林行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "铺装、构筑物" },
+        { "name": "CENTER", "description": "中心线", "usage": "网格" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" }
+      ]
+    },
+    "textstyles": {
+      "description": "景观园林行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "标注" },
+        { "name": "PLANT", "font": "宋体", "height": 3.0, "width": 0.7, "required": false, "usage": "植物标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "景观园林行业标注样式规范",
+      "rules": [
+        { "name": "DIM-LAND", "usage": "景观标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "景观园林行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-L-图纸类型-序号.dwg", "example": "P2024-L-FP-01.dwg" }
+      ]
+    }
+  }
+}

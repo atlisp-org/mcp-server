@@ -1,0 +1,18 @@
+{
+  "name": "standards-apply",
+  "description": "应用行业制图规范模板，创建标准图层、样式等",
+  "arguments": [
+    {
+      "name": "industry",
+      "description": "行业模板: 建筑/结构/机械/电气/暖通给排水/土木道桥/测绘/室内装饰/景观园林",
+      "required": true
+    },
+    {
+      "name": "overwrite",
+      "description": "是否覆盖已有同名图层/样式: true/false",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "handlerFile": "standards-apply"
+}

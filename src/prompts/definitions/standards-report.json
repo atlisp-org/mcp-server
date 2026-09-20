@@ -1,0 +1,24 @@
+{
+  "name": "standards-report",
+  "description": "生成制图规范合规报告",
+  "arguments": [
+    {
+      "name": "industry",
+      "description": "行业规范: 通用/建筑/结构/机械/电气/暖通给排水/土木道桥/测绘/室内装饰/景观园林",
+      "required": false,
+      "default": "通用"
+    },
+    {
+      "name": "format",
+      "description": "输出格式: json/html/text",
+      "required": false,
+      "default": "json"
+    },
+    {
+      "name": "outputFile",
+      "description": "输出文件路径（可选）",
+      "required": false
+    }
+  ],
+  "handlerFile": "standards-report"
+}

@@ -1,6 +1,6 @@
 # @lisp MCP Server
 
-MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **330+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
+MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **340+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
 
 支持 **AutoCAD / ZWCAD / GStarCAD / BricsCAD**，通过 COM 互操作与 CAD 通信。
 
@@ -32,7 +32,7 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 
 - **连接多平台 CAD** — AutoCAD / ZWCAD / GStarCAD / BricsCAD
 - **执行 AutoLISP** — 执行 LISP 代码并获取结果
-- **AI Agent 控制 CAD** — 330+ MCP 工具，涵盖绘图、编辑、查询、管理
+- **AI Agent 控制 CAD** — 340+ MCP 工具，涵盖绘图、编辑、查询、管理
 - **包管理** — 列出、搜索、安装 @lisp 包
 - **批量操作** — 批量复制/移动/旋转/缩放/镜像/偏移/改名/改色/改图层
 - **3D 建模** — 创建 Box/Sphere/Cylinder/Cone/Torus/Wedge，布尔运算，拉伸/旋转
@@ -49,6 +49,7 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 - **流式读取** — 分页流式读取实体/文字/块参照
 - **外部数据** — 查询/导入/导出 CSV/JSON 数据源
 - **审计日志** — 查询和统计工具调用历史
+- **规范标准** — 行业制图规范检查、模板应用、合规报告
 - **CAD 连接池** — 发现/连接/切换/健康检查多 CAD 实例，支持 ROT 自动发现
 - **多实例并发** — `batch_concurrent_tasks` 跨实例并发执行任务
 - **会话实例绑定** — `session_pin_instance` 将会话绑定到指定 CAD 实例
@@ -315,7 +316,7 @@ curl http://localhost:8110/metrics
 
 ---
 
-## 工具列表 (330+)
+## 工具列表 (340+)
 
 > 所有工具的 `description` 和参数说明已针对 AI Agent 优化——包含触发条件、参数示例、交叉引用和后果提示，帮助 Agent 更准确选择和使用工具。
 
@@ -693,6 +694,27 @@ curl http://localhost:8110/metrics
 | `audit_log_query` | 查询审计日志（支持分页和筛选） |
 | `audit_log_stats` | 获取审计日志统计 |
 
+### 规范标准 (16)
+
+| 工具 | 说明 | 参数 |
+|------|------|------|
+| `check_drawing_standards` | 检查图纸是否符合制图规范 | `industry`, `categories`, `strict` |
+| `apply_standards_template` | 应用行业制图规范模板 | `industry` (必填), `overwrite` |
+| `list_standards` | 列出所有可用行业规范 | `industry` (可选) |
+| `load_standards` | 加载指定行业规范内容 | `industry` (必填) |
+| `save_standards` | 保存自定义规范文件 | `name`, `standards` (必填), `overwrite` |
+| `compare_standards` | 比较两个规范文件差异 | `standard1`, `standard2` (必填) |
+| `check_layer_naming` | 检查图层命名规范 | `industry` |
+| `check_color_conformity` | 检查颜色合规性 | `industry` |
+| `check_linetype_conformity` | 检查线型合规性 | `industry` |
+| `check_lineweight_conformity` | 检查线宽合规性 | `industry` |
+| `check_text_style_conformity` | 检查文字样式合规性 | `industry` |
+| `check_dim_style_conformity` | 检查标注样式合规性 | `industry` |
+| `check_file_naming` | 检查文件命名规范 | — |
+| `generate_compliance_report` | 生成规范合规报告 | `industry`, `format`, `outputFile` |
+
+**支持行业**：通用、建筑、结构、机械、电气、暖通给排水、土木道桥、测绘、室内装饰、景观园林
+
 ### CAD 连接池 (7)
 
 | 工具 | 说明 |
@@ -739,6 +761,15 @@ curl http://localhost:8110/metrics
 | `atlisp://platforms` | Platforms | 支持的平台 | ✗ |
 | `atlisp://standards/drafting` | Drafting | CAD 制图规范 | ✗ |
 | `atlisp://standards/coding` | Coding | @lisp 编码规范 | ✗ |
+| `atlisp://standards/architectural` | Architectural | 建筑行业规范 | ✗ |
+| `atlisp://standards/structural` | Structural | 结构行业规范 | ✗ |
+| `atlisp://standards/mechanical` | Mechanical | 机械行业规范 | ✗ |
+| `atlisp://standards/electrical` | Electrical | 电气行业规范 | ✗ |
+| `atlisp://standards/hvac` | HVAC | 暖通给排水行业规范 | ✗ |
+| `atlisp://standards/civil` | Civil | 土木道桥行业规范 | ✗ |
+| `atlisp://standards/surveying` | Surveying | 测绘行业规范 | ✗ |
+| `atlisp://standards/interior` | Interior | 室内装饰行业规范 | ✗ |
+| `atlisp://standards/landscape` | Landscape | 景观园林行业规范 | ✗ |
 
 ### 资源模板
 
@@ -760,7 +791,7 @@ curl http://localhost:8110/metrics
 
 ---
 
-## MCP Prompts (16)
+## MCP Prompts (19)
 
 | Prompt | 功能 | 参数 |
 |--------|------|------|
@@ -781,6 +812,9 @@ curl http://localhost:8110/metrics
 | `batch-draw-lines` | 批量画线段 | count, length |
 | `draw-residential` | 农村民居平面图 | width, depth, rooms |
 | `draw-floor-plan` | 建筑楼层平面图 | floor, scale |
+| `standards-check` | 检查图纸规范 | industry, categories, strict |
+| `standards-apply` | 应用规范模板 | industry (必填), overwrite |
+| `standards-report` | 生成合规报告 | industry, format, outputFile |
 
 ---
 
@@ -932,7 +966,7 @@ MCP Server 已通过多平台真机测试，所有核心功能正常：
 | ZWCAD | 5 | 4.1/s | 49% (去重机制) |
 | GStarCAD | 5 | 4.6/s | 48% (去重机制) |
 
-**单元测试：784 通过, 1 跳过**
+**单元测试：865 通过, 2 跳过**
 
 ---
 

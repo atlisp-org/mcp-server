@@ -1,0 +1,73 @@
+{
+  "name": "结构行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50105-2010",
+  "description": "适用于结构行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "结构行业图层命名规范",
+      "rules": [
+        { "name": "S-COLM", "prefix": "S-COLM", "required": true, "color": 1, "linetype": "Continuous", "description": "柱子" },
+        { "name": "S-BEAM", "prefix": "S-BEAM", "required": true, "color": 1, "linetype": "Continuous", "description": "梁" },
+        { "name": "S-SLAB", "prefix": "S-SLAB", "required": true, "color": 1, "linetype": "Continuous", "description": "楼板" },
+        { "name": "S-WALL", "prefix": "S-WALL", "required": true, "color": 1, "linetype": "Continuous", "description": "剪力墙" },
+        { "name": "S-FOOT", "prefix": "S-FOOT", "required": true, "color": 1, "linetype": "Continuous", "description": "基础" },
+        { "name": "S-REBAR", "prefix": "S-REBAR", "required": true, "color": 2, "linetype": "Continuous", "description": "钢筋" },
+        { "name": "S-REBAR-MAIN", "prefix": "S-REBAR-MAIN", "required": false, "color": 2, "linetype": "Continuous", "description": "主筋" },
+        { "name": "S-REBAR-STIR", "prefix": "S-REBAR-STIR", "required": false, "color": 2, "linetype": "Continuous", "description": "箍筋" },
+        { "name": "S-REBAR-DIST", "prefix": "S-REBAR-DIST", "required": false, "color": 2, "linetype": "Continuous", "description": "分布筋" },
+        { "name": "S-AXIS", "prefix": "S-AXIS", "required": true, "color": 1, "linetype": "CENTER", "description": "轴线" },
+        { "name": "S-DIM", "prefix": "S-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "S-TEXT", "prefix": "S-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "S-HATCH", "prefix": "S-HATCH", "required": false, "color": 3, "linetype": "Continuous", "description": "填充" },
+        { "name": "S-SYMB", "prefix": "S-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "S-GRID", "prefix": "S-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "轴网" },
+        { "name": "S-DEF", "prefix": "S-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "结构行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "柱、梁、板、墙、基础、轴线" },
+        { "color": 2, "name": "Yellow", "usage": "钢筋" },
+        { "color": 3, "name": "Green", "usage": "填充" },
+        { "color": 4, "name": "Cyan", "usage": "标注" },
+        { "color": 5, "name": "Blue", "usage": "文字" },
+        { "color": 6, "name": "Magenta", "usage": "符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框" },
+        { "color": 8, "name": "Gray", "usage": "轴网、参照" }
+      ]
+    },
+    "linetypes": {
+      "description": "结构行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "可见轮廓线" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" },
+        { "name": "PHANTOM", "description": "双点划线", "usage": "假想线" }
+      ]
+    },
+    "textstyles": {
+      "description": "结构行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "尺寸标注" },
+        { "name": "REBAR-TEXT", "font": "宋体", "height": 3.0, "width": 0.7, "required": true, "usage": "钢筋标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "结构行业标注样式规范",
+      "rules": [
+        { "name": "DIM-STRUCT", "usage": "结构标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0, "unit": "millimeters" } },
+        { "name": "STANDARD", "usage": "默认标注", "required": false, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "结构行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-S-图纸类型-序号.dwg", "example": "P2024-S-FP-01.dwg" }
+      ]
+    }
+  }
+}

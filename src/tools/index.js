@@ -43,6 +43,7 @@ import { tools as lint_tools } from './lint-tools.js';
 import { tools as debug_tools } from './debug-tools.js';
 import { tools as concurrent_tools } from './concurrent-tools.js';
 import { tools as peer_tools } from './peer-tools.js';
+import { tools as standards_tools } from './standards-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -86,6 +87,10 @@ const READ_ONLY_TOOLS = new Set([
   'list_lint_rules',
   'lint_project',
   'debug_get_state',
+  'check_drawing_standards', 'list_standards', 'load_standards', 'compare_standards',
+  'check_layer_naming', 'check_color_conformity', 'check_linetype_conformity',
+  'check_lineweight_conformity', 'check_text_style_conformity', 'check_dim_style_conformity',
+  'check_file_naming', 'generate_compliance_report',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -106,6 +111,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   'delete_sheet', 'delete_xdata', 'detach_pdf', 'detach_xref', 'remove_hyperlink',
   'purge_all', 'purge_blocks', 'purge_layers', 'purge_styles', 'purge_registered_apps',
   'layer_merge', 'batch_delete', 'batch_rename', 'explode_block', 'explode_text',
+  'apply_standards_template',
 ]);
 
 const IDEMPOTENT_WRITE_TOOLS = new Set([
@@ -160,6 +166,7 @@ function getToolCategory(name) {
   if (/^(watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|session_|external_db_query|list_data_sources|stream_|analyze_lisp_code|format_lisp_code|list_lint_rules|lint_project)/.test(n)) return '高级';
   if (/^debug_/.test(n)) return '高级';
   if (/^skill_/.test(n)) return '高级';
+  if (/^(check_|apply_|list_|load_|save_|compare_|generate_compliance)/.test(n) && /standards|layer_naming|color_conformity|linetype_conformity|lineweight_conformity|text_style_conformity|dim_style_conformity|file_naming/.test(n)) return '规范标准';
   if (/^(add_geom_constraint|add_dim_constraint|del_constraint|list_constraints)/.test(n)) return '约束';
   if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|list_tools_by_industry|list_tools_by_priority|get_tool_info)/.test(n)) return '元工具';
   if (/^(agent_)/.test(n)) return 'Agent上下文';
@@ -256,6 +263,7 @@ export const tools = [
   ...debug_tools,
   ...concurrent_tools,
   ...peer_tools,
+  ...standards_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
