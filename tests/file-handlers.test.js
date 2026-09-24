@@ -3,12 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockSendCommandWithResult = vi.fn();
 const mockSendCommand = vi.fn();
 const mockConnect = vi.fn();
+const mockOpenDoc = vi.fn();
 
 const mockCad = {
   connected: false,
   connect: mockConnect,
   sendCommandWithResult: mockSendCommandWithResult,
   sendCommand: mockSendCommand,
+  openDoc: mockOpenDoc,
 };
 
 vi.mock('../src/cad.js', () => ({
@@ -47,14 +49,15 @@ describe('file-handlers', () => {
 
     it('opens file successfully', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"OPENED"');
+      mockOpenDoc.mockResolvedValue({ success: true, name: 'C:\\Projects\\test.dwg' });
       const result = await openDwg('C:\\Projects\\test.dwg');
       expect(result.content[0].text).toContain('已打开');
+      expect(mockOpenDoc).toHaveBeenCalledWith('C:\\Projects\\test.dwg');
     });
 
     it('returns error when file not found', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"NOTFOUND"');
+      mockOpenDoc.mockResolvedValue({ success: false, error: 'File not found: C:\\nonexistent.dwg' });
       const result = await openDwg('C:\\nonexistent.dwg');
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('不存在');

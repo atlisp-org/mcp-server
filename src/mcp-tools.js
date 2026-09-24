@@ -60,6 +60,7 @@ export const TOOL_HANDLERS = {
     get_platform_info:     () => ({ content: [{ type: 'text', text: `支持的 CAD 平台:\n${CAD_PLATFORMS.join('\n')}\n当前连接: ${cad.connected ? '已连接' : '未连接'}` }] }),
     get_system_status:      lazy('get_system_status'),
     bring_to_front:        lazy('bring_to_front'),
+    send_esc:              lazy('send_esc'),
 
     // === Lisp Execution ===
     eval_lisp:             lazy('eval_lisp', (a) => a?.code),

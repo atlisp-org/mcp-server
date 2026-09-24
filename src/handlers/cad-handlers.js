@@ -108,6 +108,14 @@ export const bringToFront = withCadConnection(async () => {
     return mcpError('切换前台失败');
 });
 
+export const sendEsc = withCadConnection(async () => {
+    const result = await cad.sendEsc(true);
+    if (result) {
+        return mcpSuccess('已向 CAD 发送 ESC');
+    }
+    return mcpError('发送 ESC 失败');
+});
+
 export const installAtlisp = withCadConnection(async () => {
     const installCode = '(progn(vl-load-com)(setq s strcat h "http" o(vlax-create-object (s"win"h".win"h"request.5.1"))v vlax-invoke e eval r read)(v o\'open "get" (s h"://atlisp.""cn/@"):vlax-true)(v o\'send)(v o\'WaitforResponse 1000)(e(r(vlax-get-property o\'ResponseText))))';
     await cad.sendCommand(installCode + '\n');

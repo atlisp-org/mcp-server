@@ -111,6 +111,12 @@ namespace CadRotHelper
         [DllImport("user32.dll")]
         static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
         static string DetectPlatform(dynamic cad)
         {
             try
@@ -454,6 +460,37 @@ namespace CadRotHelper
             }
         }
 
+        // ── 发送 ESC（不经过 LISP、不需要活动文档） ──
+        public Task<object> RotSendEsc(object input)
+        {
+            dynamic d = input;
+            string key = d.key;
+            bool front = true;
+            try { front = d.front == null || d.front.ToString() != "False"; } catch { }
+
+            dynamic cad;
+            if (!_connections.TryGetValue(key, out cad))
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "Not connected" } });
+
+            try
+            {
+                IntPtr hwnd = (IntPtr)cad.HWND;
+                if (hwnd == IntPtr.Zero)
+                    return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "No window handle" } });
+                if (front) { try { SetForegroundWindow(hwnd); } catch { } }
+                const uint WM_KEYDOWN = 0x0100;
+                const uint WM_KEYUP = 0x0101;
+                IntPtr vkEsc = (IntPtr)0x1B;
+                PostMessage(hwnd, WM_KEYDOWN, vkEsc, IntPtr.Zero);
+                PostMessage(hwnd, WM_KEYUP, vkEsc, IntPtr.Zero);
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", true } });
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", ex.Message } });
+            }
+        }
+
         // ── 新建文档 ──
         public Task<object> RotNewDoc(object input)
         {
@@ -468,6 +505,76 @@ namespace CadRotHelper
             {
                 cad.Documents.Add();
                 return Task.FromResult<object>(new Dictionary<string, object> { { "success", true } });
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", ex.Message } });
+            }
+        }
+
+        // ── 打开文档（ActiveX Documents.Open，不受 FILEDIA 影响）──
+        public Task<object> RotOpenDoc(object input)
+        {
+            dynamic d = input;
+            string key = d.key;
+            string filePath = (d.filePath ?? "").ToString();
+
+            dynamic cad;
+            if (!_connections.TryGetValue(key, out cad))
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "Not connected" } });
+
+            if (string.IsNullOrEmpty(filePath))
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "filePath is required" } });
+
+            try
+            {
+                if (!System.IO.File.Exists(filePath))
+                    return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "File not found: " + filePath } });
+
+                dynamic doc = cad.Documents.Open(filePath);
+                string name = "";
+                try { name = doc.FullName; } catch { }
+                return Task.FromResult<object>(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "name", name }
+                });
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", ex.Message } });
+            }
+        }
+
+        // ── 保存文档（ActiveX，不走 LISP） ──
+        public Task<object> RotSaveDoc(object input)
+        {
+            dynamic d = input;
+            string key = d.key;
+            string filePath = (d.filePath ?? "").ToString();
+
+            dynamic cad;
+            if (!_connections.TryGetValue(key, out cad))
+                return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "Not connected" } });
+
+            try
+            {
+                dynamic doc = cad.ActiveDocument;
+                if (doc == null)
+                    return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "No active document" } });
+
+                if (string.IsNullOrEmpty(filePath))
+                    doc.Save();
+                else
+                    doc.SaveAs(filePath);
+
+                string name = "";
+                try { name = doc.FullName; } catch { }
+                return Task.FromResult<object>(new Dictionary<string, object>
+                {
+                    { "success", true },
+                    { "name", name }
+                });
             }
             catch (Exception ex)
             {

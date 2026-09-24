@@ -445,10 +445,42 @@ class CadConnection {
     }
   }
 
+  async openDoc(filePath) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    if (this.isStalled()) throw this._stallError();
+    try {
+      const result = await this._sendMessage({ type: 'opendoc', platform: this._platform, filePath });
+      return result || { success: false, error: 'unknown' };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  async saveDoc(filePath = null) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    if (this.isStalled()) throw this._stallError();
+    try {
+      const result = await this._sendMessage({ type: 'savedoc', platform: this._platform, filePath });
+      return result || { success: false, error: 'unknown' };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   async bringToFront() {
     if (!this.connected) throw new Error(t('cad.notConnected'));
     try {
       const result = await this._sendMessage({ type: 'bringToFront', platform: this._platform });
+      return result && result.success;
+    } catch {
+      return false;
+    }
+  }
+
+  async sendEsc(front = true) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    try {
+      const result = await this._sendMessage({ type: 'sendEsc', platform: this._platform, front });
       return result && result.success;
     } catch {
       return false;
@@ -943,7 +975,10 @@ export const cad = {
   getStallInfo() { return _resolveConn().getStallInfo(); },
   async hasDoc() { return _resolveConn().hasDoc(); },
   async newDoc() { return _resolveConn().newDoc(); },
+  async openDoc(filePath) { return _resolveConn().openDoc(filePath); },
+  async saveDoc(filePath = null) { return _resolveConn().saveDoc(filePath); },
   async bringToFront() { return _resolveConn().bringToFront(); },
+  async sendEsc(front = true) { return _resolveConn().sendEsc(front); },
   async getActiveDocInfo() { return _resolveConn().getActiveDocInfo(); },
   async getInfo() { return _resolveConn().getInfo(); },
   async disconnect() { return _resolveConn().disconnect(); },

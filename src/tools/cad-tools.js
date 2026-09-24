@@ -70,6 +70,11 @@ export const tools = [
         inputSchema: { type: 'object', properties: {} }
     },
 {
+        name: 'send_esc',
+        description: '向 CAD 发送 ESC 键（不经过 LISP、不需要活动文档）。用户说"取消/中断/关掉弹窗/让CAD停下来"时调用。用于取消命令行挂起、关闭对话框、解除卡死。依赖系统消息队列，可作用于模态弹窗',
+        inputSchema: { type: 'object', properties: {} }
+    },
+{
         name: 'install_atlisp',
         description: '在 CAD 中安装 @lisp 包管理器（首次使用前调用一次即可）。当用户说"安装@lisp/准备@lisp环境"时调用。安装后需调用 init_atlisp 加载。若已安装则自动跳过，返回已安装信息',
         inputSchema: { type: 'object', properties: {} }

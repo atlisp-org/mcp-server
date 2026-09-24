@@ -43,7 +43,10 @@ const _rotIsBusy = _loadDll('RotIsBusy');
 const _rotHasDoc = _loadDll('RotHasDoc');
 const _rotDocInfo = _loadDll('RotGetActiveDocInfo');
 const _rotBringToFront = _loadDll('RotBringToFront');
+const _rotSendEsc = _loadDll('RotSendEsc');
 const _rotNewDoc = _loadDll('RotNewDoc');
+const _rotOpenDoc = _loadDll('RotOpenDoc');
+const _rotSaveDoc = _loadDll('RotSaveDoc');
 const _rotEnum = _loadEnum();
 
 let _monikerSession = null;
@@ -550,6 +553,52 @@ const cadNewDoc = edge.func(function() {/*
   }
  */});
 
+const cadOpenDoc = edge.func(function() {/*
+  async (input) => {
+      try {
+          dynamic d = input;
+          string platform = d.platform != null ? d.platform.ToString() : "AutoCAD";
+          string filePath = d.filePath != null ? d.filePath.ToString() : "";
+          if (filePath.Length == 0) return new { success = false, error = "filePath is required" };
+          if (!System.IO.File.Exists(filePath)) return new { success = false, error = "File not found: " + filePath };
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad != null) {
+              dynamic doc = cad.Documents.Open(filePath);
+              string name = "";
+              try { name = doc.FullName; } catch {}
+              return new { success = true, name = name };
+          }
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadOpenDoc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
+      return new { success = false, error = "CAD not found" };
+  }
+ */});
+
+const cadSaveDoc = edge.func(function() {/*
+  async (input) => {
+      try {
+          dynamic d = input;
+          string platform = d.platform != null ? d.platform.ToString() : "AutoCAD";
+          string filePath = d.filePath != null ? d.filePath.ToString() : "";
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad == null) return new { success = false, error = "CAD not found" };
+          dynamic doc = cad.ActiveDocument;
+          if (doc == null) return new { success = false, error = "No active document" };
+          if (filePath.Length == 0) doc.Save(); else doc.SaveAs(filePath);
+          string name = "";
+          try { name = doc.FullName; } catch {}
+          return new { success = true, name = name };
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadSaveDoc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
+  }
+ */});
+
 const cadBringToFront = edge.func(function() {/*
   async (input) => {
       try {
@@ -565,6 +614,24 @@ const cadBringToFront = edge.func(function() {/*
           return new { success = false, error = ex.Message };
       }
       return new { success = false, error = "CAD not found" };
+  }
+ */});
+
+const cadSendEsc = edge.func(function() {/*
+  async (input) => {
+      try {
+          string platform = input.ToString();
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad == null) return new { success = false, error = "CAD not found" };
+          try { cad.Visible = true; } catch { }
+          dynamic shell = System.Activator.CreateInstance(System.Type.GetTypeFromProgID("WScript.Shell"));
+          shell.SendKeys("{ESC}");
+          return new { success = true };
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadSendEsc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
   }
  */});
 
@@ -842,8 +909,36 @@ const MESSAGE_HANDLERS = {
     return await monikerOrEdge(_rotNewDoc, cadNewDoc, {}, msg.platform);
   },
 
+  async opendoc(msg) {
+    if (_monikerSession && _rotOpenDoc) {
+      return await dllCall(_rotOpenDoc, { key: _monikerSession, filePath: msg.filePath });
+    }
+    return new Promise((resolve, reject) => {
+      cadOpenDoc({ platform: msg.platform, filePath: msg.filePath }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+  },
+
+  async savedoc(msg) {
+    if (_monikerSession && _rotSaveDoc) {
+      return await dllCall(_rotSaveDoc, { key: _monikerSession, filePath: msg.filePath });
+    }
+    return new Promise((resolve, reject) => {
+      cadSaveDoc({ platform: msg.platform, filePath: msg.filePath }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+  },
+
   async bringToFront(msg) {
     return await monikerOrEdge(_rotBringToFront, cadBringToFront, {}, msg.platform);
+  },
+
+  async sendEsc(msg) {
+    return await monikerOrEdge(_rotSendEsc, cadSendEsc, { front: msg.front }, msg.platform);
   },
 
   async send(msg) {

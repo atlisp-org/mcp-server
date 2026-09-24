@@ -161,7 +161,7 @@ function getToolCategory(name) {
   if (/^(create_text_style|create_mleader_style|create_linetype|load_linetype|list_text_styles|list_linetypes|list_mleader_styles|create_dimension_style|set_dimstyle_var|list_dimension_styles|set_mleader_style_prop)/.test(n)) return '样式';
   if (/^(purge_|drawing_audit|drawing_recover|overkill)/.test(n)) return '清理';
   if (/^(replace_text|set_text_|justify_|convert_text|explode_text)/.test(n)) return '文字';
-  if (/^(eval_lisp|open_cad|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status|get_system_variable|set_system_variable)/.test(n)) return '系统';
+  if (/^(eval_lisp|open_cad|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|send_esc|install_atlisp|init_atlisp|get_system_status|get_system_variable|set_system_variable)/.test(n)) return '系统';
   if (/^(list_packages|search_packages|install_package|get_function_usage|list_symbols|import_funlib)/.test(n)) return '包与函数';
   if (/^(watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|session_|external_db_query|list_data_sources|stream_|analyze_lisp_code|format_lisp_code|list_lint_rules|lint_project)/.test(n)) return '高级';
   if (/^debug_/.test(n)) return '高级';
