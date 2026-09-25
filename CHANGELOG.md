@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.8] - 2026-09-25
+
+### 更新内容
+
+- feat: send_esc 工具 + 打开/保存 DWG 改用 ActiveX(COM) (5a9d08e)
+- feat: 添加行业规范和标准工具 (dd31057)
+
 ## [1.9.6] - 2026-09-19
 
 ### 更新内容
