@@ -100,7 +100,9 @@ class PeerDiscovery {
     if (this._socket) {
       try {
         this._socket.close();
-      } catch {}
+      } catch {
+        // 忽略关闭异常，socket 可能已释放
+      }
       this._socket = null;
     }
 
@@ -160,7 +162,9 @@ class PeerDiscovery {
       } else {
         existing.lastSeen = Date.now();
       }
-    } catch {}
+    } catch {
+      // 忽略非 JSON 或格式异常广播
+    }
   }
 
   /**
@@ -217,7 +221,9 @@ class PeerDiscovery {
       const require = createRequire(import.meta.url);
       const pkg = require('../package.json');
       return pkg.version;
-    } catch {}
+    } catch {
+      // package.json 不可读时回退
+    }
     return 'unknown';
   }
 

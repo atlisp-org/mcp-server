@@ -4,6 +4,7 @@ const mockSendCommandWithResult = vi.fn();
 const mockSendCommand = vi.fn();
 const mockConnect = vi.fn();
 const mockOpenDoc = vi.fn();
+const mockSaveDoc = vi.fn();
 
 const mockCad = {
   connected: false,
@@ -11,6 +12,7 @@ const mockCad = {
   sendCommandWithResult: mockSendCommandWithResult,
   sendCommand: mockSendCommand,
   openDoc: mockOpenDoc,
+  saveDoc: mockSaveDoc,
 };
 
 vi.mock('../src/cad.js', () => ({
@@ -76,21 +78,21 @@ describe('file-handlers', () => {
 
     it('saves current file', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"SAVED"');
+      mockSaveDoc.mockResolvedValue({ success: true });
       const result = await saveDwg();
       expect(result.content[0].text).toContain('已保存');
     });
 
     it('saves as new file', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"SAVED"');
+      mockSaveDoc.mockResolvedValue({ success: true });
       const result = await saveDwg('C:\\Projects\\new.dwg');
       expect(result.content[0].text).toContain('已保存为');
     });
 
     it('handles save failure', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"FAILED"');
+      mockSaveDoc.mockResolvedValue({ success: false, error: 'FAILED' });
       const result = await saveDwg();
       expect(result.isError).toBe(true);
     });

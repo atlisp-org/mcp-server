@@ -244,7 +244,9 @@ async function checkFileNamingItems(standards) {
         issues.push({ type: 'file_naming_violation', severity: 'warning', category: 'file_naming', message: `文件名 "${filename}" 不符合命名规范`, expected: patternRule.pattern, example: patternRule.example });
       }
     }
-  } catch {}
+  } catch {
+    // 命名规则无效时忽略，不影响其他检查项
+  }
   return issues;
 }
 

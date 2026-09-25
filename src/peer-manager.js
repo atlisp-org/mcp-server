@@ -97,7 +97,7 @@ class PeerManager {
   async _probePeer(peer) {
     try {
       const { probeMcp } = await import('./mcp-scanner.js');
-      const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT);
+      const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT, peer.apikey);
 
       if (result) {
         peer.connected = true;
@@ -147,7 +147,7 @@ class PeerManager {
 
       try {
         const { probeMcp } = await import('./mcp-scanner.js');
-        const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT);
+        const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT, peer.apikey);
         const wasHealthy = peer.healthy;
 
         peer.healthy = !!result;

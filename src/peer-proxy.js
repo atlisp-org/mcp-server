@@ -1,5 +1,4 @@
 // @ts-check
-import { log, error as logError } from './logger.js';
 import peerManager from './peer-manager.js';
 import config from './config.js';
 
@@ -64,7 +63,7 @@ class PeerProxy {
       return JSON.parse(text);
     } catch (e) {
       if (e.name === 'AbortError') {
-        throw new Error(`Peer request timeout: ${peer.url}`);
+        throw new Error(`Peer request timeout: ${peer.url}`, { cause: e });
       }
       throw e;
     } finally {
@@ -149,7 +148,9 @@ class PeerProxy {
       if (trimmed.startsWith('data:')) {
         try {
           return JSON.parse(trimmed.slice(5).trim());
-        } catch {}
+        } catch {
+          // 跳过无法解析的 data 行
+        }
       }
     }
     throw new Error('Failed to parse SSE response');
