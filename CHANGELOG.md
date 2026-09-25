@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.9] - 2026-09-25
+
+### 更新内容
+
+- fix: 补全 peer 扫描模块 mcp-scanner 并修复 lint/测试 (8f6d958)
+
 ## [1.9.8] - 2026-09-25
 
 ### 更新内容
