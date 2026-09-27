@@ -57,6 +57,10 @@ const envSchema = z.object({
     PEER_DISCOVERY_PORT: z.coerce.number().optional().default(9811),
     PEER_DISCOVERY_INTERVAL: z.coerce.number().optional().default(5000),
     PEER_DISCOVERY_SILENT: z.coerce.boolean().optional().default(false),
+    REMOTE_PEER_HOST: z.string().optional().default(''),
+    REMOTE_PEER_PORT: z.coerce.number().optional().default(8110),
+    REMOTE_PEER_API_KEY: z.string().optional().default(''),
+    REMOTE_PEER_AUTO_FORWARD: z.coerce.boolean().optional().default(false),
 });
 
 const configSchema = z.object({
@@ -128,6 +132,12 @@ const configSchema = z.object({
             version: z.string().optional(),
             apikey: z.string().optional(),
         })).optional(),
+    }).optional(),
+    remotePeer: z.object({
+        host: z.string(),
+        port: z.number().optional(),
+        apiKey: z.string().optional(),
+        autoForward: z.boolean().optional(),
     }).optional(),
 });
 
@@ -273,6 +283,16 @@ const config = {
         silent: fileConfig?.peerDiscovery?.silent ?? env.PEER_DISCOVERY_SILENT,
         peers: fileConfig?.peerDiscovery?.peers ?? [],
     },
+    remotePeer: (() => {
+        const host = fileConfig?.remotePeer?.host || env.REMOTE_PEER_HOST || '';
+        if (!host) return null;
+        return {
+            host,
+            port: fileConfig?.remotePeer?.port ?? env.REMOTE_PEER_PORT,
+            apiKey: fileConfig?.remotePeer?.apiKey || env.REMOTE_PEER_API_KEY || '',
+            autoForward: fileConfig?.remotePeer?.autoForward ?? env.REMOTE_PEER_AUTO_FORWARD,
+        };
+    })(),
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

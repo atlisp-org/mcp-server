@@ -68,7 +68,15 @@ export const evalLisp = withCadConnection(async (code, withResult = false, encod
 });
 
 export const getCadInfo = withCadConnection(async () => {
-    const info = await cad.getInfo();
+    let info = await cad.getInfo();
+    try {
+        const { default: peerManager } = await import('../peer-manager.js');
+        const peers = peerManager.getPeers().filter(p => p.healthy);
+        if (peers.length) {
+            const peerLines = peers.map(p => `  ${p.hostname} (${p.url}) [健康]`);
+            info = `${info}\n远程 Peer:\n${peerLines.join('\n')}`;
+        }
+    } catch { /* peer 状态为附加信息，失败时忽略 */ }
     return mcpSuccess(info);
 });
 

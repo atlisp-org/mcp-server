@@ -38,6 +38,7 @@ export function writeAuditEntry(entry) {
       result: entry.result || null,
       error: entry.error || null,
       duration: entry.duration || 0,
+      target: entry.target || '',
       user: entry.user || '',
       role: entry.role || '',
     }) + '\n';

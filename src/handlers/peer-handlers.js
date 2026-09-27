@@ -1,5 +1,6 @@
 import peerManager from '../peer-manager.js';
 import peerProxy from '../peer-proxy.js';
+import { isForwardableTool, forwardToolCall } from '../peer-forward.js';
 
 export async function peer_list() {
     const peers = peerManager.getPeers();
@@ -38,6 +39,7 @@ export async function peer_scan(a) {
 export async function peer_connect(a) {
     const peer = peerManager.addPeer(a.host, a.port || 8110, {
         apikey: a.apikey,
+        static: true,
     });
 
     return { content: [{ type: 'text', text: `已添加 peer: ${peer.hostname} (${peer.url})\n状态: ${peer.healthy ? '可达' : '探测中...'}` }] };
@@ -59,6 +61,22 @@ export async function peer_forward(a) {
 
         const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
         return { content: [{ type: 'text', text: `远程执行结果:\n${text}` }] };
+    } catch (e) {
+        return { content: [{ type: 'text', text: `远程执行失败: ${e.message}` }], isError: true };
+    }
+}
+
+export async function peer_call_tool(a) {
+    const toolName = a.tool;
+    if (!isForwardableTool(toolName)) {
+        return { content: [{ type: 'text', text: `工具 "${toolName}" 是本地管理/计算工具或不存在，不可转发` }], isError: true };
+    }
+
+    try {
+        const result = await forwardToolCall(a.peerId, toolName, a.args || {}, {
+            timeout: a.timeout,
+        });
+        return result;
     } catch (e) {
         return { content: [{ type: 'text', text: `远程执行失败: ${e.message}` }], isError: true };
     }

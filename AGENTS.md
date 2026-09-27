@@ -28,7 +28,8 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
-- **工具定义**：`src/tools/` 下 45 个文件定义工具 Schema（共 332 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解
+- **工具定义**：`src/tools/` 下 45 个文件定义工具 Schema（共 358 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解
+- **远程 Peer 转发**：Linux 服务器可将 CAD 工具调用转发到 Windows 主机（MCP-to-MCP）。`src/peer-discovery.js` UDP 广播发现（端口 9811）、`src/peer-manager.js` 管理 peer 生命周期（健康检查/静态 peer）、`src/peer-proxy.js` HTTP 转发（JSON + SSE）、`src/peer-forward.js` 转发白名单（`peer_`/`skill_`/`webhook_`/`audit_` 等本地管理工具永不转发）
 - **调度**：`src/mcp-tools.js` 的 `TOOL_HANDLERS` 映射工具名到处理函数，参数运行时校验（类型/enum/范围/必填）。skill 管理函数（5 个）已抽取到 `handlers/skill-handlers.js`，元工具（list_tools_by_category/search_tools/get_tool_info/prompts）抽取到 `handlers/meta-handlers.js`
 - **处理器**：`src/handlers/` 下 36 个文件实现具体 LISP 代码生成和 CAD 调用
 - **安全**：`lisp-security.js` 是统一安全模块（已合并原 lisp-sandbox.js），21 条规则 + session allowlist + 威胁分级（block/warn/allow），同时被 `cad-worker.js`（执行层）和 `mcp-tools.js`（校验层）使用
@@ -54,10 +55,24 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **Webhook**：失败自动指数退避重试 3 次（1s/2s/4s），总耗时 ≈ 7s
 - **队列清理**：`resetWorker()` 会同时清空 `CommandQueue`，确保残留命令不被消费
 
+## 远程 Peer 转发（Linux → Windows CAD）
+
+CAD 连接仅 Windows 可用，Linux 上的 MCP Server 通过 peer 机制将业务工具调用转发到 Windows 主机的 MCP 实例：
+
+```
+AI Agent → (MCP) → Linux mcp-server → (HTTP/JSON-RPC) → Windows mcp-server → CAD
+```
+
+- **显式转发**：`peer_call_tool {peerId, tool, args, timeout}` 工具将任意业务工具转发到指定 peer；本地管理/计算工具（`peer_*`/`skill_*`/`webhook_*`/`sandbox_*`/`audit_*`/`debug_*`/`agent_*`/`session_*`/`watch_*`/`lisp_repl*` 前缀及 `search_tools`/`analyze_lisp_code` 等）由 `isForwardableTool()` 拒绝
+- **自动转发**（opt-in）：配置 `REMOTE_PEER_AUTO_FORWARD=true` 后，`tool-executor.js` 捕获 `CAD_NOT_CONNECTED` 错误自动转发到 `config.remotePeer` 对应的 peer；转发成功写入审计 `target: "peer:<id>"`
+- **配置**：`REMOTE_PEER_HOST/PORT/API_KEY/AUTO_FORWARD` 环境变量或 `~/.atlisp/atlisp.config.json` 的 `remotePeer` 字段；`peerDiscovery.peers` 静态列表在 `start()` 时注册（跳过指向本机的自身，防转发循环）
+- **健康检查**：静态 peer（`static: true`）不会被 `_healthCheck` 误删；`peer_connect` 手动添加的 peer 也标记为静态
+- **限制**：UDP 广播发现仅限同子网（跨网段需 `peer_connect` 手动添加）；转发的调用在远端走完整 `runToolCall` 流程（校验/限速/Undo/审计），但本地会话状态（如 REPL 变量）不跨机同步
+
 ## 测试
 
 ```bash
-npm test              # 运行全部 vitest 测试 (58 个测试文件, 784 用例)
+npm test              # 运行全部 vitest 测试 (63 个测试文件, 899 用例)
 npm run test:watch    # 监视模式
 npm run test:coverage # 覆盖率报告 (coverage/)
 npm run lint          # eslint 检查（CI 强制，必须 0 问题）
@@ -136,6 +151,10 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 | `src/config.js` | 配置管理：三层合并、Zod coerce 类型转换、热重载 |
 | `src/routes.js` | HTTP 路由：中间件链（auth/rate-limit/CORS）、MCP/SSE/调试面板 |
 | `src/errors.js` | 错误定义：`MCPError`、`createError`、15 个预定义错误码 |
+| `src/peer-discovery.js` | Peer 发现：UDP 广播（端口 9811）、peer 注册/过期清理 |
+| `src/peer-manager.js` | Peer 生命周期：健康检查、静态 peer 加载、`getRemotePeer()` |
+| `src/peer-proxy.js` | Peer 转发：HTTP JSON-RPC 转发（支持 JSON/SSE 响应、超时、API Key） |
+| `src/peer-forward.js` | 转发白名单：`isForwardableTool()`、`forwardToolCall()`、`getAutoForwardPeer()` |
 | `src/handler-utils.js` | 工具函数：`validateFilePath`、`escapeLispString`、`parseLispList`、`ensureCadConnected` |
 | `src/tools/index.js` | 工具 Schema 聚合（39+ 文件合并）及 readOnlyHint/destructiveHint + category 注解 |
 | `src/streaming.js` | 分页流式读取（单 `streamEntities()` 替代原先 3 个函数） |

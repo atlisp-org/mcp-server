@@ -54,6 +54,20 @@ export const tools = [
     }
   },
   {
+    name: 'peer_call_tool',
+    description: '将任意业务工具调用转发到远程 peer 执行（如 Linux 服务器将 CAD 工具转发到 Windows 主机）。当用户说"在远程/另一台机器上执行某工具"时调用。peer_/skill_ 等本地管理工具不可转发。返回远程执行结果。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        peerId: { type: 'string', description: '目标 peer ID 或 URL (http://host:port)。可通过 peer_list 获取' },
+        tool: { type: 'string', description: '要转发的工具名（业务工具，如 eval_lisp、create_circle）' },
+        args: { type: 'object', description: '工具参数' },
+        timeout: { type: 'number', description: '超时毫秒（默认 30000，流式/批处理长操作可设 300000）' }
+      },
+      required: ['peerId', 'tool']
+    }
+  },
+  {
     name: 'peer_cad_info',
     description: '获取远程 peer 的 CAD 连接信息。当用户说"查看远程 CAD 状态"时调用。',
     inputSchema: {

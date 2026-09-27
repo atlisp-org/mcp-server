@@ -39,9 +39,55 @@ class PeerManager {
    * 启动 peer 管理器
    */
   start() {
+    this._loadStaticPeers();
     peerDiscovery.start();
     this._startHealthCheck();
     log('Peer manager started');
+  }
+
+  /**
+   * 注册静态配置的 peer（config.remotePeer 与 config.peerDiscovery.peers）
+   */
+  _loadStaticPeers() {
+    const rp = config.remotePeer;
+    if (rp && rp.host) {
+      this._addStaticPeer(rp.host, rp.port || 8110, {
+        id: `remote-${rp.host}-${rp.port || 8110}`,
+        apikey: rp.apiKey,
+      });
+    }
+    for (const p of config.peerDiscovery?.peers || []) {
+      if (!p.host) continue;
+      this._addStaticPeer(p.host, p.port || 8110, {
+        id: p.id,
+        hostname: p.hostname,
+        version: p.version,
+        apikey: p.apikey,
+      });
+    }
+  }
+
+  /**
+   * 添加静态 peer（跳过本机自身，防止转发循环）
+   */
+  _addStaticPeer(host, port, options = {}) {
+    const selfHosts = ['127.0.0.1', 'localhost', '::1'];
+    if (selfHosts.includes(host) && port === config.port) {
+      logError(`静态 peer 指向本机自身 (${host}:${port})，已跳过`);
+      return;
+    }
+    const peer = this.addPeer(host, port, { ...options, static: true });
+    peer.static = true;
+  }
+
+  /**
+   * 获取 config.remotePeer 对应的 peer（自动转发目标）
+   * @returns {ManagedPeer|null}
+   */
+  getRemotePeer() {
+    const rp = config.remotePeer;
+    if (!rp || !rp.host) return null;
+    return this._peers.get(`remote-${rp.host}-${rp.port || 8110}`) || null;
   }
 
   /**
@@ -139,7 +185,7 @@ class PeerManager {
     peerDiscovery.cleanupStale();
 
     for (const [id, peer] of this._peers) {
-      if (!peerDiscovery.getPeer(id)) {
+      if (!peer.static && !peerDiscovery.getPeer(id)) {
         this._peers.delete(id);
         log(`Peer removed (not in discovery): ${peer.hostname}`);
         continue;
@@ -230,6 +276,7 @@ class PeerManager {
       lastSeen: Date.now(),
       lastHealthCheck: 0,
       apikey: options.apikey,
+      static: !!options.static,
     };
 
     this._peers.set(id, peer);

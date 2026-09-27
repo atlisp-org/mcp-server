@@ -76,8 +76,9 @@ class PeerProxy {
    * @param {string} peerId - Peer ID
    * @param {string} toolName - 工具名称
    * @param {object} args - 工具参数
+   * @param {{ timeout?: number, apikey?: string }} [options] - 选项
    */
-  async forwardToolCall(peerId, toolName, args) {
+  async forwardToolCall(peerId, toolName, args, options = {}) {
     const request = {
       jsonrpc: '2.0',
       id: Date.now(),
@@ -88,7 +89,7 @@ class PeerProxy {
       },
     };
 
-    const result = await this.forward(peerId, request);
+    const result = await this.forward(peerId, request, options);
 
     if (result.error) {
       throw new Error(result.error.message || 'Tool call failed');
