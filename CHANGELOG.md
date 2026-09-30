@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.10] - 2026-09-30
+
+### 更新内容
+
+- feat: 远程 peer 通用工具转发与自动转发（Linux → Windows CAD） (5e3fcd4)
+
 ## [1.9.9] - 2026-09-25
 
 ### 更新内容
