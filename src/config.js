@@ -17,7 +17,14 @@ const envSchema = z.object({
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
     ENABLE_CORS: z.coerce.boolean().optional().default(true),
-    CORS_ORIGIN: z.string().optional().default('https://atlisp.cn'),
+    // 浏览器驱动的桥接（atlisp.org/agent/bridge）需要本机 MCP 接受来自
+    // atlisp.cn 各子域与 localhost 的请求，否则预检直接 403，浏览器一步都走不出去。
+    //
+    // 写法是**只有 host、没有协议和端口**，这是刻意的：routes.js 的 originMatches
+    // 会先剥掉 scheme 与端口再比较（getHost）。所以 `localhost` 这条已经覆盖
+    // http://localhost:8100 / :8110 等本机所有端口；加了 https:// 反而看不出这一点，
+    // 容易被后人「修正」成逐个端口枚举。* 开头按子域后缀匹配。
+    CORS_ORIGIN: z.string().optional().default('localhost,*.atlisp.cn,atlisp.cn'),
     RATE_LIMIT_WINDOW: z.coerce.number().optional().default(60000),
     RATE_LIMIT_MAX: z.coerce.number().optional().default(100),
     RESOURCE_CACHE_TTL: z.coerce.number().optional().default(5000),

@@ -852,7 +852,7 @@ curl http://localhost:8110/metrics
 | `BUSY_RETRIES` | `10` | CAD 忙重试次数 |
 | `BUSY_DELAY` | `500` | 重试延迟 (ms) |
 | `ENABLE_CORS` | `true` | 启用 CORS |
-| `CORS_ORIGIN` | `*` | CORS 源 |
+| `CORS_ORIGIN` | `localhost,*.atlisp.cn,atlisp.cn` | CORS 允许源，逗号分隔；`*` 表示全放行，**只写 host**（协议与端口会被忽略，见 `originMatches`），`*.` 开头按子域后缀匹配 |
 | `RATE_LIMIT_WINDOW` | `60000` | 速率限制窗口 (ms) |
 | `RATE_LIMIT_MAX` | `100` | 窗口内最大请求数 |
 | `RESOURCE_CACHE_TTL` | `5000` | 资源缓存 TTL (ms) |
