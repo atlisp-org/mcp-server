@@ -508,6 +508,15 @@ class CadConnection {
     this._cb.reset();
   }
 
+  /**
+   * 只释放底层资源（worker 子进程 + 心跳定时器），不动全局连接状态。
+   * 连接池在失败路径上用它回收已 spawn 的 worker——否则每次重试都会留下一个
+   * 被 setInterval 闭包永久引用的 CadConnection，进程数和堆一起涨。
+   */
+  releaseResources() {
+    this._resetWorker();
+  }
+
   async ping() {
     try {
       const result = await this._sendMessage({ type: 'ping' });
@@ -628,6 +637,15 @@ class CadConnection {
     return this._primaryWorker;
   }
 
+  _failPending(message) {
+    for (const entry of this._pendingRequests.values()) {
+      clearTimeout(entry.timeout);
+      entry._skipCb = true;
+      entry.reject(new Error(message));
+    }
+    this._pendingRequests.clear();
+  }
+
   _resetWorker() {
     for (const { reject, timeout } of this._pendingRequests.values()) {
       clearTimeout(timeout);
@@ -690,6 +708,7 @@ class CadConnection {
 
   _setupStdoutHandler(w) {
     let buffer = '';
+    let overflowing = false;
     const self = this;
 
     w.stdout.on('data', (data) => {
@@ -697,7 +716,27 @@ class CadConnection {
         buffer += data.toString();
         if (buffer.length > MAX_BUFFER_SIZE) {
           const lastNewline = buffer.lastIndexOf('\n');
-          buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer.slice(-MAX_BUFFER_SIZE);
+          if (lastNewline < 0) {
+            // 单条响应就超过上限：没有换行就无法按行解析。原来的做法是从中间截断，
+            // 会把 JSON 截成非法文本 → 解析失败 → 请求只能干等到超时。这里显式失败。
+            if (!overflowing) {
+              overflowing = true;
+              self._failPending(`worker 响应超过 ${MAX_BUFFER_SIZE} 字节上限`);
+            }
+            buffer = '';
+            return;
+          }
+          buffer = buffer.slice(lastNewline + 1);
+        }
+        if (overflowing) {
+          // 丢弃超大消息的剩余字节，直到遇到行尾再恢复正常解析
+          const nl = buffer.indexOf('\n');
+          if (nl < 0) {
+            buffer = '';
+            return;
+          }
+          buffer = buffer.slice(nl + 1);
+          overflowing = false;
         }
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';

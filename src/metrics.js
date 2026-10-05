@@ -163,6 +163,23 @@ class Metrics {
         lines.push('# TYPE atlisp_mcp_cad_connected gauge');
         lines.push(`atlisp_mcp_cad_connected ${this.counters.get('cad_connected') || 0}`);
 
+        // 进程内存：常驻服务一旦出现无界缓存，这里是唯一的早期信号
+        // （OOM 前兆是 heapUsed 单调上升，而不是 errors_total 变大）。
+        const mem = process.memoryUsage();
+        const heapLimitMb = Math.round((mem.heapSizeLimit || 0) / 1048576);
+        lines.push('# HELP atlisp_mcp_memory_bytes Process memory usage in bytes');
+        lines.push('# TYPE atlisp_mcp_memory_bytes gauge');
+        lines.push(`atlisp_mcp_memory_bytes{type="rss"} ${mem.rss}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="heapTotal"} ${mem.heapTotal}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="heapUsed"} ${mem.heapUsed}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="external"} ${mem.external}`);
+        lines.push('# HELP atlisp_mcp_heap_limit_bytes Configured V8 heap limit in bytes');
+        lines.push('# TYPE atlisp_mcp_heap_limit_bytes gauge');
+        lines.push(`atlisp_mcp_heap_limit_bytes ${mem.heapSizeLimit || 0}`);
+        lines.push('# HELP atlisp_mcp_heap_used_ratio heapUsed / heapSizeLimit');
+        lines.push('# TYPE atlisp_mcp_heap_used_ratio gauge');
+        lines.push(`atlisp_mcp_heap_used_ratio ${heapLimitMb > 0 ? (mem.heapTotal / (heapLimitMb * 1048576)).toFixed(4) : '0'}`);
+
         return lines.join('\n');
     }
 

@@ -2,7 +2,6 @@ import { onDocumentChanged, cad } from './cad.js';
 import {  error as logError } from './logger.js';
 
 const subscribers = new Map();
-let wasConnected = false;
 
 onDocumentChanged((info) => {
     broadcastEvent('documentChanged', {
@@ -29,27 +28,34 @@ export function subscribeEvents(sessionId, res) {
             timestamp: now,
         });
     }
-    wasConnected = cad.connected;
+    // 连接状态必须按订阅者记录：原来是模块级变量，多个客户端会互相覆盖判断，
+    // 而且同 sessionId 重复订阅时旧的 heartbeatTimer 不会被清掉（定时器 + res 泄漏）。
+    const state = { wasConnected: cad.connected };
+
+    const prev = subscribers.get(sessionId);
+    if (prev) {
+        clearInterval(prev.heartbeatTimer);
+        try { prev.res.end(); } catch (e) { logError('[cad-event-bus]', e?.message || e); }
+    }
 
     const heartbeatTimer = setInterval(() => {
-        if (!subscribers.has(sessionId)) {
+        const sub = subscribers.get(sessionId);
+        if (!sub || sub.heartbeatTimer !== heartbeatTimer) {
             clearInterval(heartbeatTimer);
             return;
         }
         const connected = cad.connected;
         const ts = new Date().toISOString();
 
-        if (connected !== wasConnected) {
-            wasConnected = connected;
-            if (connected) {
-                broadcastEvent('cadConnected', {
+        if (connected !== sub.wasConnected) {
+            sub.wasConnected = connected;
+            broadcastEvent(connected ? 'cadConnected' : 'cadDisconnected', connected
+                ? {
                     platform: cad.getPlatform() || 'Unknown',
                     version: cad.getVersion() || 'Unknown',
                     timestamp: ts,
-                });
-            } else {
-                broadcastEvent('cadDisconnected', { timestamp: ts });
-            }
+                }
+                : { timestamp: ts });
         }
 
         sendEvent(res, 'heartbeat', { timestamp: ts });
@@ -60,7 +66,7 @@ export function subscribeEvents(sessionId, res) {
         subscribers.delete(sessionId);
     });
 
-    subscribers.set(sessionId, { res, heartbeatTimer, createdAt: Date.now() });
+    subscribers.set(sessionId, { res, heartbeatTimer, wasConnected: state.wasConnected, createdAt: Date.now() });
 }
 
 export function unsubscribeEvents(sessionId) {

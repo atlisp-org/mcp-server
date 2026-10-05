@@ -6,6 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { validateLispCodeWorker, checkParens } from './lisp-security.js';
+import config from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -430,6 +431,9 @@ let stdinBuffer = '';
 let isProcessing = false;
 const requestQueue = [];
 const QUEUE_TIMEOUT = 30000; // 队列处理超时时间 30 秒
+// 单个 worker 是串行的：一个 COM 调用耗时数秒时，父进程仍会继续往 stdin 灌，
+// 队列条数没有上限就会一直涨（每条都持有完整 LISP 文本），直到把 4GB 堆撑爆。
+const QUEUE_MAX = Math.max(1, config.workerQueueMax || 200);
 let processingStartTime = 0;
 
 process.stdin.on('data', (data) => {
@@ -442,6 +446,13 @@ process.stdin.on('data', (data) => {
     try {
       const msg = JSON.parse(line);
       const requestId = msg.requestId;
+      if (requestQueue.length >= QUEUE_MAX) {
+        process.stdout.write(JSON.stringify({
+          error: `Worker queue overflow (max ${QUEUE_MAX})`,
+          requestId,
+        }) + '\n');
+        continue;
+      }
       // 添加到队列而不是立即处理
       requestQueue.push({ msg, requestId, timestamp: Date.now() });
       
@@ -478,17 +489,20 @@ async function processQueue() {
     }
 
     const { msg, requestId } = requestQueue.shift();
+    // 为每个请求添加超时（定时器必须在请求完成后清掉，否则每个请求都留一个 30s 的活定时器）
+    let timer = null;
     try {
-      // 为每个请求添加超时
       const result = await Promise.race([
         handleMessage(msg),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), QUEUE_TIMEOUT)
-        )
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Request timeout')), QUEUE_TIMEOUT);
+        })
       ]);
       process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
     } catch (err) {
       process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
   

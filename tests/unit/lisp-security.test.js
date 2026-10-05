@@ -161,5 +161,19 @@ describe('lisp-security', () => {
       expect(getSessionAllowlist(SID).has(0)).toBe(true);
       expect(getSessionAllowlist('other-session').has(0)).toBe(false);
     });
+
+    it('会话 allowlist 有条数上限（LRU 淘汰）', () => {
+      const prevMax = config.sandboxAllowlistMax;
+      config.sandboxAllowlistMax = 3;
+      try {
+        for (let i = 0; i < 10; i++) addToAllowlist(`sess-${i}`, 0);
+        // 最早的会话被淘汰
+        expect(getSessionAllowlist('sess-0').size).toBe(0);
+        expect(getSessionAllowlist('sess-9').has(0)).toBe(true);
+      } finally {
+        config.sandboxAllowlistMax = prevMax;
+        for (let i = 0; i < 10; i++) clearSessionAllowlist(`sess-${i}`);
+      }
+    });
   });
 });

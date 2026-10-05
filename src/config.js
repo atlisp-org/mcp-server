@@ -68,6 +68,14 @@ const envSchema = z.object({
     REMOTE_PEER_PORT: z.coerce.number().optional().default(8110),
     REMOTE_PEER_API_KEY: z.string().optional().default(''),
     REMOTE_PEER_AUTO_FORWARD: z.coerce.boolean().optional().default(false),
+    // 常驻进程的内存上限类参数：MCP Server 常年不重启，任何按「条数」而非「字节」
+    // 淘汰的缓存都会在几小时内把 4GB 堆吃光（一次 get_entities 就能返回几十 MB）。
+    SSE_REPLAY_MAX_BYTES: z.coerce.number().optional().default(8388608),   // SSE 重放缓冲 8MB
+    SSE_BACKPRESSURE_MAX_BYTES: z.coerce.number().optional().default(4194304), // SSE 背压缓冲 4MB
+    REPL_HISTORY_MAX: z.coerce.number().optional().default(100),          // REPL 每会话历史条数
+    REPL_RESULT_MAX_CHARS: z.coerce.number().optional().default(8192),    // REPL 单条结果保留字符数
+    WORKER_QUEUE_MAX: z.coerce.number().optional().default(200),          // worker 待处理队列上限
+    SANDBOX_ALLOWLIST_MAX: z.coerce.number().optional().default(500),     // 会话 allowlist 条数上限
 });
 
 const configSchema = z.object({
@@ -146,6 +154,12 @@ const configSchema = z.object({
         apiKey: z.string().optional(),
         autoForward: z.boolean().optional(),
     }).optional(),
+    sseReplayMaxBytes: z.number().optional(),
+    sseBackpressureMaxBytes: z.number().optional(),
+    replHistoryMax: z.number().optional(),
+    replResultMaxChars: z.number().optional(),
+    workerQueueMax: z.number().optional(),
+    sandboxAllowlistMax: z.number().optional(),
 });
 
 function parseArgs() {
@@ -300,6 +314,12 @@ const config = {
             autoForward: fileConfig?.remotePeer?.autoForward ?? env.REMOTE_PEER_AUTO_FORWARD,
         };
     })(),
+    sseReplayMaxBytes: fileConfig?.sseReplayMaxBytes ?? env.SSE_REPLAY_MAX_BYTES,
+    sseBackpressureMaxBytes: fileConfig?.sseBackpressureMaxBytes ?? env.SSE_BACKPRESSURE_MAX_BYTES,
+    replHistoryMax: fileConfig?.replHistoryMax ?? env.REPL_HISTORY_MAX,
+    replResultMaxChars: fileConfig?.replResultMaxChars ?? env.REPL_RESULT_MAX_CHARS,
+    workerQueueMax: fileConfig?.workerQueueMax ?? env.WORKER_QUEUE_MAX,
+    sandboxAllowlistMax: fileConfig?.sandboxAllowlistMax ?? env.SANDBOX_ALLOWLIST_MAX,
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

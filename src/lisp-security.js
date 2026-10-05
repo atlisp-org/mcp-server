@@ -119,13 +119,30 @@ export function checkParens(code) {
 
 export const RULES = SECURITY_RULES;
 
+// sessionId 由客户端提供，且这里只在有规则命中时才查询；用 LRU 上限兜住，
+// 否则长驻进程会被任意多的会话 ID 撑大（原来纯查询也会新建一个 Set）。
 const sessionAllowlist = new Map();
+const _maxAllowlistSessions = () => Math.max(1, config.sandboxAllowlistMax || 500);
+
+function _touch(sessionId) {
+  const list = sessionAllowlist.get(sessionId);
+  if (list) {
+    sessionAllowlist.delete(sessionId);
+    sessionAllowlist.set(sessionId, list);
+  }
+  return list;
+}
 
 export function getSessionAllowlist(sessionId) {
-  if (!sessionAllowlist.has(sessionId)) {
-    sessionAllowlist.set(sessionId, new Set());
+  const existing = _touch(sessionId);
+  if (existing) return existing;
+  if (sessionAllowlist.size >= _maxAllowlistSessions()) {
+    const oldest = sessionAllowlist.keys().next().value;
+    if (oldest !== undefined) sessionAllowlist.delete(oldest);
   }
-  return sessionAllowlist.get(sessionId);
+  const list = new Set();
+  sessionAllowlist.set(sessionId, list);
+  return list;
 }
 
 export function addToAllowlist(sessionId, ruleIndex) {
@@ -134,8 +151,8 @@ export function addToAllowlist(sessionId, ruleIndex) {
 }
 
 export function removeFromAllowlist(sessionId, ruleIndex) {
-  const list = getSessionAllowlist(sessionId);
-  list.delete(ruleIndex);
+  const list = _touch(sessionId);
+  if (list) list.delete(ruleIndex);
 }
 
 export function clearSessionAllowlist(sessionId) {
@@ -152,7 +169,7 @@ export function validateLispCode(code, sessionId = null) {
   for (let i = 0; i < RULES.length; i++) {
     const rule = RULES[i];
     if (rule.re.test(withoutComments)) {
-      const isAllowed = sessionId && getSessionAllowlist(sessionId).has(i);
+      const isAllowed = !!sessionId && !!_touch(sessionId)?.has(i);
 
       const severity = effectiveSeverity === THREAT_ALLOW ? THREAT_ALLOW
         : isAllowed ? THREAT_ALLOW

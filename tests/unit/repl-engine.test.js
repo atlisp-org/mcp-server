@@ -102,4 +102,28 @@ describe('repl-engine', () => {
     expect(repl.listSessions()).toHaveLength(50);
     expect(repl.getSession(first)).toBeNull();
   });
+
+  it('历史条数有上限，超出的旧条目被淘汰', async () => {
+    const config = (await import('../../src/config.js')).default;
+    const max = config.replHistoryMax;
+    const { sessionId } = await repl.executeInSession(null, '(setq x 1)');
+    const last = max + 19;
+    for (let i = 0; i < max + 20; i++) {
+      await repl.executeInSession(sessionId, `(setq x ${i})`);
+    }
+    const history = repl.getHistory(sessionId);
+    expect(history).toHaveLength(max);
+    expect(history[history.length - 1].code).toBe(`(setq x ${last})`);
+  });
+
+  it('超长结果入库时截断，但返回值仍是完整结果', async () => {
+    const config = (await import('../../src/config.js')).default;
+    const long = 'r'.repeat(config.replResultMaxChars + 500);
+    cadMock.mockResolvedValueOnce(long);
+    const { sessionId, result } = await repl.executeInSession(null, '(setq big 1)');
+    expect(result).toBe(long);
+    const entry = repl.getHistory(sessionId)[0];
+    expect(entry.result.length).toBe(config.replResultMaxChars);
+    expect(entry.truncated).toBe(true);
+  });
 });
