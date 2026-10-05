@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.11] - 2026-10-05
+
+### 更新内容
+
+- fix: 修复常驻进程内存无界增长（4GB 堆 OOM） (a9b8557)
+- fix: CORS 默认放行 localhost 与 atlisp.cn 子域（浏览器桥接预检 403） (e0079cf)
+
 ## [1.9.10] - 2026-09-30
 
 ### 更新内容
