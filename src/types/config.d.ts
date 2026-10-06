@@ -113,6 +113,15 @@ export interface McpConfig {
 
   /** Number of read-worker subprocesses per CAD instance (default 2) */
   workerPoolSize: number;
+
+  /** HTTP MCP session idle TTL in ms (default 1800000 = 30min) */
+  sessionIdleTtl: number;
+
+  /** Max agent-context sessions (default 200) */
+  agentContextMaxSessions: number;
+
+  /** Agent-context session TTL in ms (default 1800000 = 30min) */
+  agentContextTtl: number;
 }
 
 /**
@@ -173,4 +182,7 @@ export interface EnvConfig {
   LLM_MAX_TOKENS: string;
   LLM_TEMPERATURE: string;
   WORKER_POOL_SIZE: string;
+  SESSION_IDLE_TTL: string;
+  AGENT_CONTEXT_MAX_SESSIONS: string;
+  AGENT_CONTEXT_TTL: string;
 }

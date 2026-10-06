@@ -12,7 +12,7 @@ import { pool } from './cad-pool.js';
 import peerManager from './peer-manager.js';
 import { sessionManager } from './subscription-manager.js';
 
-import { mcpContext, getOrCreateSessionServer, removeSessionServer, sessionServers } from './mcp-server-state.js';
+import { mcpContext, getOrCreateSessionServer, removeSessionServer, sessionServers, touchSession } from './mcp-server-state.js';
 import { SseSession, parseLastEventId } from './sse-session.js';
 import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
@@ -463,6 +463,7 @@ async function getMcpResponse(sessionId, body) {
             promise = (async () => {
                 const { transport } = await getOrCreateSessionServer(sessionId);
                 transport.resetCleanupTimer();
+                touchSession(sessionId);
                 return mcpContext.run({ sessionId }, async () => {
                     return transport.handleRequest(body);
                 });
@@ -475,6 +476,7 @@ async function getMcpResponse(sessionId, body) {
 
     const { transport } = await getOrCreateSessionServer(sessionId);
     transport.resetCleanupTimer();
+    touchSession(sessionId);
     return mcpContext.run({ sessionId }, async () => {
         return transport.handleRequest(body);
     });

@@ -76,6 +76,9 @@ const envSchema = z.object({
     REPL_RESULT_MAX_CHARS: z.coerce.number().optional().default(8192),    // REPL 单条结果保留字符数
     WORKER_QUEUE_MAX: z.coerce.number().optional().default(200),          // worker 待处理队列上限
     SANDBOX_ALLOWLIST_MAX: z.coerce.number().optional().default(500),     // 会话 allowlist 条数上限
+    SESSION_IDLE_TTL: z.coerce.number().optional().default(1800000),      // HTTP MCP 会话空闲 TTL 30min
+    AGENT_CONTEXT_MAX_SESSIONS: z.coerce.number().optional().default(200), // agent context 最大会话数
+    AGENT_CONTEXT_TTL: z.coerce.number().optional().default(1800000),     // agent context 会话 TTL 30min
 });
 
 const configSchema = z.object({
@@ -160,6 +163,9 @@ const configSchema = z.object({
     replResultMaxChars: z.number().optional(),
     workerQueueMax: z.number().optional(),
     sandboxAllowlistMax: z.number().optional(),
+    sessionIdleTtl: z.number().optional(),
+    agentContextMaxSessions: z.number().optional(),
+    agentContextTtl: z.number().optional(),
 });
 
 function parseArgs() {
@@ -320,6 +326,9 @@ const config = {
     replResultMaxChars: fileConfig?.replResultMaxChars ?? env.REPL_RESULT_MAX_CHARS,
     workerQueueMax: fileConfig?.workerQueueMax ?? env.WORKER_QUEUE_MAX,
     sandboxAllowlistMax: fileConfig?.sandboxAllowlistMax ?? env.SANDBOX_ALLOWLIST_MAX,
+    sessionIdleTtl: fileConfig?.sessionIdleTtl ?? env.SESSION_IDLE_TTL,
+    agentContextMaxSessions: fileConfig?.agentContextMaxSessions ?? env.AGENT_CONTEXT_MAX_SESSIONS,
+    agentContextTtl: fileConfig?.agentContextTtl ?? env.AGENT_CONTEXT_TTL,
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;

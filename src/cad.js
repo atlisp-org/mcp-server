@@ -233,6 +233,11 @@ class CommandQueue {
   }
 
   enqueueHighPriority(command) {
+    const total = this._queues.reduce((s, q) => s + q.length, 0);
+    if (total >= MAX_QUEUE_SIZE) {
+      command.reject(new Error('Command queue full, try again later'));
+      return;
+    }
     this._queues[PRIORITY_HIGH].push(command);
     this._process();
   }
