@@ -1,4 +1,5 @@
 import os from 'os';
+import v8 from 'v8';
 import 'express';
 import { randomUUID, createHash } from 'crypto';
 import fs from 'fs';
@@ -274,6 +275,8 @@ export function setupRoutes(app) {
 
     app.get('/health/full', async (req, res) => {
         const memUsage = process.memoryUsage();
+        // heapSizeLimit 不在 process.memoryUsage() 里，必须走 v8
+        const heapSizeLimit = v8.getHeapStatistics().heap_size_limit;
         const poolStats = pool ? pool.getStats() : {};
         let sseCount = 0;
         try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError('获取 SSE 会话数失败:', e.message); }
@@ -288,9 +291,9 @@ export function setupRoutes(app) {
                     heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
                     externalMB: Math.round(memUsage.external / 1024 / 1024),
                     arrayBuffersMB: Math.round((memUsage.arrayBuffers || 0) / 1024 / 1024),
-                    heapLimitMB: Math.round((memUsage.heapSizeLimit || 0) / 1024 / 1024),
-                    heapUsedPct: memUsage.heapSizeLimit
-                        ? Number(((memUsage.heapUsed / memUsage.heapSizeLimit) * 100).toFixed(1))
+                    heapLimitMB: Math.round(heapSizeLimit / 1024 / 1024),
+                    heapUsedPct: heapSizeLimit
+                        ? Number(((memUsage.heapUsed / heapSizeLimit) * 100).toFixed(1))
                         : null,
                 },
                 cpu: process.cpuUsage(),
