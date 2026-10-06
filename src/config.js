@@ -249,9 +249,13 @@ const configFilePath = env.CONFIG_FILE || cliArgs.configFile ||
 const fileConfig = loadConfigFile(configFilePath);
 
 const config = {
-    port: fileConfig?.port ?? cliArgs.port ?? env.PORT,
-    host: fileConfig?.host ?? cliArgs.host ?? env.HOST,
-    transport: fileConfig?.transport ?? cliArgs.transport ?? env.TRANSPORT,
+    // 优先级：CLI 参数 > 配置文件 > 环境变量。
+    // cliArgs 必须排最前——envSchema 里 PORT/HOST/TRANSPORT 带 .default()，
+    // env.X 恒有值，不能用来判断用户是否显式设置过；而配置文件一旦写了这些键，
+    // 排在前面的 cliArgs 会被静默覆盖（--port 传了不起作用）。
+    port: cliArgs.port ?? fileConfig?.port ?? env.PORT,
+    host: cliArgs.host ?? fileConfig?.host ?? env.HOST,
+    transport: cliArgs.transport ?? fileConfig?.transport ?? env.TRANSPORT,
     apiKey: fileConfig?.apiKey ?? env.MCP_API_KEY,
     enableSse: fileConfig?.enableSse ?? env.ENABLE_SSE,
     messageTimeout: fileConfig?.messageTimeout ?? env.MESSAGE_TIMEOUT,
@@ -282,8 +286,8 @@ const config = {
         : []),
     locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
-    sslKey: fileConfig?.sslKey ?? env.SSL_KEY_PATH ?? cliArgs.sslKey,
-    sslCert: fileConfig?.sslCert ?? env.SSL_CERT_PATH ?? cliArgs.sslCert,
+    sslKey: cliArgs.sslKey ?? fileConfig?.sslKey ?? env.SSL_KEY_PATH,
+    sslCert: cliArgs.sslCert ?? fileConfig?.sslCert ?? env.SSL_CERT_PATH,
     llmApiKey: fileConfig?.llmApiKey ?? env.LLM_API_KEY,
     llmApiUrl: fileConfig?.llmApiUrl ?? env.LLM_API_URL,
     llmModel: fileConfig?.llmModel ?? env.LLM_MODEL,
@@ -291,11 +295,11 @@ const config = {
     llmTemperature: fileConfig?.llmTemperature ?? env.LLM_TEMPERATURE,
     maxPoolSize: fileConfig?.maxPoolSize ?? 3,
     workerPoolSize: fileConfig?.workerPoolSize ?? env.WORKER_POOL_SIZE,
-    lintPreset: fileConfig?.lintPreset ?? cliArgs.lintPreset ?? (env.LINT_PRESET || undefined),
-    lintConfigPath: fileConfig?.lintConfigPath ?? cliArgs.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
-    lintLevel: fileConfig?.lintLevel ?? cliArgs.lintLevel ?? (env.LINT_LEVEL || undefined),
-    noLint: fileConfig?.noLint ?? cliArgs.noLint ?? env.NO_LINT,
-    securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'relaxed'),
+    lintPreset: cliArgs.lintPreset ?? fileConfig?.lintPreset ?? (env.LINT_PRESET || undefined),
+    lintConfigPath: cliArgs.lintConfigPath ?? fileConfig?.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
+    lintLevel: cliArgs.lintLevel ?? fileConfig?.lintLevel ?? (env.LINT_LEVEL || undefined),
+    noLint: cliArgs.noLint ?? fileConfig?.noLint ?? env.NO_LINT,
+    securityLevel: cliArgs.securityLevel ?? fileConfig?.securityLevel ?? (env.SECURITY_LEVEL || 'relaxed'),
     clientId: fileConfig?.clientId ?? (env.CLIENT_ID || ''),
     maxEntityLimit: fileConfig?.maxEntityLimit ?? env.MAX_ENTITY_LIMIT,
     readBatchWindow: fileConfig?.readBatchWindow ?? env.READ_BATCH_WINDOW,
