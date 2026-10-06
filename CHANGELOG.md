@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.13] - 2026-10-06
+
+### 更新内容
+
+- feat: --mem 终端内存监控（RSS/堆/趋势/增量） (6bfbab4)
+- fix: 修复 HTTP MCP 会话与 agent context 内存泄漏（4GB 堆 OOM） (d8ed1cf)
+
 ## [1.9.11] - 2026-10-05
 
 ### 更新内容
