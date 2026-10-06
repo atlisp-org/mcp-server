@@ -280,7 +280,21 @@ export function setupRoutes(app) {
         res.json({
             status: 'ok', timestamp: new Date().toISOString(),
             cad: { connected: cad.connected, platform: cad.getPlatform?.(), version: cad.getVersion?.(), commandQueueSize: cad._getQueueSize ? cad._getQueueSize() : 0, restartCount: cad._getRestartCount ? cad._getRestartCount() : 0 },
-            system: { uptime: process.uptime(), memory: { rssMB: Math.round(memUsage.rss / 1024 / 1024), heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024), heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024) }, cpu: process.cpuUsage() },
+            system: {
+                uptime: process.uptime(),
+                memory: {
+                    rssMB: Math.round(memUsage.rss / 1024 / 1024),
+                    heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+                    heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+                    externalMB: Math.round(memUsage.external / 1024 / 1024),
+                    arrayBuffersMB: Math.round((memUsage.arrayBuffers || 0) / 1024 / 1024),
+                    heapLimitMB: Math.round((memUsage.heapSizeLimit || 0) / 1024 / 1024),
+                    heapUsedPct: memUsage.heapSizeLimit
+                        ? Number(((memUsage.heapUsed / memUsage.heapSizeLimit) * 100).toFixed(1))
+                        : null,
+                },
+                cpu: process.cpuUsage(),
+            },
             mcp: { sessions: sessionServers.size, tools: getVisibleTools().length, sseSessions: sseCount },
             pool: poolStats,
         });

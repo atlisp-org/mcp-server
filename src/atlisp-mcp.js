@@ -40,6 +40,27 @@ export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
 const isMcpScript = process.argv[1]?.includes('atlisp-mcp');
 if (isMcpScript) {
     const cliArgs = process.argv.slice(2);
+
+    if (cliArgs.includes('--mem') || cliArgs.includes('--mem-once') || cliArgs.includes('--mem-interval')) {
+        const idx = cliArgs.indexOf('--mem-interval');
+        const intervalSec = idx >= 0 ? Number(cliArgs[idx + 1]) : 2;
+        if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
+            console.error('--mem-interval 需要一个正数（秒）');
+            process.exit(1);
+        }
+        const { runMemMonitor } = await import('./mem-monitor.js');
+        await runMemMonitor({
+            host: process.env.HOST || config.host,
+            port: Number(process.env.PORT || config.port),
+            apiKey: process.env.MCP_API_KEY || config.apiKey || '',
+            ssl: Boolean(config.sslKey && config.sslCert),
+            intervalSec,
+            intervalMs: intervalSec * 1000,
+            once: cliArgs.includes('--mem-once'),
+        });
+        process.exit(0);
+    }
+
     for (let i = 0; i < cliArgs.length; i++) {
         const arg = cliArgs[i];
         if (arg === '--version' || arg === '-v') {
@@ -75,6 +96,9 @@ Options:
   --install-autostart          Register server to auto-start after user login
   --uninstall-autostart        Remove auto-start registration
   --autostart-status           Check if auto-start is installed
+  --mem                        Terminal memory monitor (polls /health/full, Ctrl+C to exit)
+  --mem-interval <sec>         Memory monitor refresh interval (default: 2)
+  --mem-once                   Memory monitor single snapshot then exit
 
 Environment Variables:
   TRANSPORT             Transport mode (http/stdio/ws)
@@ -103,6 +127,8 @@ Examples:
   atlisp-mcp                           Start HTTP server on port 8110
   atlisp-mcp --port 3000               Start HTTP server on port 3000
   atlisp-mcp --stdio                   Start in stdio mode for MCP clients
+  atlisp-mcp --mem                     Watch server memory usage in the terminal
+  atlisp-mcp --mem --mem-once          Print one memory snapshot and exit
   atlisp-mcp --config ~/my.json        Use custom config file
   atlisp-mcp --debug                   Enable debug output
   atlisp-mcp --ssl-key key.pem --ssl-cert cert.pem  Start HTTPS server
