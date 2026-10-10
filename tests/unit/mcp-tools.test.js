@@ -110,7 +110,7 @@ vi.mock('../../src/tools/index.js', () => ({
 }));
 
 vi.mock('../../src/mcp-server-state.js', () => ({
-  mcpContext: { getStore: m.getStore },
+  mcpContext: { getStore: m.getStore, run: (ctx, fn) => fn() },
 }));
 
 vi.mock('../../src/trigger-engine.js', () => ({
@@ -494,32 +494,36 @@ describe('batch_concurrent_tasks', () => {
     expect(result.content[0].text).toBe('最多支持 50 个并发任务');
   });
 
-  it('executes known tools and returns their results', async () => {
+  it('executes known tools via the executor and returns their results', async () => {
     m.getStore.mockReturnValue({});
+    m.handleToolCall.mockResolvedValue({ content: [{ type: 'text', text: '[]' }] });
     const result = await TOOL_HANDLERS.batch_concurrent_tasks({ tasks: [{ tool: 'watch_list', args: {} }] });
     const output = JSON.parse(result.content[0].text);
     expect(output).toEqual([{ index: 0, tool: 'watch_list', ok: true, data: '[]' }]);
   });
 
-  it('reports unknown tools', async () => {
+  it('forwards executor error responses', async () => {
     m.getStore.mockReturnValue({});
+    m.handleToolCall.mockResolvedValue({ content: [{ type: 'text', text: '未知工具' }], isError: true });
     const result = await TOOL_HANDLERS.batch_concurrent_tasks({ tasks: [{ tool: 'does_not_exist', args: {} }] });
     const output = JSON.parse(result.content[0].text);
-    expect(output).toEqual([{ index: 0, tool: 'does_not_exist', ok: false, error: '未知工具: does_not_exist' }]);
+    expect(output).toEqual([{ index: 0, tool: 'does_not_exist', ok: false, data: '未知工具' }]);
   });
 
-  it('restores the previous tool instance after execution', async () => {
+  it('passes instance through to the executor without mutating the shared context', async () => {
     const ctx = { _toolInstance: 'prev' };
     m.getStore.mockReturnValue(ctx);
+    m.handleToolCall.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     await TOOL_HANDLERS.batch_concurrent_tasks({
       tasks: [{ tool: 'watch_list', args: {}, instance: 'other' }],
     });
     expect(ctx._toolInstance).toBe('prev');
+    expect(m.handleToolCall).toHaveBeenCalledWith('watch_list', { instance: 'other' }, { sessionId: undefined });
   });
 
   it('catches handler errors', async () => {
     m.getStore.mockReturnValue({});
-    m.getHandler.mockRejectedValue(new Error('boom'));
+    m.handleToolCall.mockRejectedValue(new Error('boom'));
     const result = await TOOL_HANDLERS.batch_concurrent_tasks({
       tasks: [{ tool: 'open_cad', args: { platform: 'AutoCAD' }, instance: 'i1' }],
     });

@@ -33,6 +33,7 @@ import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHtt
 import { acquirePortLock, releasePortLock } from './lockfile.js';
 import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
 import peerManager from './peer-manager.js';
+import { isAuthConfigured } from './auth.js';
 
 export { tools, handleToolCall } from './mcp-tools.js';
 export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
@@ -304,7 +305,8 @@ export async function startServer() {
     } else {
         const app = express();
 
-        setupRoutes(app);
+        // streamable-http 模式下由 setupStreamableHttpRoutes 注册 /mcp，避免被默认路由抢先匹配
+        setupRoutes(app, { registerMcpRoutes: config.transport !== 'streamable-http' });
         setLoggingNotify((level, message) => {
             for (const [sid, { server }] of sessionServers) {
                 server.sendLoggingMessage({ level, data: message }, sid).catch(() => {});
@@ -336,6 +338,13 @@ export async function startServer() {
 
         const rawServer = httpsServer || http.createServer(app);
         createWebSocketServer(rawServer);
+
+        const isLoopbackHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host);
+        if (!isLoopbackHost && !isAuthConfigured(config)) {
+            console.error('\n⚠ 安全警告: 未配置 API Key 却绑定到非回环地址 ' + config.host);
+            console.error('  任何能访问该地址的网络客户端都可执行任意 CAD/LISP 操作。');
+            console.error('  请设置 MCP_API_KEY，或使用 --host 127.0.0.1 仅限本机访问。\n');
+        }
 
         const lock = acquirePortLock(config.port, config.host);
         if (!lock.ok) {

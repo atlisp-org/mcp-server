@@ -114,9 +114,6 @@ async function runToolCall(name, args, options) {
             }
 
             await writeAuditError(name, args, options, e);
-            if (e instanceof MCPError && e.code === ERROR_CODES.INVALID_ARGS) {
-                return mcpErrorResponse(e);
-            }
             if (e instanceof MCPError) return mcpErrorResponse(e);
             if (e.message?.startsWith('Missing required') || e.message?.startsWith('Invalid type')) {
                 return mcpErrorResponse(new MCPError(ERROR_CODES.INVALID_ARGS, e.message));

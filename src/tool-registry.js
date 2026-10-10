@@ -16,14 +16,6 @@ export function registerTool(toolDef, handler) {
     return true;
 }
 
-export function getCustomHandlers() {
-    return customHandlers;
-}
-
-export function getCustomToolNames() {
-    return customTools.map(t => t.name);
-}
-
 export function callCustomTool(name, args) {
     const handler = customHandlers.get(name);
     if (!handler) {

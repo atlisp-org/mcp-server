@@ -34,8 +34,10 @@ pool.onInstanceSwitch(() => {
   }
 });
 
-// Re-export handleToolCall from the executor module
-export { handleToolCall } from './tool-executor.js';
+// Re-export handleToolCall from the executor module（同时在本模块内使用，
+// 让 batch_concurrent_tasks 走完整的限速/校验/Undo/审计路径）
+import { handleToolCall } from './tool-executor.js';
+export { handleToolCall };
 
 /**
  * @param {string} toolName
@@ -425,21 +427,21 @@ export const TOOL_HANDLERS = {
             return { content: [{ type: 'text', text: '最多支持 50 个并发任务' }], isError: true };
         }
 
+        const parentCtx = mcpContext.getStore();
         const results = await Promise.allSettled(a.tasks.map(async (task, idx) => {
-            const handler = TOOL_HANDLERS[task.tool];
-            if (!handler) return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: `未知工具: ${task.tool}` };
-
-            const ctx = mcpContext.getStore();
-            const prevInstance = ctx?._toolInstance || null;
-            if (ctx && task.instance) ctx._toolInstance = task.instance;
+            // 每个子任务在独立 AsyncLocalStorage 上下文中执行，避免并发写 _toolInstance 竞态；
+            // 统一走 handleToolCall，使限速/参数校验/Undo/审计对子工具同样生效。
+            const childCtx = { ...(parentCtx || {}) };
+            if (task.instance) childCtx._toolInstance = task.instance;
+            const childArgs = task.instance ? { ...(task.args || {}), instance: task.instance } : (task.args || {});
 
             try {
-                const result = await handler(task.args || {});
-                return { index: idx, tool: task.tool, instance: task.instance, ok: !result.isError, data: result.content?.[0]?.text || result };
+                const result = await mcpContext.run(childCtx, () =>
+                    handleToolCall(task.tool, childArgs, { sessionId: parentCtx?.sessionId })
+                );
+                return { index: idx, tool: task.tool, instance: task.instance, ok: !result?.isError, data: result?.content?.[0]?.text || result };
             } catch (e) {
                 return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: e.message };
-            } finally {
-                if (ctx) ctx._toolInstance = prevInstance;
             }
         }));
 

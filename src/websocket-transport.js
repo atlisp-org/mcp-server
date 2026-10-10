@@ -7,6 +7,18 @@ import { SERVER_NAME, SERVER_VERSION, SERVER_CAPABILITIES } from './constants.js
 import { getVisibleTools } from './tools/index.js';
 import { subscribe, unsubscribe } from './subscription-manager.js';
 import config from './config.js';
+import { resolveApiKeyRole, isAuthConfigured } from './auth.js';
+
+function extractWsKey(req) {
+    const auth = req.headers?.authorization;
+    if (auth) return auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth.trim();
+    try {
+        const url = new URL(req.url, 'http://localhost');
+        return url.searchParams.get('apikey') || url.searchParams.get('apiKey') || url.searchParams.get('token');
+    } catch {
+        return null;
+    }
+}
 
 const PING_INTERVAL = config.heartbeatInterval || 30000;
 const CAD_POLL_INTERVAL = 5000;
@@ -252,7 +264,17 @@ export function createWebSocketServer(httpServer) {
     setupDocumentChangeListener();
     startCadPolling();
 
-    _wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+    _wss = new WebSocketServer({
+        server: httpServer,
+        path: '/ws',
+        // WS 升级不经过 Express 中间件，必须在握手阶段自行鉴权
+        verifyClient: ({ req }, done) => {
+            if (!isAuthConfigured(config)) return done(true);
+            const role = resolveApiKeyRole(extractWsKey(req), config);
+            if (role) return done(true);
+            done(false, 401, 'Unauthorized');
+        },
+    });
 
     _wss.on('connection', (ws, req) => {
         const clientId = randomUUID();

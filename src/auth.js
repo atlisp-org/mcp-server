@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'crypto';
+
 // Role-Based Access Control
 const ROLES = {
   admin: { priority: 100, can: ['*'] },
@@ -44,6 +46,43 @@ export function getRolePriority(role) {
   return ROLES[role]?.priority || 0;
 }
 
+// 常量时间字符串比较，避免 API Key 校验被时序侧信道探测
+export function safeKeyEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  try {
+    return timingSafeEqual(ab, bb);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 统一的鉴权解析：返回角色字符串，未通过返回 null。
+ * - 未配置任何 key（apiKey 为空且 apiKeys 为空）→ 'admin'（向后兼容的本地开放模式）
+ * - key 匹配 apiKey → 'admin'
+ * - key 匹配 apiKeys 中的某项 → 该项的 role（默认 operator）
+ * - 其余 → null
+ */
+export function resolveApiKeyRole(apiKey, cfg = {}) {
+  if (apiKey) {
+    if (cfg.apiKey && safeKeyEqual(apiKey, cfg.apiKey)) return 'admin';
+    if (Array.isArray(cfg.apiKeys)) {
+      for (const k of cfg.apiKeys) {
+        if (k && safeKeyEqual(apiKey, k.key)) return k.role || 'operator';
+      }
+    }
+  }
+  if (!cfg.apiKey && (!cfg.apiKeys || cfg.apiKeys.length === 0)) return 'admin';
+  return null;
+}
+
+export function isAuthConfigured(cfg = {}) {
+  return Boolean(cfg.apiKey) || (Array.isArray(cfg.apiKeys) && cfg.apiKeys.length > 0);
+}
+
 export function getToolPermission(toolName) {
   // Exact match first
   for (const [pattern, perm] of Object.entries(TOOL_PERMISSIONS)) {
@@ -70,14 +109,11 @@ export function getRole(name) {
 }
 
 export function getApiKeyRole(apiKey, config) {
-  // Check config.apiKeys for matching key
-  if (config.apiKeys && Array.isArray(config.apiKeys)) {
-    const found = config.apiKeys.find(k => k.key === apiKey);
-    if (found) return found.role || 'operator';
-  }
-  // Default based on whether API key auth is enabled
-  if (config.apiKey && apiKey === config.apiKey) return 'admin';
-  if (!config.apiKey) return 'admin'; // No auth = full access
+  const role = resolveApiKeyRole(apiKey, config);
+  if (role) return role;
+  // 鉴权未配置 → 'admin'（本地开放），由 resolveApiKeyRole 已覆盖；
+  // 配置了但 key 不匹配 → 'viewer'（保持历史返回值语义）
+  if (!isAuthConfigured(config)) return 'admin';
   return 'viewer';
 }
 

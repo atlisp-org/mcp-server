@@ -595,12 +595,9 @@ class CadConnection {
       } else {
         const idx = this._readWorkers.indexOf(w);
         if (idx >= 0) this._readWorkers.splice(idx, 1);
-        const poolSize = this._workerPoolSize;
-        const alive = this._readWorkers.filter(rw => rw.connected).length;
-        if (alive < poolSize - 1) {
-          const rw = this._spawnWorker('read');
-          this._readWorkers.push(rw);
-        }
+        // 主动轮换/重置导致的退出由调用方负责补位，避免重复 spawn
+        if (w._intentionalExit) return;
+        this._scheduleReadWorkerRestart();
       }
     });
 
@@ -627,12 +624,7 @@ class CadConnection {
     }
 
     if (isReadOnly && poolSize > 1) {
-      this._readWorkers = this._readWorkers.filter(rw => rw.connected);
-      const needed = poolSize - 1 - this._readWorkers.length;
-      for (let i = 0; i < needed; i++) {
-        const rw = this._spawnWorker('read');
-        this._readWorkers.push(rw);
-      }
+      this._ensureReadWorkers();
       if (this._readWorkers.length > 0) {
         this._readWorkerIndex = (this._readWorkerIndex + 1) % this._readWorkers.length;
         return this._readWorkers[this._readWorkerIndex];
@@ -640,6 +632,33 @@ class CadConnection {
     }
 
     return this._primaryWorker;
+  }
+
+  /** 同步补齐读 worker 池到 poolSize-1，返回存活的读 worker 列表。*/
+  _ensureReadWorkers() {
+    const poolSize = this._workerPoolSize;
+    if (poolSize <= 1) return this._readWorkers;
+    this._readWorkers = this._readWorkers.filter(rw => rw.connected);
+    const needed = poolSize - 1 - this._readWorkers.length;
+    for (let i = 0; i < needed; i++) {
+      this._readWorkers.push(this._spawnWorker('read'));
+    }
+    return this._readWorkers;
+  }
+
+  /** 读 worker 崩溃后的补位：指数退避，避免 worker 秒退时形成紧凑重启循环。*/
+  _scheduleReadWorkerRestart() {
+    const poolSize = this._workerPoolSize;
+    if (poolSize <= 1) return;
+    const attempt = (this._readRestartAttempts = (this._readRestartAttempts || 0) + 1);
+    const delay = Math.min(200 * Math.pow(2, attempt - 1), 5000);
+    const timer = setTimeout(() => {
+      this._readRestartTimers = this._readRestartTimers.filter(t => t !== timer);
+      if (this._readWorkers.filter(rw => rw.connected).length < poolSize - 1) {
+        this._readWorkers.push(this._spawnWorker('read'));
+      }
+    }, delay);
+    this._readRestartTimers.push(timer);
   }
 
   _failPending(message) {
@@ -660,14 +679,15 @@ class CadConnection {
     this._commandQueue.clear();
 
     if (this._primaryWorker) {
-      try { this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
+      try { this._primaryWorker.connected = false; this._primaryWorker._intentionalExit = true; this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
       this._primaryWorker = null;
     }
     for (const rw of this._readWorkers) {
-      try { rw.kill(); } catch (e) { logError('[cad]', e?.message || e); }
+      try { rw.connected = false; rw._intentionalExit = true; rw.kill(); } catch (e) { logError('[cad]', e?.message || e); }
     }
     this._readWorkers = [];
     this._readWorkerIndex = 0;
+    this._readRestartAttempts = 0;
 
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
@@ -687,6 +707,7 @@ class CadConnection {
     // 优雅地关闭旧 worker
     try {
       oldWorker.connected = false;
+      oldWorker._intentionalExit = true;
       oldWorker.kill();
     } catch (e) {
       logError('[cad]', '轮换 worker 时关闭旧 worker 失败:', e?.message || e);
@@ -699,15 +720,10 @@ class CadConnection {
       if (!this._heartbeatTimer) this._startHeartbeat();
       this._restartCount = 0;
     } else {
-      // 如果是 read worker，从列表中移除并创建新的
+      // 如果是 read worker，从列表中移除并补齐
       const idx = this._readWorkers.indexOf(oldWorker);
       if (idx >= 0) this._readWorkers.splice(idx, 1);
-      const poolSize = this._workerPoolSize;
-      const alive = this._readWorkers.filter(rw => rw.connected).length;
-      if (alive < poolSize - 1) {
-        const rw = this._spawnWorker('read');
-        this._readWorkers.push(rw);
-      }
+      this._ensureReadWorkers();
     }
   }
 

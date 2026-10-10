@@ -19,7 +19,7 @@ import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
 import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from './rate-limiter.js';
 import { getVisibleTools } from './tools/index.js';
-import { getApiKeyRole, canAccess } from './auth.js';
+import { getApiKeyRole, canAccess, resolveApiKeyRole } from './auth.js';
 import { SERVER_VERSION } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +50,6 @@ function getToolsJson() {
 
 const mcpLimiter = createRateLimitMiddleware();
 const pendingMcpRequests = new Map();
-const { apiKey, apiKeys, enableCors, corsOrigin } = config;
 
 const JSON_CONTENT_TYPES = ['application/json', 'application/json-rpc', 'application/vnd.api+json'];
 
@@ -88,39 +87,36 @@ export function createLoggingMiddleware() {
     };
 }
 
+function extractBearerKey(req) {
+    const auth = req.get('Authorization');
+    if (!auth) return null;
+    return auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth.trim();
+}
+
 export function createAuthMiddleware() {
-    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/debug', '/playground'];
+    // 公开端点：仅保留监控与静态文档。管理/调试类端点（/debug、/health/full 等）
+    // 必须经过鉴权，避免泄露会话/内存/环境等运行态信息。
+    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/playground', '/go'];
     return (req, res, next) => {
         // Public GET endpoints are unrestricted
-        if (PUBLIC_PATHS.includes(req.path)) return next();
+        if (req.method === 'OPTIONS' || PUBLIC_PATHS.includes(req.path)) return next();
 
-        const auth = req.get('Authorization');
-        const key = auth ? auth.replace('Bearer ', '') : null;
-
-        // Check single apiKey (legacy admin)
-        if (apiKey && key === apiKey) {
+        const key = extractBearerKey(req);
+        const role = resolveApiKeyRole(key, config);
+        if (role) {
             req.apiKey = key;
-            req.role = 'admin';
-            return next();
-        }
-
-        // Check apiKeys array
-        if (key && apiKeys && Array.isArray(apiKeys)) {
-            const found = apiKeys.find(k => k.key === key);
-            if (found) {
-                req.apiKey = key;
-                req.role = found.role || 'operator';
-                return next();
-            }
-        }
-
-        // No auth configured = full access
-        if (!apiKey && (!apiKeys || apiKeys.length === 0)) {
-            req.role = 'admin';
+            req.role = role;
             return next();
         }
 
         return res.status(401).json({ error: 'Unauthorized' });
+    };
+}
+
+function createAdminMiddleware() {
+    return (req, res, next) => {
+        if (req.role === 'admin') return next();
+        return res.status(403).json({ error: 'Forbidden: admin role required' });
     };
 }
 
@@ -138,10 +134,10 @@ function originMatches(pattern, origin) {
 }
 
 export function createCorsMiddleware() {
-    const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
-    const allowAll = allowedOrigins.includes('*');
     return (req, res, next) => {
-        if (!enableCors) return next();
+        if (!config.enableCors) return next();
+        const allowedOrigins = (config.corsOrigin || '').split(',').map(s => s.trim()).filter(Boolean);
+        const allowAll = allowedOrigins.includes('*');
         const origin = req.headers.origin;
         const isPnaPreflight = req.method === 'OPTIONS' && req.headers['access-control-request-private-network'] === 'true';
         if (allowAll) {
@@ -149,7 +145,7 @@ export function createCorsMiddleware() {
                 res.setHeader('Access-Control-Allow-Origin', origin);
                 res.setHeader('Vary', 'Origin');
             } else {
-                res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+                res.setHeader('Access-Control-Allow-Origin', config.corsOrigin);
             }
         } else if (origin && allowedOrigins.some(p => originMatches(p, origin))) {
             res.setHeader('Access-Control-Allow-Origin', origin);
@@ -180,34 +176,37 @@ function authorizeRequest(req, toolName) {
     if (req.role) {
         return canAccess(req.role, toolName);
     }
-    const auth = req.get('Authorization');
-    const key = auth ? auth.replace('Bearer ', '') : null;
-    const role = getApiKeyRole(key, config);
+    const role = getApiKeyRole(extractBearerKey(req), config);
     return canAccess(role, toolName);
 }
 
 function createRbacMiddleware() {
     return (req, res, next) => {
-        const body = req.body;
-        if (body && body.method === 'tools/call' && body.params && body.params.name) {
-            const toolName = body.params.name;
-            if (!authorizeRequest(req, toolName)) {
-                return res.status(403).json({
-                    jsonrpc: '2.0',
-                    id: body.id || null,
-                    error: { code: -32000, message: 'Forbidden: insufficient permissions' }
-                });
+        // JSON-RPC 批量请求（数组）也要逐个校验，否则 viewer 可用 [{...tools/call...}] 绕过 RBAC
+        const bodies = Array.isArray(req.body) ? req.body : [req.body];
+        for (const body of bodies) {
+            if (body && body.method === 'tools/call' && body.params && body.params.name) {
+                const toolName = body.params.name;
+                if (!authorizeRequest(req, toolName)) {
+                    return res.status(403).json({
+                        jsonrpc: '2.0',
+                        id: body.id || null,
+                        error: { code: -32000, message: 'Forbidden: insufficient permissions' }
+                    });
+                }
             }
         }
         next();
     };
 }
 
-export function setupRoutes(app) {
+export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
     app.use(createJsonBodyParser());
     app.use(createLoggingMiddleware());
-    app.use(createAuthMiddleware());
+    // CORS 必须在鉴权之前：否则配置了 API Key 时，浏览器预检 OPTIONS 会被 401/403
+    // 直接拒绝且不带 CORS 头，跨域请求一步都走不出去。
     app.use(createCorsMiddleware());
+    app.use(createAuthMiddleware());
 
     app.use((req, res, next) => {
         const start = Date.now();
@@ -310,7 +309,7 @@ export function setupRoutes(app) {
         });
     }
 
-    app.post('/config/reload', (req, res) => {
+    app.post('/config/reload', createAdminMiddleware(), (req, res) => {
         const success = reloadConfig();
         if (success) {
             log('Configuration reloaded');
@@ -321,8 +320,7 @@ export function setupRoutes(app) {
     });
 
     app.get('/rate-limit/status', (req, res) => {
-        const auth = req.get('Authorization');
-        const apiKey = auth ? auth.replace('Bearer ', '') : null;
+        const apiKey = extractBearerKey(req);
         const status = getRateLimitStatus(apiKey);
         res.json({
             limit: status.limit,
@@ -331,9 +329,8 @@ export function setupRoutes(app) {
         });
     });
 
-    app.post('/rate-limit/reset', (req, res) => {
-        const auth = req.get('Authorization');
-        const apiKey = auth ? auth.replace('Bearer ', '') : null;
+    app.post('/rate-limit/reset', createAdminMiddleware(), (req, res) => {
+        const apiKey = extractBearerKey(req);
         resetRateLimit(apiKey);
         res.json({ status: 'ok', message: 'Rate limit reset' });
     });
@@ -377,12 +374,15 @@ export function setupRoutes(app) {
         res.send(html);
     });
 
-    app.all('/mcp', mcpLimiter, createRbacMiddleware(), handleMcpPost);
-    app.all('/mcp/:path', mcpLimiter, createRbacMiddleware(), handleMcpPost);
-    app.get('/mcp/stream', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+    if (registerMcpRoutes) {
+        // 具体路径必须注册在参数路径之前，否则 /mcp/:path 会先匹配掉 /mcp/stream
+        app.get('/mcp/stream', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+        app.all('/mcp', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+        app.all('/mcp/:path', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+    }
 
     app.get('/sse', mcpLimiter, handleSse);
-    app.post('/message', mcpLimiter, handleMessage);
+    app.post('/message', mcpLimiter, createRbacMiddleware(), handleMessage);
 
     app.get('/cad/events', (req, res) => {
         const sessionId = randomUUID();
@@ -398,7 +398,7 @@ export function setupRoutes(app) {
         res.json(stats);
     });
 
-    app.post('/peers/scan', async (req, res) => {
+    app.post('/peers/scan', createAdminMiddleware(), async (req, res) => {
         try {
             const found = await peerManager.scanLan(req.body || {});
             res.json({ discovered: found.length, peers: found });
@@ -407,7 +407,7 @@ export function setupRoutes(app) {
         }
     });
 
-    app.post('/peers/connect', (req, res) => {
+    app.post('/peers/connect', createAdminMiddleware(), (req, res) => {
         const { host, port, apikey } = req.body || {};
         if (!host) {
             return res.status(400).json({ error: 'host is required' });
@@ -416,7 +416,7 @@ export function setupRoutes(app) {
         res.json({ connected: peer.healthy, peer });
     });
 
-    app.delete('/peers/:id', (req, res) => {
+    app.delete('/peers/:id', createAdminMiddleware(), (req, res) => {
         const removed = peerManager.removePeer(req.params.id);
         res.json({ removed });
     });
@@ -474,7 +474,9 @@ async function handleMcpPost(req, res) {
 async function getMcpResponse(sessionId, body) {
     trackMcpMethod(body.method);
     if (body.method === 'tools/call') {
-        const dedupKey = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+        // 去重键必须包含 sessionId：否则不同会话发出内容相同的调用会共享同一个 promise，
+        // 导致跨会话结果串用（对破坏性调用尤其危险）。
+        const dedupKey = createHash('sha256').update(`${sessionId}:${JSON.stringify(body)}`).digest('hex');
         let promise = pendingMcpRequests.get(dedupKey);
         if (!promise) {
             promise = (async () => {
