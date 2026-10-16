@@ -1,4 +1,5 @@
 import { cad, getActiveConnection } from '../cad.js';
+import config from '../config.js';
 import { pool } from '../cad-pool.js';
 import { CAD_PLATFORMS, FILE_EXTENSIONS } from '../constants.js';
 import { getCached, setCache } from './resource-cache.js';
@@ -8,14 +9,22 @@ import { ensureCad } from './resource-utils.js';
 import { buildBlockRefsCode, buildTablesCode, parseTableRecord } from './lisp-code-builders.js';
 
 export async function getBlockRefs(params = {}) {
-  const cacheKey = `dwg:block-refs:${params.blockName || 'all'}`;
+  // 与 resource-readers.js 的 getBlockRefs 保持一致：分页下沉到 CAD 端，
+  // 响应回填 total/offset/limit。limit 未给则保持历史行为（一次返回全部）。
+  const offset = Math.max(0, parseInt(params.offset, 10) || 0);
+  const rawLimit = parseInt(params.limit, 10) || 0;
+  const maxLimit = Number(config.maxEntityLimit) || 20000;
+  const limit = rawLimit > 0 ? Math.min(rawLimit, maxLimit) : 0;
+
+  // 缓存键带上 offset/limit，否则第一页会命中整表缓存并冒充后续页
+  const cacheKey = `dwg:block-refs:${params.blockName || 'all'}:${offset}:${limit}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
   await ensureCad();
 
   try {
-    const code = buildBlockRefsCode(params.blockName);
+    const code = buildBlockRefsCode(params.blockName, offset, limit);
     const resultStr = await cad.sendCommandWithResult(code);
 
     const parsed = parseLispRecursive(resultStr);
@@ -31,7 +40,12 @@ export async function getBlockRefs(params = {}) {
     }
     const blockRefs = Array.isArray(result.blockRefs) ? result.blockRefs : [];
     const finalResult = {
+      // total 为全量条数（不受 offset/limit 影响），便于调用方断言 collected === total
       total: typeof result.total === 'number' ? result.total : blockRefs.length,
+      offset: typeof result.offset === 'number' ? result.offset : offset,
+      limit: typeof result.limit === 'number' ? result.limit : limit,
+      // 下一页的 offset（绝对下标）：按它翻页，不要用 offset + blockRefs.length
+      nextOffset: typeof result.nextOffset === 'number' ? result.nextOffset : offset + blockRefs.length,
       blockRefs: blockRefs.map(br => {
         const obj = {};
         if (Array.isArray(br)) {

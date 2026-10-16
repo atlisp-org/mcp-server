@@ -403,6 +403,32 @@ describe('getBlockRefs', () => {
     await expect(mr.getBlockRefs({ blockName: 'X' })).rejects.toThrow('block-refs: 解析 Lisp 结果失败');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('getBlockRefs error'));
   });
+
+  it('offset/limit 下推到 LISP 并在响应回填 total/offset/limit', async () => {
+    cadMock.sendCommandWithResult.mockResolvedValueOnce(
+      '(("total" 2740) ("offset" 5) ("limit" 2) ("blockRefs" ((("handle" "B1")) (("handle" "B2")))))'
+    );
+    const res = await mr.getBlockRefs({ offset: '5', limit: '2' });
+    expect(res.total).toBe(2740);
+    expect(res.offset).toBe(5);
+    expect(res.limit).toBe(2);
+    expect(res.blockRefs).toHaveLength(2);
+    const code = cadMock.sendCommandWithResult.mock.calls[0][0];
+    expect(code).toContain('i 5');
+    expect(code).toContain('(< (length refs) 2)');
+  });
+
+  it('不同 offset/limit 走不同缓存键（第一页不冒充第二页）', async () => {
+    cadMock.sendCommandWithResult
+      .mockResolvedValueOnce('(("total" 4) ("offset" 0) ("limit" 2) ("blockRefs" ((("handle" "P1")))))')
+      .mockResolvedValueOnce('(("total" 4) ("offset" 2) ("limit" 2) ("blockRefs" ((("handle" "P3")))))');
+    const page1 = await mr.getBlockRefs({ limit: 2 });
+    const page2 = await mr.getBlockRefs({ offset: 2, limit: 2 });
+    expect(page1.blockRefs[0].handle).toBe('P1');
+    expect(page2.blockRefs[0].handle).toBe('P3');
+    expect(page1).not.toBe(page2);
+    expect(cadMock.sendCommandWithResult).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('getTables', () => {

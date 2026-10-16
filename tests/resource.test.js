@@ -417,7 +417,9 @@ describe('resource-handlers', () => {
       mockSendCommandWithResult.mockResolvedValue(
         '((total . 0) (blockRefs . nil))');
       const result = await readResource('atlisp://dwg/block-refs/MyBlock');
-      expect(result).toEqual({ total: 0, blockRefs: [] });
+      // 响应回填 total/offset/limit/nextOffset，便于调用方断言 collected === total
+      // 并按 nextOffset 翻页（offset 是选择集下标，返回数组下标可能与之漂移）
+      expect(result).toEqual({ total: 0, offset: 0, limit: 0, nextOffset: 0, blockRefs: [] });
       expect(mockSendCommandWithResult).toHaveBeenCalled();
       const code = mockSendCommandWithResult.mock.calls[0][0];
       expect(code).toContain('"MyBlock"');
@@ -426,6 +428,88 @@ describe('resource-handlers', () => {
     it('throws when CAD not connected for path-based block-refs', async () => {
       mockConnect.mockResolvedValue(false);
       await expect(readResource('atlisp://dwg/block-refs/MyBlock')).rejects.toThrow('未连接 CAD');
+    });
+  });
+
+  describe('readResource atlisp://dwg/block-refs pagination', () => {
+    const PAGE_RESULT = '(("total" 2740) ("offset" 0) ("limit" 2) ("blockRefs" '
+      + '((("handle" "A1") ("blockName" "X")) (("handle" "A2") ("blockName" "Y")))))';
+
+    it('?limit=2 真正在 CAD 端分页并回填 total/offset/limit', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue(PAGE_RESULT);
+      const result = await readResource('atlisp://dwg/block-refs?limit=2');
+      expect(result.total).toBe(2740);
+      expect(result.offset).toBe(0);
+      expect(result.limit).toBe(2);
+      expect(result.blockRefs).toHaveLength(2);
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      // 分页条件下推到 LISP：只回传一页
+      expect(code).toContain('(< (length refs) 2)');
+      expect(code).toContain('i 0');
+    });
+
+    it('?offset=10&limit=5 透传 offset/limit', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue(
+        '(("total" 2740) ("offset" 10) ("limit" 5) ("blockRefs" ()))');
+      const result = await readResource('atlisp://dwg/block-refs?offset=10&limit=5');
+      expect(result).toMatchObject({ total: 2740, offset: 10, limit: 5 });
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      expect(code).toContain('i 10');
+      expect(code).toContain('(< (length refs) 5)');
+    });
+
+    it('不传 limit 时保持历史行为（一次返回全部，limit 记为 0）', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue(
+        '(("total" 1) ("offset" 0) ("limit" 0) ("blockRefs" ((("handle" "A1")))))');
+      const result = await readResource('atlisp://dwg/block-refs');
+      expect(result.limit).toBe(0);
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      expect(code).toContain('(while (and (< i total) T)');
+    });
+
+    it('非法 offset/limit 回落到不分页', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue(
+        '(("total" 0) ("offset" 0) ("limit" 0) ("blockRefs" nil))');
+      const result = await readResource('atlisp://dwg/block-refs?offset=abc&limit=-3');
+      expect(result).toMatchObject({ offset: 0, limit: 0 });
+    });
+  });
+
+  describe('readResource atlisp://dwg/block-refs/{blockName} 特殊字符', () => {
+    it('含 $ 的块名 + 分页参数（修复前报「资源不存在」）', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue('((("total" 16) ("blockRefs" ())) )');
+      await readResource('atlisp://dwg/block-refs/$DorLib2D$00000001?limit=2');
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      expect(code).toContain('(cons 2 "$DorLib2D$00000001")');
+      expect(code).toContain('(< (length refs) 2)');
+    });
+
+    it('URL 编码的 $ 块名会被解码（%24 → $）', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue('((("total" 1) ("blockRefs" ())))');
+      await readResource('atlisp://dwg/block-refs/%24DorLib2D%2400000001');
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      expect(code).toContain('(cons 2 "$DorLib2D$00000001")');
+    });
+
+    it('中文 + 空格的块名（URL 编码后）可匹配', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue('((("total" 1) ("blockRefs" ())))');
+      const name = '$LinePat$防水层 1';
+      await readResource(`atlisp://dwg/block-refs/${encodeURIComponent(name)}?limit=1`);
+      const code = mockSendCommandWithResult.mock.calls[0][0];
+      expect(code).toContain(`(cons 2 "${name}")`);
+    });
+
+    it('畸形百分号编码不抛错（退回原值）', async () => {
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue('((("total" 0) ("blockRefs" nil)))');
+      await expect(readResource('atlisp://dwg/block-refs/%E0%A4%A')).resolves.toBeDefined();
     });
   });
 });

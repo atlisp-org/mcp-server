@@ -9,7 +9,7 @@
 // =============================================================================
 import { cad } from '../cad.js';
 import { log } from '../logger.js';
-import '../config.js';
+import config from '../config.js';
 import { getCached, setCache } from './resource-cache.js';
 import { parseLispList, parseLispRecursive, escapeLispString } from '../handler-utils.js';
 import { ensureCad, propertyPairsToObject } from './resource-utils.js';
@@ -398,14 +398,23 @@ async function getDwgPath() {
 }
 
 async function getBlockRefs(params = {}) {
-  const cacheKey = `dwg:block-refs:${params.blockName || 'all'}`;
+  // 分页：offset/limit 透传到 CAD 端执行（见 buildBlockRefsCode）。
+  // limit 未给或不合法时按"不分页"处理，保持历史行为（一次返回全部），
+  // 由调用方显式传 limit 触发分页；limit 上限与流式读取一致（maxEntityLimit）。
+  const offset = Math.max(0, parseInt(params.offset, 10) || 0);
+  const rawLimit = parseInt(params.limit, 10) || 0;
+  const maxLimit = Number(config.maxEntityLimit) || 20000;
+  const limit = rawLimit > 0 ? Math.min(rawLimit, maxLimit) : 0;
+
+  // 缓存键必须带上 offset/limit，否则第一页会命中整表的缓存并冒充后续页
+  const cacheKey = `dwg:block-refs:${params.blockName || 'all'}:${offset}:${limit}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
   await ensureCad();
 
   try {
-    const code = buildBlockRefsCode(params.blockName);
+    const code = buildBlockRefsCode(params.blockName, offset, limit);
     const resultStr = await cad.sendCommandWithResult(code);
 
     const parsed = parseLispRecursive(resultStr);
@@ -421,7 +430,14 @@ async function getBlockRefs(params = {}) {
     }
     const blockRefs = Array.isArray(result.blockRefs) ? result.blockRefs : [];
     const finalResult = {
+      // total 是过滤条件下的**全量**条数（不受 offset/limit 影响），
+      // 调用方据此循环分页并断言 collected === total
       total: typeof result.total === 'number' ? result.total : blockRefs.length,
+      offset: typeof result.offset === 'number' ? result.offset : offset,
+      limit: typeof result.limit === 'number' ? result.limit : limit,
+      // 下一页的 offset（绝对下标）：offset 是 ssget 选择集下标而不是返回数组下标，
+      // 个别块参照读不出属性时两者会漂移，按 nextOffset 翻页才不会重复/漏。
+      nextOffset: typeof result.nextOffset === 'number' ? result.nextOffset : offset + blockRefs.length,
       blockRefs: blockRefs.map(br => {
         const obj = {};
         if (Array.isArray(br)) {
