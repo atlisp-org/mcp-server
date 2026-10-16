@@ -37,7 +37,7 @@ import { isAuthConfigured } from './auth.js';
 
 // 兜底：CommandQueue 清理/去重、worker 重置等产生的 promise rejection 不应杀死服务器进程
 process.on('unhandledRejection', (reason) => {
-  try { logError?.('[atlisp-mcp] unhandledRejection:', reason?.message || reason); } catch (e) {}
+  try { logError?.('[atlisp-mcp] unhandledRejection:', reason?.message || reason); } catch { /* 兜底 handler 自身异常忽略 */ }
 });
 
 export { tools, handleToolCall } from './mcp-tools.js';

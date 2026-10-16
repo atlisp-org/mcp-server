@@ -16,7 +16,7 @@ const workerPath = path.join(__dirname, 'cad-worker.js');
 
 // 兜底：队列清理/去重、worker 重置等产生的 promise rejection 不应杀死进程
 process.on('unhandledRejection', (reason) => {
-  try { logError('[atlisp-mcp:cad] unhandledRejection:', reason?.message || reason); } catch (e) {}
+  try { logError('[atlisp-mcp:cad] unhandledRejection:', reason?.message || reason); } catch { /* 兜底 handler 自身异常忽略 */ }
 });
 
 const MESSAGE_TIMEOUT = config.messageTimeout;
