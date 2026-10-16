@@ -2,6 +2,17 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.9.14] - 2026-10-16
+
+### 更新内容
+
+- fix: 远程 peer 按地址去重，实例 ID 漂移不再堆积重复条目 (c8af720)
+- Merge remote-tracking branch 'origin/main' (e689988)
+- fix: 全局兜底 unhandledRejection，避免 MCP server 进程退出 (bf1ef63)
+- fix: 正确性/安全/可靠性多项修复并补充测试 (68f660f)
+- fix: 配置优先级倒置，--port 等命令行参数被配置文件静默覆盖 (ad98605)
+- fix: 修正 heapSizeLimit 取值来源（OOM 天花板此前恒为 0） (3994758)
+
 ## [1.9.13] - 2026-10-06
 
 ### 更新内容
