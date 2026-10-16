@@ -6,7 +6,17 @@ import peerDiscovery from './peer-discovery.js';
 const HEALTH_CHECK_INTERVAL = 30000;
 const HEALTH_CHECK_TIMEOUT = 5000;
 
+/** 熔断状态机：连续失败达到该阈值即打开熔断 */
+export const CIRCUIT_FAILURE_THRESHOLD = 3;
+/** 熔断状态机：open 冷却期（毫秒），到期允许放行一次 half-open 探测 */
+export const CIRCUIT_COOLDOWN_MS = 30000;
+/** 时延 EWMA 平滑系数（新样本权重） */
+export const LATENCY_EWMA_ALPHA = 0.3;
+/** 排序用：无时延样本视为最慢 */
+const MAX_LATENCY = Number.MAX_SAFE_INTEGER;
+
 /**
+ * @typedef {'closed'|'open'|'half-open'} CircuitState
  * @typedef {{
  *   id: string,
  *   host: string,
@@ -18,7 +28,17 @@ const HEALTH_CHECK_TIMEOUT = 5000;
  *   healthy: boolean,
  *   lastSeen: number,
  *   lastHealthCheck: number,
- *   apikey?: string
+ *   apikey?: string,
+ *   circuit?: CircuitState,
+ *   circuitOpenedAt?: number,
+ *   consecutiveFailures?: number,
+ *   lastSuccess?: number,
+ *   lastFailure?: number,
+ *   latencyEwma?: number|null,
+ *   probeInFlight?: boolean,
+ *   forwardSuccess?: number,
+ *   forwardFailure?: number,
+ *   lastForwardAt?: number
  * }} ManagedPeer
  */
 
@@ -50,7 +70,8 @@ class PeerManager {
    */
   _loadStaticPeers() {
     const rp = config.remotePeer;
-    if (rp && rp.host) {
+    // host === 'auto' 表示"总是自动选路"，不注册固定 peer
+    if (rp && rp.host && rp.host !== 'auto') {
       this._addStaticPeer(rp.host, rp.port || 8110, {
         id: `remote-${rp.host}-${rp.port || 8110}`,
         apikey: rp.apiKey,
@@ -86,8 +107,161 @@ class PeerManager {
    */
   getRemotePeer() {
     const rp = config.remotePeer;
-    if (!rp || !rp.host) return null;
+    if (!rp || !rp.host || rp.host === 'auto') return null;
     return this._peers.get(`remote-${rp.host}-${rp.port || 8110}`) || null;
+  }
+
+  // ===== 熔断状态机 + 转发指标 =====
+
+  /**
+   * 初始化 peer 的熔断/指标字段（幂等）
+   * @param {ManagedPeer} peer
+   * @returns {ManagedPeer}
+   */
+  _ensureCircuit(peer) {
+    if (peer.circuit === undefined) peer.circuit = 'closed';
+    if (peer.circuitOpenedAt === undefined) peer.circuitOpenedAt = 0;
+    if (peer.consecutiveFailures === undefined) peer.consecutiveFailures = 0;
+    if (peer.lastSuccess === undefined) peer.lastSuccess = 0;
+    if (peer.lastFailure === undefined) peer.lastFailure = 0;
+    if (peer.latencyEwma === undefined) peer.latencyEwma = null;
+    if (peer.probeInFlight === undefined) peer.probeInFlight = false;
+    if (peer.forwardSuccess === undefined) peer.forwardSuccess = 0;
+    if (peer.forwardFailure === undefined) peer.forwardFailure = 0;
+    if (peer.lastForwardAt === undefined) peer.lastForwardAt = 0;
+    return peer;
+  }
+
+  /**
+   * 获取熔断状态（open 冷却到期时惰性转为 half-open，无需定时器）
+   * @param {ManagedPeer|string|null|undefined} peerOrId - peer 对象或 id
+   * @returns {CircuitState|null} null 表示 peer 不存在
+   */
+  getCircuitState(peerOrId) {
+    const peer = typeof peerOrId === 'string' ? this._peers.get(peerOrId) : peerOrId;
+    if (!peer) return null;
+    this._ensureCircuit(peer);
+    if (peer.circuit === 'open' && Date.now() - (peer.circuitOpenedAt || 0) >= CIRCUIT_COOLDOWN_MS) {
+      peer.circuit = 'half-open';
+      peer.probeInFlight = false;
+      log(`Peer circuit half-open (冷却到期): ${peer.hostname} (${peer.url})`);
+    }
+    return peer.circuit;
+  }
+
+  /**
+   * 记录一次成功（健康探测/转发）：清零连续失败并关闭熔断
+   * @param {ManagedPeer} peer
+   * @param {number} [latencyMs] - 本次耗时（毫秒）
+   */
+  recordSuccess(peer, latencyMs) {
+    if (!peer) return;
+    this._ensureCircuit(peer);
+    const prev = peer.circuit;
+    this.getCircuitState(peer);
+    peer.consecutiveFailures = 0;
+    peer.circuit = 'closed';
+    peer.circuitOpenedAt = 0;
+    peer.probeInFlight = false;
+    peer.lastSuccess = Date.now();
+    this._recordLatency(peer, latencyMs);
+    if (prev === 'open' || prev === 'half-open') {
+      log(`Peer circuit closed (恢复): ${peer.hostname} (${peer.url})`);
+    }
+  }
+
+  /**
+   * 记录一次失败（健康探测/转发）：连续失败达阈值打开熔断；
+   * half-open 中再失败则重新打开并重置冷却期
+   * @param {ManagedPeer} peer
+   * @param {number} [latencyMs] - 本次耗时（毫秒）
+   */
+  recordFailure(peer, latencyMs) {
+    if (!peer) return;
+    this._ensureCircuit(peer);
+    const state = this.getCircuitState(peer);
+    peer.consecutiveFailures = (peer.consecutiveFailures || 0) + 1;
+    peer.lastFailure = Date.now();
+    peer.probeInFlight = false;
+    this._recordLatency(peer, latencyMs);
+    if (peer.circuit !== 'open' &&
+        (state === 'half-open' || peer.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD)) {
+      peer.circuit = 'open';
+      peer.circuitOpenedAt = Date.now();
+      log(`Peer circuit OPEN (${peer.consecutiveFailures} 连续失败): ${peer.hostname} (${peer.url})`);
+    }
+  }
+
+  /**
+   * 更新时延 EWMA
+   * @param {ManagedPeer} peer
+   * @param {number} [latencyMs]
+   */
+  _recordLatency(peer, latencyMs) {
+    if (typeof latencyMs !== 'number' || !Number.isFinite(latencyMs) || latencyMs < 0) return;
+    peer.latencyEwma = (peer.latencyEwma === null || peer.latencyEwma === undefined)
+      ? latencyMs
+      : LATENCY_EWMA_ALPHA * latencyMs + (1 - LATENCY_EWMA_ALPHA) * peer.latencyEwma;
+  }
+
+  /**
+   * 记录一次转发结果（成功/失败 + 耗时），并驱动熔断状态机
+   * @param {ManagedPeer} peer
+   * @param {boolean} ok
+   * @param {number} [latencyMs]
+   */
+  recordForwardResult(peer, ok, latencyMs) {
+    if (!peer) return;
+    this._ensureCircuit(peer);
+    peer.lastForwardAt = Date.now();
+    if (ok) {
+      peer.forwardSuccess = (peer.forwardSuccess || 0) + 1;
+      this.recordSuccess(peer, latencyMs);
+    } else {
+      peer.forwardFailure = (peer.forwardFailure || 0) + 1;
+      this.recordFailure(peer, latencyMs);
+    }
+  }
+
+  /**
+   * 是否可作为转发目标：健康 且 熔断 closed/half-open（half-open 未被探测占用）
+   * @param {ManagedPeer} peer
+   * @returns {boolean}
+   */
+  isPeerRoutable(peer) {
+    if (!peer) return false;
+    this._ensureCircuit(peer);
+    if (!peer.healthy) return false;
+    const state = this.getCircuitState(peer);
+    if (state === 'open') return false;
+    if (state === 'half-open' && peer.probeInFlight) return false;
+    return true;
+  }
+
+  /**
+   * 可路由 peer 列表，按时延 EWMA 升序（无样本视为最慢）
+   * @returns {ManagedPeer[]}
+   */
+  getRoutablePeers() {
+    return this.getPeers()
+      .filter(p => this.isPeerRoutable(p))
+      .sort((a, b) => {
+        const la = typeof a.latencyEwma === 'number' ? a.latencyEwma : MAX_LATENCY;
+        const lb = typeof b.latencyEwma === 'number' ? b.latencyEwma : MAX_LATENCY;
+        return la - lb;
+      });
+  }
+
+  /**
+   * 自动选路：返回时延 EWMA 最低的可用 peer；
+   * 选中 half-open peer 时占用其唯一探测名额（probeInFlight）
+   * @returns {ManagedPeer|null}
+   */
+  selectBestPeer() {
+    const best = this.getRoutablePeers()[0];
+    if (!best) return null;
+    if (this.getCircuitState(best) === 'half-open') best.probeInFlight = true;
+    return best;
   }
 
   /**
@@ -127,6 +301,7 @@ class PeerManager {
         lastHealthCheck: 0,
         apikey: peer.apikey,
       };
+      this._ensureCircuit(managedPeer);
       this._peers.set(peer.id, managedPeer);
       this._probePeer(managedPeer);
       this._notifyPeersChanged();
@@ -165,31 +340,37 @@ class PeerManager {
     if (managed) {
       managed.healthy = false;
       managed.connected = false;
+      this.recordFailure(managed);
       log(`Peer offline: ${managed.hostname} (${managed.url})`);
       this._notifyPeersChanged();
     }
   }
 
   /**
-   * 探测 peer 是否可达
+   * 探测 peer 是否可达（探测结果接入熔断状态机）
    */
   async _probePeer(peer) {
+    const startedAt = Date.now();
     try {
       const { probeMcp } = await import('./mcp-scanner.js');
       const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT, peer.apikey);
+      const latencyMs = Date.now() - startedAt;
 
       if (result) {
         peer.connected = true;
         peer.healthy = true;
         peer.lastSeen = Date.now();
+        this.recordSuccess(peer, latencyMs);
         log(`Peer reachable: ${peer.hostname} (${peer.url})`);
       } else {
         peer.connected = false;
         peer.healthy = false;
+        this.recordFailure(peer, latencyMs);
       }
     } catch {
       peer.connected = false;
       peer.healthy = false;
+      this.recordFailure(peer, Date.now() - startedAt);
     }
   }
 
@@ -224,9 +405,11 @@ class PeerManager {
         continue;
       }
 
+      const startedAt = Date.now();
       try {
         const { probeMcp } = await import('./mcp-scanner.js');
         const result = await probeMcp(peer.host, peer.port, HEALTH_CHECK_TIMEOUT, peer.apikey);
+        const latencyMs = Date.now() - startedAt;
         const wasHealthy = peer.healthy;
 
         peer.healthy = !!result;
@@ -235,6 +418,9 @@ class PeerManager {
 
         if (result) {
           peer.lastSeen = Date.now();
+          this.recordSuccess(peer, latencyMs);
+        } else {
+          this.recordFailure(peer, latencyMs);
         }
 
         if (wasHealthy && !peer.healthy) {
@@ -245,6 +431,7 @@ class PeerManager {
           this._notifyPeersChanged();
         }
       } catch {
+        this.recordFailure(peer, Date.now() - startedAt);
         if (peer.healthy) {
           peer.healthy = false;
           peer.connected = false;
@@ -333,6 +520,7 @@ class PeerManager {
       static: !!options.static,
     };
 
+    this._ensureCircuit(peer);
     this._peers.set(id, peer);
     this._probePeer(peer);
     this._notifyPeersChanged();
@@ -417,6 +605,11 @@ class PeerManager {
         version: p.version,
         healthy: p.healthy,
         lastSeenAgo: Date.now() - p.lastSeen,
+        circuit: this.getCircuitState(p) || 'closed',
+        consecutiveFailures: p.consecutiveFailures || 0,
+        latencyEwma: p.latencyEwma ?? null,
+        forwardSuccess: p.forwardSuccess || 0,
+        forwardFailure: p.forwardFailure || 0,
       })),
     };
   }

@@ -85,6 +85,16 @@ describe('peer-manager static peers', () => {
     expect(peerManager.getPeers()).toHaveLength(0);
   });
 
+  it("remotePeer.host='auto' 注册时跳过固定 peer（始终自动选路）", async () => {
+    configMock.remotePeer = { host: 'auto', autoForward: true };
+
+    peerManager.start();
+    await tick();
+
+    expect(peerManager.getRemotePeer()).toBeNull();
+    expect(peerManager.getPeers()).toHaveLength(0);
+  });
+
   it('health check keeps static peers, removes stale discovered peers', async () => {
     peerManager.addPeer('10.0.0.9', 8110, { static: true });
     await tick();

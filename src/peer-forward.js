@@ -1,7 +1,7 @@
 // @ts-check
 import { toolsByName } from './tools/index.js';
 import peerProxy from './peer-proxy.js';
-import { error as logError } from './logger.js';
+import { log, error as logError } from './logger.js';
 
 /** 本地管理/计算/编排工具：永不转发到 peer */
 const NON_FORWARDABLE = new Set([
@@ -48,21 +48,46 @@ export async function forwardToolCall(peerId, tool, args = {}, options = {}) {
 }
 
 /**
- * 获取当前配置且可用于自动转发的远程 peer（需 config.remotePeer.autoForward 开启）
- * @returns {{id: string, host: string, port: number, url: string}|null}
+ * 自动选路：决定 CAD_NOT_CONNECTED 时的转发目标。
+ *
+ * 优先级：
+ * 1. config.remotePeer 指定的固定 peer（若当前可用：健康且熔断 closed/half-open）
+ * 2. config.remotePeer.host === 'auto'（或固定 peer 不可用）时，
+ *    在所有可用 peer 中按时延 EWMA 最低者选路
+ * 3. 无可用 peer → 返回 null（打印清晰错误提示）
+ *
+ * @returns {Promise<{id: string, host: string, port: number, url: string}|null>}
  */
 export async function getAutoForwardPeer() {
   try {
     const { default: config } = await import('./config.js');
     const rp = config.remotePeer;
-    if (!rp || !rp.host || !rp.autoForward) return null;
+    if (!rp) return null;
+    const autoMode = rp.host === 'auto';
+    if (!autoMode && !rp.autoForward) return null;
+
     const { default: peerManager } = await import('./peer-manager.js');
-    const peer = peerManager.getRemotePeer();
-    if (!peer) {
-      logError(`[peer-forward] remotePeer 已配置 (${rp.host}:${rp.port}) 但未注册到 peer manager`);
-      return null;
+
+    if (!autoMode) {
+      const preferred = peerManager.getRemotePeer();
+      if (preferred && peerManager.isPeerRoutable(preferred)) return preferred;
+      if (preferred) {
+        const state = peerManager.getCircuitState(preferred) || 'unknown';
+        logError(`[peer-forward] 配置的 remotePeer (${preferred.url}) 当前不可用（熔断=${state}, 健康=${preferred.healthy}），降级为自动选路`);
+      } else {
+        logError(`[peer-forward] remotePeer 已配置 (${rp.host}:${rp.port}) 但未注册到 peer manager`);
+      }
     }
-    return peer;
+
+    const best = peerManager.selectBestPeer();
+    if (best) {
+      const ewma = typeof best.latencyEwma === 'number' ? `${Math.round(best.latencyEwma)}ms` : '未知';
+      log(`[peer-forward] 自动选路: ${best.id} (${best.url}) 时延EWMA=${ewma}`);
+      return best;
+    }
+
+    logError('[peer-forward] 无可用 peer 自动转发：没有健康且熔断关闭（closed/half-open）的 peer，请检查 peer_list / peer_scan');
+    return null;
   } catch (e) {
     logError(`[peer-forward] getAutoForwardPeer 失败: ${e.message}`);
     return null;

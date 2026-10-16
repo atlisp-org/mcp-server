@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { fakePeer, configMock } = vi.hoisted(() => ({
+const { fakePeer, otherPeer, configMock, peerManagerMock, loggerMock } = vi.hoisted(() => ({
   fakePeer: {
     id: 'remote-10.0.0.5-9999',
     host: '10.0.0.5',
@@ -11,20 +11,39 @@ const { fakePeer, configMock } = vi.hoisted(() => ({
     hostname: 'win-host',
     version: '1.9.9',
     apikey: 'sekrit',
+    latencyEwma: 42,
+  },
+  otherPeer: {
+    id: 'peer-10.0.0.6-8110',
+    host: '10.0.0.6',
+    port: 8110,
+    url: 'http://10.0.0.6:8110',
+    healthy: true,
+    connected: true,
+    hostname: 'win-host-2',
+    version: '1.9.9',
+    latencyEwma: 120,
   },
   configMock: { remotePeer: null, apiKey: '' },
+  peerManagerMock: {
+    getPeer: vi.fn(),
+    getPeerByUrl: vi.fn(),
+    getRemotePeer: vi.fn(),
+    getCircuitState: vi.fn(),
+    recordForwardResult: vi.fn(),
+    isPeerRoutable: vi.fn(),
+    selectBestPeer: vi.fn(),
+  },
+  loggerMock: { log: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), closeLog: vi.fn() },
 }));
 
 vi.mock('../src/peer-manager.js', () => ({
-  default: {
-    getPeer: (id) => (id === fakePeer.id ? fakePeer : null),
-    getPeerByUrl: (url) => (url === fakePeer.url ? fakePeer : null),
-    getRemotePeer: () => fakePeer,
-  },
+  default: peerManagerMock,
 }));
 vi.mock('../src/config.js', () => ({
   default: configMock,
 }));
+vi.mock('../src/logger.js', () => loggerMock);
 
 const fetchMock = vi.fn();
 
@@ -56,6 +75,12 @@ describe('peer-forward', () => {
     vi.clearAllMocks();
     configMock.remotePeer = null;
     configMock.apiKey = '';
+    peerManagerMock.getPeer.mockImplementation((id) => (id === fakePeer.id ? fakePeer : null));
+    peerManagerMock.getPeerByUrl.mockImplementation((url) => (url === fakePeer.url ? fakePeer : null));
+    peerManagerMock.getRemotePeer.mockReturnValue(fakePeer);
+    peerManagerMock.getCircuitState.mockReturnValue('closed');
+    peerManagerMock.isPeerRoutable.mockReturnValue(true);
+    peerManagerMock.selectBestPeer.mockReturnValue(null);
     vi.stubGlobal('fetch', fetchMock);
   });
 
@@ -110,6 +135,62 @@ describe('peer-forward', () => {
       configMock.remotePeer = { host: '10.0.0.5', port: 9999, apiKey: 'k', autoForward: true };
       const peer = await getAutoForwardPeer();
       expect(peer).toBe(fakePeer);
+      // 固定 peer 可用时不走自动选路
+      expect(peerManagerMock.selectBestPeer).not.toHaveBeenCalled();
+    });
+
+    it('fixed peer unavailable → falls back to latency-based auto routing', async () => {
+      configMock.remotePeer = { host: '10.0.0.5', port: 9999, autoForward: true };
+      peerManagerMock.isPeerRoutable.mockReturnValue(false);
+      peerManagerMock.getCircuitState.mockReturnValue('open');
+      peerManagerMock.selectBestPeer.mockReturnValue(otherPeer);
+
+      expect(await getAutoForwardPeer()).toBe(otherPeer);
+      expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('不可用'));
+      expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('熔断=open'));
+    });
+
+    it("remotePeer.host === 'auto' always auto-routes (no autoForward needed)", async () => {
+      configMock.remotePeer = { host: 'auto' };
+      peerManagerMock.selectBestPeer.mockReturnValue(otherPeer);
+
+      expect(await getAutoForwardPeer()).toBe(otherPeer);
+      expect(peerManagerMock.getRemotePeer).not.toHaveBeenCalled();
+    });
+
+    it('returns null with a clear error when no peer is routable', async () => {
+      configMock.remotePeer = { host: 'auto' };
+      peerManagerMock.selectBestPeer.mockReturnValue(null);
+
+      expect(await getAutoForwardPeer()).toBeNull();
+      expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('无可用 peer'));
+    });
+
+    it('logs when configured remotePeer is not registered in peer manager', async () => {
+      configMock.remotePeer = { host: '10.0.0.5', port: 9999, autoForward: true };
+      peerManagerMock.getRemotePeer.mockReturnValue(null);
+
+      expect(await getAutoForwardPeer()).toBeNull();
+      expect(loggerMock.error).toHaveBeenCalledWith(expect.stringContaining('未注册到 peer manager'));
+    });
+  });
+
+  describe('forward metrics recording', () => {
+    it('records a successful forward with latency', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({
+        jsonrpc: '2.0', id: 1,
+        result: { content: [{ type: 'text', text: 'OK' }] },
+      }));
+
+      await forwardToolCall(fakePeer.id, 'eval_lisp', { code: '(1+ 1)' });
+      expect(peerManagerMock.recordForwardResult).toHaveBeenCalledWith(fakePeer, true, expect.any(Number));
+    });
+
+    it('records a failed forward', async () => {
+      fetchMock.mockRejectedValue(new Error('connection refused'));
+
+      await expect(forwardToolCall(fakePeer.id, 'eval_lisp', {})).rejects.toThrow('connection refused');
+      expect(peerManagerMock.recordForwardResult).toHaveBeenCalledWith(fakePeer, false, expect.any(Number));
     });
   });
 

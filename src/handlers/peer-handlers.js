@@ -137,6 +137,28 @@ async function callRemoteTool(ip, port, toolName, args = {}) {
     return data.result || data.error;
 }
 
+/**
+ * 格式化每个 peer 的转发指标（熔断状态/连续失败/成功失败计数/时延 EWMA）
+ * @returns {string[]}
+ */
+function formatPeerMetrics() {
+    const peers = peerManager.getPeers();
+    if (!peers.length) {
+        return ['  （暂无已注册 peer，无转发指标）'];
+    }
+
+    return peers.map(p => {
+        const state = peerManager.getCircuitState(p) || 'closed';
+        const ewma = typeof p.latencyEwma === 'number' ? `${Math.round(p.latencyEwma)}ms` : '-';
+        const lastOk = p.lastSuccess ? `${Math.round((Date.now() - p.lastSuccess) / 1000)}s前` : '-';
+        const lastFail = p.lastFailure ? `${Math.round((Date.now() - p.lastFailure) / 1000)}s前` : '-';
+        const route = peerManager.isPeerRoutable(p) ? '可路由' : '不可路由';
+        return `  ${p.id} (${p.url}) [熔断:${state}|${route}] 连续失败=${p.consecutiveFailures ?? 0}` +
+            ` 转发成功=${p.forwardSuccess ?? 0} 失败=${p.forwardFailure ?? 0}` +
+            ` 时延EWMA=${ewma} 最近成功=${lastOk} 最近失败=${lastFail}`;
+    });
+}
+
 export async function peer_summary(a) {
     const port = a.port || 8110;
     const timeout = a.timeout || 1000;
@@ -201,6 +223,11 @@ export async function peer_summary(a) {
         lines.push(`   图层: ${doc.currentLayer}`);
         lines.push('');
     }
+
+    lines.push('----------------------------------------');
+    lines.push('Peer 转发指标:');
+    lines.push(...formatPeerMetrics());
+    lines.push('');
 
     if (errors.length > 0) {
         lines.push('错误:');

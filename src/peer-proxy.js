@@ -26,11 +26,23 @@ class PeerProxy {
       throw new Error(`Peer unhealthy: ${peer.hostname} (${peer.url})`);
     }
 
+    // 熔断闸门：open 拒绝；half-open 仅放行一次探测
+    const circuit = peerManager.getCircuitState(peer);
+    if (circuit === 'open') {
+      throw new Error(`Peer circuit open (熔断冷却中): ${peer.hostname} (${peer.url})`);
+    }
+    if (circuit === 'half-open') {
+      if (peer.probeInFlight) {
+        throw new Error(`Peer circuit half-open (探测进行中): ${peer.hostname} (${peer.url})`);
+      }
+      peer.probeInFlight = true;
+    }
+
     const url = `${peer.url}/mcp`;
     const timeout = options.timeout || DEFAULT_TIMEOUT;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
-
+    const startedAt = Date.now();
     try {
       const headers = {
         'Content-Type': 'application/json',
@@ -56,12 +68,14 @@ class PeerProxy {
       const contentType = res.headers.get('content-type') || '';
       const text = await res.text();
 
-      if (contentType.includes('text/event-stream')) {
-        return this._parseSSE(text);
-      }
+      const parsed = contentType.includes('text/event-stream')
+        ? this._parseSSE(text)
+        : JSON.parse(text);
 
-      return JSON.parse(text);
+      peerManager.recordForwardResult(peer, true, Date.now() - startedAt);
+      return parsed;
     } catch (e) {
+      peerManager.recordForwardResult(peer, false, Date.now() - startedAt);
       if (e.name === 'AbortError') {
         throw new Error(`Peer request timeout: ${peer.url}`, { cause: e });
       }
