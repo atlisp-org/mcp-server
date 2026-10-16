@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.0] - 2026-10-16
+
+### 更新内容
+
+- refactor: resource-handlers 1583 行拆分，resource-readers 去重至 588 行 (53d2213)
+- test: 覆盖率 41.7% → 62.7%（+303 用例） (4d7bdba)
+
 ## [1.10.0] - 2026-10-16
 
 ### 更新内容
