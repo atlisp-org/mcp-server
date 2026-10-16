@@ -27,7 +27,8 @@ import { createWebSocketServer } from './websocket-transport.js';
 import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher, getPlugins } from './plugin-loader.js';
 import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
-import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
+// startHealthReporter 暂时停用（健康上报到 atlisp.cn），需要时恢复导入和下方调用
+import { stopHealthReporter } from './health-reporter.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
@@ -379,7 +380,8 @@ export async function startServer() {
 
             console.error('\n==========================================\n');
 
-            startHealthReporter();
+            // 暂时关闭健康上报（atlisp.cn 遥测），需要时恢复此行
+            // startHealthReporter();
         });
 
         async function shutdown(signal) {
