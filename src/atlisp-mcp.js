@@ -428,6 +428,7 @@ export async function startServer() {
             'atlisp://dwg/block-refs',
             'atlisp://dwg/text-content',
             'atlisp://dwg/groups',
+            'atlisp://dwg/frames',
         ];
         for (const uri of uris) {
             clearCache(uri);

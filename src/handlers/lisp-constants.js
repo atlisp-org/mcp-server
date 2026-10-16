@@ -3,7 +3,7 @@ export const ENTITY_PROPERTIES_LISP = `
   (cond
     ((= (type val) 'VARIANT) (entity:to-list (vlax-variant-value val)))
     ((= (type val) 'SAFEARRAY) (vlax-safearray->list val))
-    (T val)))
+    (1 val)))
 
 (defun entity:try-get (obj names / result val)
   (foreach name names

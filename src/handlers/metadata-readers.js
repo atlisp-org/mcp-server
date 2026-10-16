@@ -59,6 +59,9 @@ export async function getBlockRefs(params = {}) {
                 val = val.map(v => typeof v === 'number' ? v : 1);
               } else if (key === 'isDynamic') {
                 val = val === true || val === 'true' || val === 1;
+              } else if (key === 'attrReadFailed') {
+                // 有属性但 ActiveX 读取失败：显式可见，不静默当成「无属性」
+                val = val === true || val === 'true' || val === 1;
               } else if (key === 'attributes' && Array.isArray(val)) {
                 const o = {};
                 val.forEach(p => { if (Array.isArray(p) && p.length >= 2) o[String(p[0])] = p[1]; });

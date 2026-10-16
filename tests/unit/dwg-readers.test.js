@@ -429,6 +429,45 @@ describe('getBlockRefs', () => {
     expect(page1).not.toBe(page2);
     expect(cadMock.sendCommandWithResult).toHaveBeenCalledTimes(2);
   });
+
+  it('属性读取失败要可见：attrReadFailed 归一化成布尔', async () => {
+    cadMock.sendCommandWithResult.mockResolvedValueOnce(
+      '(("total" 2) ("blockRefs" ('
+      + '(("handle" "E1") ("blockName" "_AXISO") ("attributes" (("A" . "K"))) ("attrReadFailed" 1)) '
+      + '(("handle" "E2") ("blockName" "WINDOW") ("attributes" nil)))))'
+    );
+    const res = await mr.getBlockRefs({ limit: 2 });
+    expect(res.blockRefs[0]).toMatchObject({
+      handle: 'E1', attributes: { A: 'K' }, attrReadFailed: true,
+    });
+    // 无属性（读取正常但为空）不带 attrReadFailed
+    expect(res.blockRefs[1].attributes).toBeNull();
+    expect(res.blockRefs[1].attrReadFailed).toBeUndefined();
+  });
+
+  it('生成的 LISP 用纯 ActiveX 读属性，不依赖未加载的 @lisp lib', async () => {
+    cadMock.sendCommandWithResult.mockResolvedValueOnce('(("total" 0) ("blockRefs" nil))');
+    await mr.getBlockRefs({ limit: 1 });
+    const code = cadMock.sendCommandWithResult.mock.calls[0][0];
+    // 目标会话没有 lib：block:get-attributes / block:get-properties 都不存在
+    expect(code).not.toContain('(block:get-attributes');
+    expect(code).not.toContain("'block:get-attributes");
+    expect(code).not.toContain("'block:get-properties");
+    expect(code).toContain("'vla-get-HasAttributes");
+    // vla-get-Attributes 在本环境报「函数错误」，必须用方法形式
+    expect(code).toContain("(vl-catch-all-apply 'vlax-invoke (list o 'GetAttributes))");
+    expect(code).toContain("(list \"attributes\" (if (= 1 (car af)) (cdr af) nil))");
+    expect(code).toContain('(list "attrReadFailed" 1)');
+    // nil 字段用 (list ...) 保留 key（(cons "k" nil) 会退化成 ("k") 被服务端丢掉）
+    expect(code).not.toContain('(cons "attributes"');
+    // 分页条件与不分页的恒真条件都不能用 T（会话里 T 可能被绑成 nil，会静默变成恒假）
+    expect(code).toContain('(< (length refs) 1)');
+    expect(code).not.toMatch(/\(and \(< i total\) T\)/);
+    clearCache();
+    cadMock.sendCommandWithResult.mockResolvedValueOnce('(("total" 0) ("blockRefs" nil))');
+    await mr.getBlockRefs();
+    expect(cadMock.sendCommandWithResult.mock.calls.at(-1)[0]).toContain('(< i total) 1)');
+  });
 });
 
 describe('getTables', () => {

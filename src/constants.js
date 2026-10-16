@@ -40,7 +40,8 @@ export const MOCK_PACKAGES = [];
 export const CAD_RESOURCE_URIS = [
     'atlisp://cad/info', 'atlisp://dwg/name', 'atlisp://dwg/path',
     'atlisp://dwg/entities', 'atlisp://dwg/tbl', 'atlisp://dwg/block-refs',
-    'atlisp://dwg/text-content', 'atlisp://cad/dwgs', 'atlisp://packages'
+    'atlisp://dwg/text-content', 'atlisp://cad/dwgs', 'atlisp://packages',
+    'atlisp://dwg/frames',
 ];
 
 /** Order of CAD platforms to try when auto-launching */

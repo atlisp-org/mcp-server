@@ -28,7 +28,7 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
-- **工具定义**：`src/tools/` 下 45 个文件定义工具 Schema（共 358 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
+- **工具定义**：`src/tools/` 下 46 个文件定义工具 Schema（共 359 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
 - **协议版本**：`src/constants.js` 的 `PROTOCOL_VERSION` 取自 SDK 的 `LATEST_PROTOCOL_VERSION`（不再写死，当前 2025-11-25）；Server 握手按 SDK `SUPPORTED_PROTOCOL_VERSIONS` 协商，旧客户端仍可回退 2024-11-05（`mcp-scanner.js` 用该常量做探测）
 - **结构化输出**：查询类工具在定义中声明 `outputSchema`，对应 handler 同时返回 `content`（文本，向后兼容）与 `structuredContent`（JSON）；`src/tool-executor.js` 统一透传 structuredContent，并在缺少 content 时回填 JSON 文本块（解析辅助见 `src/handlers/structured-output.js`）
 - **远程 Peer 转发**：Linux 服务器可将 CAD 工具调用转发到 Windows 主机（MCP-to-MCP）。`src/peer-discovery.js` UDP 广播发现（端口 9811）、`src/peer-manager.js` 管理 peer 生命周期（健康检查/静态 peer）、`src/peer-proxy.js` HTTP 转发（JSON + SSE）、`src/peer-forward.js` 转发白名单（`peer_`/`skill_`/`webhook_`/`audit_` 等本地管理工具永不转发）
@@ -56,6 +56,15 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **流式限制**：`streaming.js` 默认 20000 实体上限（`MAX_ENTITY_LIMIT` 环境变量可配），超限返回错误而非执行 `ssget "_X"`
 - **Webhook**：失败自动指数退避重试 3 次（1s/2s/4s），总耗时 ≈ 7s
 - **队列清理**：`resetWorker()` 会同时清空 `CommandQueue`，确保残留命令不被消费
+
+### CAD 侧生成 LISP 的硬约束（踩过的坑）
+
+mcp-server 生成的 LISP 在**未加载 @lisp lib** 的 CAD 会话里执行（`(member 'require (atoms-family 1))` → nil）：
+- **必须自包含**：只用 AutoLISP 内建 + 代码内 `defun` 的 `@xx:` 辅助函数，**不得调用 lib/包函数**（`require`、`string:parse-by-lst`、`block:get-attributes` 等都不存在，调用会被 `vl-catch-all` 吞成静默 nil）
+- **不要把 `T` 当值用**：实测某会话 `T` 被绑成 `nil`、另一会话被绑成字符串。`(setq hit T)` / `(and cond T)` / `(while ... T)` 会静默失效。用字面量 `1`（永不失效）
+- **ActiveX 属性读取**：`vla-get-Attributes` 报「函数错误」，必须用方法形式 `(vl-catch-all-apply 'vlax-invoke (list obj 'GetAttributes))`；`vlax-invoke` 直接返回 VLA-OBJECT 列表，**不要再套 `vlax-variant-value`**；读取前用 `vla-get-HasAttributes` 判定，勿用 `entnext`（无属性 INSERT 会返回数据库下一个实体 → 假阳性）
+- **输出格式**：worker 用 `(princ r f)` 写结果，直接返回 list 会丢字符串引号（空串值 `("A" "")` 变成 `("A")`、块名带空格会被拆开）。统一 `(vl-prin1-to-string (list ...))` 收尾，且条目用 `(list "k" v)` 而非 `(cons "k" v)`（后者 value 为 nil 时退化成 `("k")`，服务端按二元对消费会丢字段）
+- **冻结表跨仓同步**：图框标准表 `frame-standards.js` ↔ lib `frame:` ↔ `packages/at-plot`；属性别名表 `frame-aliases.js` ↔ lib `frame:aliases`（单测有跨仓守卫）
 
 ## 远程 Peer 转发（Linux → Windows CAD）
 

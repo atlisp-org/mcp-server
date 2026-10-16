@@ -62,6 +62,7 @@ const URI_CACHE_PREFIX = {
   'atlisp://dwg/name': 'dwg:name',
   'atlisp://dwg/path': 'dwg:path',
   'atlisp://dwg/block-refs': 'dwg:block-refs',
+  'atlisp://dwg/frames': 'dwg:frames',
   'atlisp://dwg/tbl': 'dwg:tbl',
   'atlisp://cad/dwgs': 'cad:dwgs',
   'atlisp://packages': 'packages',

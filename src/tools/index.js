@@ -44,6 +44,7 @@ import { tools as debug_tools } from './debug-tools.js';
 import { tools as concurrent_tools } from './concurrent-tools.js';
 import { tools as peer_tools } from './peer-tools.js';
 import { tools as standards_tools } from './standards-tools.js';
+import { tools as frame_tools } from './frame-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -91,6 +92,8 @@ const READ_ONLY_TOOLS = new Set([
   'check_layer_naming', 'check_color_conformity', 'check_linetype_conformity',
   'check_lineweight_conformity', 'check_text_style_conformity', 'check_dim_style_conformity',
   'check_file_naming', 'generate_compliance_report',
+  // 图框识别：只读查询（扫多段线 + 算尺寸，不改图）
+  'list_frames',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -168,6 +171,8 @@ function getToolCategory(name) {
   if (/^skill_/.test(n)) return '高级';
   if (/^(check_|apply_|list_|load_|save_|compare_|generate_compliance)/.test(n) && /standards|layer_naming|color_conformity|linetype_conformity|lineweight_conformity|text_style_conformity|dim_style_conformity|file_naming/.test(n)) return '规范标准';
   if (/^(add_geom_constraint|add_dim_constraint|del_constraint|list_constraints)/.test(n)) return '约束';
+  // 图框识别属于「图纸结构查询」，归入选择与属性档（该档在 minimal profile 下可见）
+  if (n === 'list_frames') return '选择与属性';
   if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|list_tools_by_industry|list_tools_by_priority|get_tool_info)/.test(n)) return '元工具';
   if (/^(agent_)/.test(n)) return 'Agent上下文';
   return '其他';
@@ -285,6 +290,7 @@ export const tools = [
   ...concurrent_tools,
   ...peer_tools,
   ...standards_tools,
+  ...frame_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
@@ -292,14 +298,14 @@ export const toolsByName = new Map(tools.map(t => [t.name, t]));
 import config from '../config.js';
 
 // ===================== Token 成本治理：工具暴露档位 =====================
-// 358 个工具 schema 全量下发约 177KB（≈84k tokens），对多数任务是纯 token 浪费。
+// 359 个工具 schema 全量下发约 177KB（≈84k tokens），对多数任务是纯 token 浪费。
 // 档位按 addAnnotations() 写入的 annotations.category 划分（映射见 getToolCategory）：
 //
 // | 档位       | 工具数(约) | 包含 category                                                                  |
 // |------------|-----------|---------------------------------------------------------------------------------|
-// | minimal    | 103       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
-// | standard   | 227       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据 |
-// | full       | 358       | 全部（默认，行为与档位引入前完全一致）                                            |
+// | minimal    | 104       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
+// | standard   | 228       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据 |
+// | full       | 359       | 全部（默认，行为与档位引入前完全一致）                                            |
 //
 // 只影响 tools/list 等发现接口（getVisibleTools）；被过滤的工具仍可通过 search_tools /
 // list_tools_by_category 检索并直接调用（工具调用校验走完整 toolsByName）。

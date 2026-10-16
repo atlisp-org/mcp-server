@@ -92,7 +92,7 @@ describe('resource-handlers', () => {
     });
 
     it('contains all expected resources', () => {
-      expect(RESOURCES).toHaveLength(21);
+      expect(RESOURCES).toHaveLength(22);
       const uris = RESOURCES.map(r => r.uri);
       expect(uris).toContain('atlisp://cad/info');
       expect(uris).toContain('atlisp://dwg/entities');
@@ -115,6 +115,7 @@ describe('resource-handlers', () => {
       expect(uris).toContain('atlisp://tools/industries');
       expect(uris).toContain('atlisp://dwg/standards/check');
       expect(uris).toContain('atlisp://system/cad-status');
+      expect(uris).toContain('atlisp://dwg/frames');
     });
   });
 
@@ -467,7 +468,8 @@ describe('resource-handlers', () => {
       const result = await readResource('atlisp://dwg/block-refs');
       expect(result.limit).toBe(0);
       const code = mockSendCommandWithResult.mock.calls[0][0];
-      expect(code).toContain('(while (and (< i total) T)');
+      // 恒真条件用字面量 1（会话里 T 可能被绑成 nil，会把「不分页」静默变成「返回空」）
+      expect(code).toContain('(while (and (< i total) 1)');
     });
 
     it('非法 offset/limit 回落到不分页', async () => {

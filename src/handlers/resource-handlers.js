@@ -34,6 +34,7 @@ import {
   getCadSnapshot,
   getDwgContext,
   getDrawingAnalysis,
+  getFrames,
   checkDrawingStandards,
 } from './resource-snapshot.js';
 import {
@@ -216,6 +217,9 @@ export async function readResource(uri) {
       return getToolRelationships();
     case 'atlisp://dwg/analysis':
       return await getDrawingAnalysis(params);
+    case 'atlisp://dwg/frames':
+      // 图框识别：?layer=&minSize=&scales=&tolRatio=&tolLen=&includeInner=&includeUnmatched=&offset=&limit=
+      return await getFrames(params);
     case 'atlisp://tools/categories':
       return getToolCategories();
     case 'atlisp://tools/industries':

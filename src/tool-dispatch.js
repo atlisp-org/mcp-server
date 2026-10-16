@@ -11,6 +11,7 @@ function clearAndNotify(uris) {
 }
 
 const ENTITIES = ['atlisp://dwg/entities'];
+const FRAMES = ['atlisp://dwg/frames'];
 const TBL = ['atlisp://dwg/tbl'];
 const BLOCK_REFS = ['atlisp://dwg/block-refs'];
 const TEXT = ['atlisp://dwg/text-content'];
@@ -24,7 +25,8 @@ const GROUPS = ['atlisp://dwg/groups'];
  * @type {{ prefixes?: string[], exact?: string[], uris: string[] }[]}
  */
 const RULES = [
-  { prefixes: ['draw_', 'create_3d_'], uris: ENTITIES },
+  // 会改变几何的工具同时失效图框缓存（图框就是多段线，画/改/删后识别结果会变）
+  { prefixes: ['draw_', 'create_3d_'], uris: [...ENTITIES, ...FRAMES] },
   {
     prefixes: ['batch_', 'boolean_'],
     exact: [
@@ -33,9 +35,9 @@ const RULES = [
       'offset_entity', 'mirror_entity', 'move_entity', 'copy_entity', 'rotate_entity', 'scale_entity',
       'array_rectangular', 'array_polar',
     ],
-    uris: [...ENTITIES, ...BLOCK_REFS],
+    uris: [...ENTITIES, ...BLOCK_REFS, ...FRAMES],
   },
-  { prefixes: ['delete_', 'purge_'], uris: [...ENTITIES, ...BLOCK_REFS, ...TBL] },
+  { prefixes: ['delete_', 'purge_'], uris: [...ENTITIES, ...BLOCK_REFS, ...TBL, ...FRAMES] },
   {
     prefixes: ['create_layer', 'delete_layer', 'set_layer', 'layer_'],
     exact: ['set_current_layer'],
@@ -49,7 +51,7 @@ const RULES = [
   {
     prefixes: ['open_dwg', 'close_dwg'],
     exact: ['new_document'],
-    uris: ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', ...TBL, ...ENTITIES, ...BLOCK_REFS, ...TEXT],
+    uris: ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', ...TBL, ...ENTITIES, ...BLOCK_REFS, ...TEXT, ...FRAMES],
   },
   { exact: ['save_dwg'], uris: ['atlisp://dwg/name', 'atlisp://dwg/path'] },
   {
