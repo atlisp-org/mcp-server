@@ -29,6 +29,7 @@ import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
 // startHealthReporter 暂时停用（健康上报到 atlisp.cn），需要时恢复导入和下方调用
 import { stopHealthReporter } from './health-reporter.js';
+import { startLocalMemWatcher } from './mem-monitor.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
@@ -361,6 +362,9 @@ export async function startServer() {
             process.exit(1);
         }
 
+        // 内存变化监控：RSS/堆变化超过阈值时输出到终端（shutdown 时停止）
+        let stopMemWatcher = null;
+
         const httpServer = rawServer.listen(config.port, config.host, async () => {
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
@@ -382,11 +386,15 @@ export async function startServer() {
 
             // 暂时关闭健康上报（atlisp.cn 遥测），需要时恢复此行
             // startHealthReporter();
+
+            // 内存变化监控：每 heartbeatInterval（默认 15s）采样，RSS/堆变化 ≥1MB 时打印一行
+            stopMemWatcher = startLocalMemWatcher({ intervalMs: config.heartbeatInterval, thresholdMB: 1 });
         });
 
         async function shutdown(signal) {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
             stopHealthReporter();
+            if (stopMemWatcher) { stopMemWatcher(); stopMemWatcher = null; }
             stopPluginWatcher();
             peerManager.stop();
             if (promptsWatcher) { promptsWatcher.close(); promptsWatcher = null; }

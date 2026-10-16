@@ -83,15 +83,15 @@ describe('log / error / warn', () => {
     expect(lines[2]).toMatchObject({ level: 'WARN', message: 'careful' });
   });
 
-  it('config.debug=false 时不输出 console', async () => {
-    const spies = [
-      vi.spyOn(console, 'log'),
-      vi.spyOn(console, 'error'),
-      vi.spyOn(console, 'warn'),
-    ];
+  it('config.debug=false 时 INFO 不输出 console，ERROR/WARN 始终输出', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     logger.log('m1'); logger.error('m2'); logger.warn('m3');
     await flush();
-    for (const s of spies) expect(s).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith('[ERROR] m2', {});
+    expect(warnSpy).toHaveBeenCalledWith('[WARN] m3', {});
   });
 
   it('config.debug=true 时同步输出 console', async () => {

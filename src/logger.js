@@ -56,17 +56,15 @@ export function log(message, meta = {}) {
 export function error(message, meta = {}) {
     getStream().write(formatMessage('ERROR', message, meta) + '\n');
     notify('error', message);
-    if (config.debug) {
-        console.error(`[ERROR] ${message}`, meta);
-    }
+    // ERROR 始终输出到终端（stderr），与 debug 开关无关；stdio 模式下 stderr 不污染协议通道
+    console.error(`[ERROR] ${message}`, meta);
 }
 
 export function warn(message, meta = {}) {
     getStream().write(formatMessage('WARN', message, meta) + '\n');
     notify('warning', message);
-    if (config.debug) {
-        console.warn(`[WARN] ${message}`, meta);
-    }
+    // WARN 始终输出到终端（stderr），与 debug 开关无关
+    console.warn(`[WARN] ${message}`, meta);
 }
 
 export function debug(message, meta = {}) {

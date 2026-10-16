@@ -259,3 +259,31 @@ export async function runMemMonitor(options = {}) {
     }
     return 0;
 }
+
+// 服务器进程自身内存监控：定期采样 process.memoryUsage()，
+// RSS 或堆变化超过 thresholdMB 时输出一行到终端（stderr），返回停止函数
+export function startLocalMemWatcher(options = {}) {
+    const intervalMs = options.intervalMs || 15000;
+    const thresholdMB = options.thresholdMB ?? 1;
+    const write = options.write || ((s) => process.stderr.write(s + '\n'));
+    let prev = null;
+
+    const tick = () => {
+        const mem = process.memoryUsage();
+        const cur = { rssMB: mem.rss / 1024 / 1024, heapMB: mem.heapUsed / 1024 / 1024 };
+        if (prev) {
+            const dRss = cur.rssMB - prev.rssMB;
+            const dHeap = cur.heapMB - prev.heapMB;
+            if (Math.abs(dRss) >= thresholdMB || Math.abs(dHeap) >= thresholdMB) {
+                write(
+                    `[内存] RSS ${prev.rssMB.toFixed(1)}→${cur.rssMB.toFixed(1)} MB (${formatDelta(dRss)})`
+                    + `   堆 ${prev.heapMB.toFixed(1)}→${cur.heapMB.toFixed(1)} MB (${formatDelta(dHeap)})`
+                );
+            }
+        }
+        prev = cur;
+    };
+
+    const handle = setInterval(tick, intervalMs);
+    return () => clearInterval(handle);
+}
