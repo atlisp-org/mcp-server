@@ -2,6 +2,16 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.10.0] - 2026-10-16
+
+### 更新内容
+
+- test: 内存防回归 soak 测试 + HTTP 传输 e2e (e9caf71)
+- feat: TOOL_PROFILE 工具档位 + search_tools 摘要化 + 描述瘦身 (150ec8f)
+- docs: 2026Q4 路线图；fix: 空 catch 块 lint 清理 (99dc31d)
+- feat: peer 熔断状态机 + 自动选路 + 转发指标 (32f7acf)
+- feat: MCP 协议升级到 2025-11-25 + 工具 title 与结构化输出 (81c68e7)
+
 ## [1.9.14] - 2026-10-16
 
 ### 更新内容

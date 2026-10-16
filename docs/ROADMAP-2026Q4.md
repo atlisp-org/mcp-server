@@ -3,15 +3,15 @@
 > 制定于 2026-10-16，基于 v1.9.13 现状盘点（358 工具 / 协议 2024-11-05 / 覆盖率 41.7% / schema 177KB）。
 > 执行方式：按波次推进，每波结束跑全量 lint + test + build，通过后 commit + `npm run release minor`。
 
-## Wave 1a — P0 基础（并行）
+## Wave 1a — P0 基础（并行）✅ 2026-10-16
 
-- [ ] **A1 MCP 协议升级**：PROTOCOL_VERSION 动态协商（SDK 已支持 2025-11-25）；工具 `outputSchema` + 查询类工具 `structuredContent`；InMemory 双版本握手测试
-- [ ] **C1 Peer 自动路由**：`peer_auto` 按健康/时延选 peer；每 peer 熔断器 + 冷却；转发指标进 peer_summary；remotePeer 支持 'auto'
+- [x] **A1 MCP 协议升级**（81c68e7）：PROTOCOL_VERSION 动态协商（现 2025-11-25，回退 2024-11-05）；12 个查询工具 outputSchema + structuredContent；工具 title；30 新用例
+- [x] **C1 Peer 自动路由**（32f7acf）：熔断状态机（3 失败/30s 冷却/half-open 单探测）+ EWMA 时延选路 + peer_summary 转发指标 + remotePeer 'auto'；31 新用例
 
-## Wave 1b — P0 成本与可靠性（并行）
+## Wave 1b — P0 成本与可靠性（并行）✅ 2026-10-16
 
-- [ ] **B1 Token 治理**：TOOL_PROFILE 配置（full/standard/minimal，默认 full 无行为变化）；运行时 `title` 字段；search_tools 返回摘要而非全量 schema；描述去重瘦身；启动打印 payload 体积
-- [ ] **D1 内存 soak + HTTP e2e**：会话/agent-context 千次创建销毁增长斜率断言；HTTP 传输 e2e（握手→tools/list→工具调用）
+- [x] **B1 Token 治理**（150ec8f）：TOOL_PROFILE（full=358/356KB、standard=227/232KB、minimal=103/102KB，默认 full）；search_tools 摘要化 + limit；15 工具描述瘦身；20 新用例
+- [x] **D1 内存 soak + HTTP e2e**（e9caf71）：soak 5 用例（会话×800/SSE×600/agent-context×500/CAD 切换×100，堆增长<50MB）+ HTTP e2e 6 用例；耗时净增 ≈0.7s
 
 ## Wave 2a — P1 质量（并行）
 
