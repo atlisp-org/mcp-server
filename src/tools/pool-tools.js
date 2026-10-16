@@ -27,7 +27,7 @@ export const tools = [
   },
   {
     name: 'cad_pool_connect',
-    description: '手动连接指定 CAD 实例到连接池。当 cad_pool_discover 未自动发现，或需要指定特定进程时调用。支持指定 key（标识名）、platform（平台）、pid（进程 ID）。forceLaunch=true 时跳过复用已运行实例，直接启动一个新的 CAD 进程——用于 CAD 卡死（停滞）后打开新实例继续任务。返回连接成功状态和实例信息。',
+    description: '手动连接指定 CAD 实例到连接池。当 cad_pool_discover 未自动发现，或需要指定特定进程时调用。key/platform/pid 见参数列表。forceLaunch=true 用于 CAD 卡死（停滞）后直接启动全新实例继续任务。返回连接成功状态和实例信息。',
     inputSchema: {
       type: 'object',
       properties: {

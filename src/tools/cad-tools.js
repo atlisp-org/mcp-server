@@ -52,7 +52,7 @@ export const tools = [
     },
 {
         name: 'at_command',
-        description: '执行 @lisp 包管理器命令。当用户说"运行@lisp命令/装包/查系统信息/升级包"时调用。前置条件：需先调用 init_atlisp 加载 @lisp 环境。示例命令: package-install(装包)、system-info(系统信息)、package-list(已安装列表)、package-update-all(升级所有包)',
+        description: '执行 @lisp 包管理器命令。当用户说"运行@lisp命令/装包/查系统信息/升级包"时调用。前置条件：需先调用 init_atlisp 加载 @lisp 环境。常见命令见 command 参数',
         inputSchema: {
             type: 'object',
             properties: { command: { type: 'string', description: '@lisp 命令，如 "system-info"、"package-install <包名>"、"package-list"' } },

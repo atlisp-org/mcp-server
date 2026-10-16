@@ -164,7 +164,7 @@ export const tools = [
     },
 {
         name: 'boolean_subtract',
-        description: '从一组实体中减去另一组(差集/SUBTRACT)。用户说"挖洞/减去/打孔"时调用。不可撤销！示例: handles=["drill"], subtractFromHandles=["mainBody"]。默认 handles 的第一个实体作为被减对象。与 boolean_union(求和)/boolean_intersect(求交)配合使用',
+        description: '从一组实体中减去另一组(差集/SUBTRACT)。用户说"挖洞/减去/打孔"时调用。不可撤销！默认 handles 的第一个实体作为被减对象。与 boolean_union(求和)/boolean_intersect(求交)配合使用',
         inputSchema: {
             type: 'object',
             properties: {

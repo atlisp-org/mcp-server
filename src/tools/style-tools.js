@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_dimension_style',
-        description: '创建标注样式(DimStyle)。用户说"新建标注样式"时调用。控制箭头样式、颜色、文字样式等。示例: name="建筑标注", color="5"(蓝色), arrow="建筑标记", textStyle="宋体"。创建后可用 set_dimstyle_var 调整详细变量，用 list_dimension_styles 查看所有样式',
+        description: '创建标注样式(DimStyle)。用户说"新建标注样式"时调用。控制箭头样式、颜色、文字样式等。创建后可用 set_dimstyle_var 调整详细变量，用 list_dimension_styles 查看所有样式',
         inputSchema: {
             type: 'object',
             properties: {
@@ -33,7 +33,7 @@ export const tools = [
     },
 {
         name: 'create_text_style',
-        description: '创建文字样式(TextStyle)。用户说"新建文字样式"时调用。示例: name="工程字体", fontFile="simsun.ttc"(宋体), height=0(不固定), width=0.7(宽度因子), angle=0。height设为0可在写文字时自由指定高度，大于0则固定。创建后在 draw_text/draw_mtext 中使用',
+        description: '创建文字样式(TextStyle)。用户说"新建文字样式"时调用。height=0 不固定字高（写文字时指定），大于0 固定。创建后在 draw_text/draw_mtext 中使用',
         inputSchema: {
             type: 'object',
             properties: {

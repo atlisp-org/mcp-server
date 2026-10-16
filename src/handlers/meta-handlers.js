@@ -3,11 +3,59 @@ import { getAuditStats } from '../audit-log.js';
 import { computeEffectivePriority, sortByPriorityUsage } from '../tools/params-utils.js';
 import { listPrompts, getPrompt } from './prompt-handlers.js';
 
+const SEARCH_LIMIT_DEFAULT = 10;
+const SEARCH_LIMIT_MAX = 50;
+const SEARCH_DESC_MAX = 120;
+
+/**
+ * 截取工具描述首行到 ~120 字，去掉 addAnnotations 追加的【类别】尾注。
+ * @param {string|undefined} desc
+ * @returns {string}
+ */
+function shortDesc(desc) {
+    const d = oneLineDesc({ description: desc });
+    return d.length > SEARCH_DESC_MAX ? `${d.slice(0, SEARCH_DESC_MAX - 1)}…` : d;
+}
+
+/**
+ * search_tools 摘要项：只含 name/title/一句话描述/category，不含 inputSchema——
+ * 完整 schema 由 get_tool_info 按需获取，避免搜索结果把 177KB schema 又吐一遍。
+ * @param {object} t
+ * @returns {{name: string, title: string, description: string, category: string}}
+ */
+function summarizeTool(t) {
+    return {
+        name: t.name,
+        title: t.title || t.name,
+        description: shortDesc(t.description),
+        category: t.annotations?.category || '其他',
+    };
+}
+
+/**
+ * 按关键词搜索工具（摘要模式）。
+ * 兼容性：保留旧的纯文本 content 格式（首行"找到 N 个工具"+ 每行 "name: 描述"），
+ * 同时附带 structuredContent 供结构化消费方使用。新增 limit 参数（默认 10，上限 50）。
+ * @param {{query?: string, limit?: number}} a
+ */
 export async function search_tools(a) {
     const q = (a.query || '').toLowerCase();
-    const results = tools.filter(t => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
-    const text = results.length ? `找到 ${results.length} 个工具:\n${results.map(t => `${t.name}: ${t.description}`).join('\n')}` : `未找到包含 "${a.query}" 的工具`;
-    return { content: [{ type: 'text', text }] };
+    const all = tools.filter(t => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+    let limit = Number.isInteger(a.limit) ? a.limit : SEARCH_LIMIT_DEFAULT;
+    if (limit < 1) limit = 1;
+    if (limit > SEARCH_LIMIT_MAX) limit = SEARCH_LIMIT_MAX;
+    const results = all.slice(0, limit);
+    const items = results.map(summarizeTool);
+    const truncated = all.length > results.length
+        ? `（显示前 ${results.length} 个，可用 limit 参数调整，最多 ${SEARCH_LIMIT_MAX}）`
+        : '';
+    const text = all.length
+        ? `找到 ${all.length} 个工具${truncated}:\n${items.map(t => `${t.name}: ${t.description}`).join('\n')}`
+        : `未找到包含 "${a.query}" 的工具`;
+    return {
+        content: [{ type: 'text', text }],
+        structuredContent: { query: a.query || '', total: all.length, count: items.length, tools: items },
+    };
 }
 
 export async function list_tools_by_category(a) {

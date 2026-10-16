@@ -22,7 +22,7 @@ export const tools = [
     },
 {
         name: 'export_pdf',
-        description: '将布局导出为 PDF 文件。用户说"导出PDF/转PDF"时调用。需指定输出路径和布局名。此工具已合并 plot_to_pdf 和 save_pdf_layout 的功能，推荐统一使用 export_pdf。示例: outputPath="C:/output/图纸1.pdf", layout="Model"。若需批量导出多个布局，请用 publish_layouts',
+        description: '将布局导出为 PDF 文件。用户说"导出PDF/转PDF"时调用。需指定输出路径和布局名。已合并 plot_to_pdf 和 save_pdf_layout 的功能，推荐统一使用本工具。批量导出多个布局请用 publish_layouts',
         inputSchema: {
             type: 'object',
             properties: {
@@ -44,7 +44,7 @@ export const tools = [
     },
     {
         name: 'publish_layouts',
-        description: '将多个布局批量发布到 PDF。用户说"批量导出布局"时调用。示例: layouts=["A1","A2","A3"], outputDir="C:/output/", merge=true。merge=true 合并为一个PDF文件；false 每个布局独立PDF。命名规则中 {layout} 和 {format} 为占位符',
+        description: '将多个布局批量发布到 PDF。用户说"批量导出布局"时调用。merge="true" 合并为一个PDF文件，"false" 每个布局独立PDF。命名规则中 {layout} 和 {format} 为占位符',
         inputSchema: {
             type: 'object',
             properties: {

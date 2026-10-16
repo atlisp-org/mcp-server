@@ -291,19 +291,72 @@ export const toolsByName = new Map(tools.map(t => [t.name, t]));
 
 import config from '../config.js';
 
-const _visibleCache = { cats: null, result: null };
+// ===================== Token 成本治理：工具暴露档位 =====================
+// 358 个工具 schema 全量下发约 177KB（≈84k tokens），对多数任务是纯 token 浪费。
+// 档位按 addAnnotations() 写入的 annotations.category 划分（映射见 getToolCategory）：
+//
+// | 档位       | 工具数(约) | 包含 category                                                                  |
+// |------------|-----------|---------------------------------------------------------------------------------|
+// | minimal    | 103       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
+// | standard   | 227       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据 |
+// | full       | 358       | 全部（默认，行为与档位引入前完全一致）                                            |
+//
+// 只影响 tools/list 等发现接口（getVisibleTools）；被过滤的工具仍可通过 search_tools /
+// list_tools_by_category 检索并直接调用（工具调用校验走完整 toolsByName）。
+export const PROFILE_CATEGORIES = {
+  minimal: new Set([
+    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具',
+  ]),
+  standard: new Set([
+    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具',
+    '修改', '编辑', '块', '标注与填充', '文字', '打印', '文件',
+    '视口', '坐标系与布局', '样式', '扩展数据',
+  ]),
+  full: null, // null = 不按 category 过滤
+};
+
+/** 未知档位（如 CLI 传入拼写错误）回落到 full，保证不会把工具全部藏掉。 */
+export function normalizeToolProfile(profile) {
+  return Object.prototype.hasOwnProperty.call(PROFILE_CATEGORIES, profile) ? profile : 'full';
+}
+
+const _visibleCache = { key: null, result: null };
 
 /**
- * 按 config.toolCategories 过滤后的可见工具（空列表 = 全部暴露）。
+ * 按 config.toolProfile 与 config.toolCategories 过滤后的可见工具。
  * 仅影响 tools/list 等发现接口；工具调用校验仍使用完整 toolsByName。
  */
 export function getVisibleTools() {
+  const profile = normalizeToolProfile(config?.toolProfile);
   const cats = config?.toolCategories;
-  if (!Array.isArray(cats) || cats.length === 0) return tools;
-  const key = cats.join(',');
-  if (_visibleCache.cats !== key) {
-    _visibleCache.cats = key;
-    _visibleCache.result = tools.filter(t => cats.includes(t.annotations?.category));
+  const catsKey = Array.isArray(cats) && cats.length > 0 ? cats.join(',') : '';
+  const key = `${profile}|${catsKey}`;
+  if (_visibleCache.key === key) return _visibleCache.result;
+  let result = tools;
+  const allowedCats = PROFILE_CATEGORIES[profile];
+  if (allowedCats) {
+    result = result.filter(t => allowedCats.has(t.annotations?.category));
   }
-  return _visibleCache.result;
+  if (catsKey) {
+    result = result.filter(t => cats.includes(t.annotations?.category));
+  }
+  _visibleCache.key = key;
+  _visibleCache.result = result;
+  return result;
+}
+
+// 启动体积日志：工具总数、profile、JSON 序列化 KB。放在模块尾部（tools 数组已建好），
+// 便于排查 token 成本；序列化只执行一次，耗时可忽略。测试进程（NODE_ENV=test）跳过，
+// 避免每个测试文件都往 DEBUG_FILE 写一条。
+import { log as loggerLog } from '../logger.js';
+if (process.env.NODE_ENV !== 'test') {
+  const visible = getVisibleTools();
+  const kb = (bytes) => Math.round(bytes / 1024);
+  loggerLog('tools registered', {
+    total: tools.length,
+    visible: visible.length,
+    profile: normalizeToolProfile(config?.toolProfile),
+    schemaKB: kb(Buffer.byteLength(JSON.stringify(tools))),
+    visibleSchemaKB: kb(Buffer.byteLength(JSON.stringify(visible))),
+  });
 }

@@ -1,7 +1,7 @@
 export const tools = [
     {
         name: 'watch_register',
-        description: '注册CAD变更事件触发器。当用户需要监听实体数量变化/图层创建/文档名变更等CAD事件时调用。返回触发器ID。类型: entity_count(实体数变化), layer_exists(图层创建), layer_count(图层数变化), doc_name(文档名匹配), custom_lisp(自定义Lisp条件)。结合 watch_wait 使用。',
+        description: '注册CAD变更事件触发器。当用户需要监听实体数量变化/图层创建/文档名变更等CAD事件时调用。返回触发器ID。类型见 type 参数（含自定义Lisp条件）。结合 watch_wait 使用。',
         inputSchema: {
             type: 'object',
             properties: {

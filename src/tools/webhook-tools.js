@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'webhook_register',
-    description: '注册 Webhook：当 CAD 事件发生时向指定 URL 发送 POST 通知。当用户说"设置回调/配置通知/事件推送"时调用。支持事件: tool_executed(工具执行), package_installed(包安装), cad_connected(连接), cad_disconnected(断开), error_occurred(错误)。返回 webhook ID。',
+    description: '注册 Webhook：当 CAD 事件发生时向指定 URL 发送 POST 通知。当用户说"设置回调/配置通知/事件推送"时调用。支持事件见 events 参数。返回 webhook ID。',
     inputSchema: {
       type: 'object',
       properties: {

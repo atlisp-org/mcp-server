@@ -137,7 +137,7 @@ export const tools = [
     },
 {
         name: 'draw_hatch',
-        description: '创建图案填充(HATCH)。当用户说"贴图案/填充"时调用。返回新创建实体的句柄。points 为闭合边界点序列。pattern 可选 ANSI31(斜线)/ANSI32(交叉线)/BRICK(砖)/AR-CONC(混凝土)/SOLID(实心)等。idempotent。对比 create_hatch 方式不同——此工具用 points 边界，create_hatch 用边界实体选择。',
+        description: '创建图案填充(HATCH)。当用户说"贴图案/填充"时调用。points 为闭合边界点序列，pattern 为图案名（见参数列表）。idempotent。对比 create_hatch 方式不同——此工具用 points 边界，create_hatch 用边界实体选择。',
         inputSchema: {
             type: 'object',
             properties: {

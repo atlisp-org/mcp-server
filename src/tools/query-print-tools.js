@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'plot_to_pdf',
-        description: '将布局打印到 PDF 文件。用户说"打印PDF"时调用。可设置图纸尺寸(A4/A3/A2/A1/A0)、比例和方向。示例: outputPath="C:/output/图纸.pdf", layout="Model", paperSize="A3", plotScale="1:100", orientation="Landscape"。若需批量打印多个布局请用 publish_layouts',
+        description: '将布局打印到 PDF 文件。用户说"打印PDF"时调用。可设图纸尺寸(A4~A0)、比例和方向（参数说明见 inputSchema）。批量打印多个布局请用 publish_layouts',
         inputSchema: {
             type: 'object',
             properties: {
@@ -28,7 +28,7 @@ export const tools = [
     },
 {
         name: 'create_group',
-        description: '将多个实体编为一组（GROUP）。用户说"编组/成组"时调用。编组后方便整体选择和操作。示例: name="墙体组", handles=["ABC","DEF","GHI"]。创建后可用 get_group_entities 查看组内实体，或 batch_delete 整体删除。与"块(block)"不同，编组不解散也可单独选中组内实体',
+        description: '将多个实体编为一组（GROUP）。用户说"编组/成组"时调用。编组后方便整体选择和操作。创建后可用 get_group_entities 查看组内实体，或 batch_delete 整体删除。与"块(block)"不同，编组不解散也可单独选中组内实体',
         inputSchema: {
             type: 'object',
             properties: {
@@ -150,7 +150,7 @@ export const tools = [
             required: ['type', 'handle', 'layer']
         }
     },
-{ name: 'create_page_setup', description: '创建页面设置（打印配置模板）。用户说"设置页面/打印设置"时调用。创建后可用 set_page_setup 应用到布局，或用 list_page_setups 管理。示例: name="我的模板", printer="DWG To PDF.pc3", paperSize="A3", orientation="Landscape", scale="1:100"', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '页面设置名称，如 "我的模板"、"A3打印设置"' }, printer: { type: 'string', description: '打印机名称，默认"DWG To PDF.pc3"。可用 plot_device_management 查看' }, paperSize: { type: 'string', description: '纸张大小，默认"A4"。可选: A0, A1, A2, A3, A4, A5, Letter, Legal, Tabloid' }, orientation: { type: 'string', description: '方向: Portrait(纵向)/Landscape(横向)。默认 Landscape' }, scale: { type: 'string', description: '打印比例，默认"1:1"。如 "1:50"、"1:100"、"2:1"' } }, required: ['name'] } },
+{ name: 'create_page_setup', description: '创建页面设置（打印配置模板）。用户说"设置页面/打印设置"时调用。创建后可用 set_page_setup 应用到布局，或用 list_page_setups 管理', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '页面设置名称，如 "我的模板"、"A3打印设置"' }, printer: { type: 'string', description: '打印机名称，默认"DWG To PDF.pc3"。可用 plot_device_management 查看' }, paperSize: { type: 'string', description: '纸张大小，默认"A4"。可选: A0, A1, A2, A3, A4, A5, Letter, Legal, Tabloid' }, orientation: { type: 'string', description: '方向: Portrait(纵向)/Landscape(横向)。默认 Landscape' }, scale: { type: 'string', description: '打印比例，默认"1:1"。如 "1:50"、"1:100"、"2:1"' } }, required: ['name'] } },
 { name: 'list_page_setups', description: '列出所有已保存的页面设置（打印配置模板）。用户说"有哪些打印模板"时调用。返回名称数组如 ["我的模板","A3打印","PDF输出"]。配合 set_page_setup 应用到布局或 create_page_setup 新建', inputSchema: { type: 'object', properties: {} }, outputSchema: { type: 'object', properties: { count: { type: 'number', description: '页面设置数量' }, pageSetups: { type: 'array', items: { type: 'string' }, description: '页面设置名称数组' }, raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' } }, required: ['count', 'pageSetups'] } },
 { name: 'set_page_setup', description: '将页面设置应用到指定布局。用户说"用XX设置打印此布局"时调用。示例: layout="A1-平面图", pageSetupName="我的模板"。应用后可用 plot_to_pdf 按此设置打印。创建页面设置请先调用 create_page_setup', inputSchema: { type: 'object', properties: { layout: { type: 'string', description: '要应用设置的布局名称，如 "A1-平面图"' }, pageSetupName: { type: 'string', description: '页面设置名称（先用 create_page_setup 创建或用 list_page_setups 查看）' } }, required: ['layout', 'pageSetupName'] } },
 { name: 'import_page_setup', description: '从其他 DWG 文件中导入页面设置到当前图形。用户说"导入打印设置"时调用。示例: dwgPath="C:/模板/标准模板.dwg", pageSetupName="A3模板"（可选，不传则导入全部）。可用于统一团队打印标准', inputSchema: { type: 'object', properties: { dwgPath: { type: 'string', description: '源 DWG 文件路径，如 "C:/模板/标准模板.dwg"' }, pageSetupName: { type: 'string', description: '要导入的页面设置名称（可选，不传则导入全部）。如 "A3模板"' } }, required: ['dwgPath'] } },

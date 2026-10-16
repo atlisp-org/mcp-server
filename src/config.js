@@ -38,6 +38,7 @@ const envSchema = z.object({
     TRACING_ENABLED: z.coerce.boolean().optional().default(false),
     TRACING_ENDPOINT: z.string().optional().default('http://127.0.0.1:4318/v1/traces'),
     TOOL_CATEGORIES: z.string().optional().default(''),
+    TOOL_PROFILE: z.enum(['full', 'standard', 'minimal']).optional().default('full'),
     LOCALE: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     REQUEST_LOG_ENABLED: z.coerce.boolean().optional().default(true),
     SSL_KEY_PATH: z.string().optional().default(''),
@@ -128,6 +129,7 @@ const configSchema = z.object({
     lintLevel: z.string().optional(),
     noLint: z.boolean().optional(),
     toolCategories: z.array(z.string()).optional(),
+    toolProfile: z.enum(['full', 'standard', 'minimal']).optional(),
     locale: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
@@ -210,6 +212,9 @@ function parseArgs() {
         } else if (args[i] === '--security-level' && args[i + 1]) {
             result.securityLevel = args[i + 1];
             i++;
+        } else if (args[i] === '--tool-profile' && args[i + 1]) {
+            result.toolProfile = args[i + 1];
+            i++;
         }
     }
     return result;
@@ -284,6 +289,10 @@ const config = {
       ?? (env.TOOL_CATEGORIES
         ? env.TOOL_CATEGORIES.split(',').map(s => s.trim()).filter(Boolean)
         : []),
+    // 工具暴露档位：full=全部工具（默认，行为不变）；standard/minimal 按 category
+    // 过滤 tools/list 暴露面以降低 token 成本，被过滤的工具仍可经 search_tools 检索。
+    // 优先级同上：CLI > 配置文件 > 环境变量 > 默认 full。
+    toolProfile: cliArgs.toolProfile ?? fileConfig?.toolProfile ?? env.TOOL_PROFILE,
     locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
     sslKey: cliArgs.sslKey ?? fileConfig?.sslKey ?? env.SSL_KEY_PATH,

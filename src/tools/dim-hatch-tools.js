@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'create_dimension',
-        description: '创建尺寸标注(DIMENSION)。当用户说"标尺寸/标注/量尺寸"时调用。支持6种类型: ALIGNED(对齐标注)/LINEAR(水平垂直)/ORDINATE(坐标标注)/RADIAL(半径标注)/DIAMETER(直径标注)/ANGULAR(角度标注)。返回新标注实体的句柄。idempotent——每次调用创建一个新标注。',
+        description: '创建尺寸标注(DIMENSION)。当用户说"标尺寸/标注/量尺寸"时调用。支持6种类型（见 type 参数：对齐/水平垂直/坐标/半径/直径/角度）。返回新标注实体的句柄。idempotent——每次调用创建一个新标注。',
         inputSchema: {
             type: 'object',
             properties: {

@@ -1,7 +1,7 @@
 export const tools = [
   {
     name: 'analyze_lisp_code',
-    description: '使用70+检查规则分析AutoLISP代码质量，返回JSON分析报告。当用户说"检查代码/分析Lisp"时调用。规则涵盖：括号平衡、参数数量、危险函数(quit/exit/startapp)、未使用变量、多余括号、覆盖内建函数等。报告含每条规则的级别error/warn和建议。与 format_lisp_code 配合使用',
+    description: '使用70+检查规则分析AutoLISP代码质量，返回JSON分析报告。当用户说"检查代码/分析Lisp"时调用。规则涵盖括号平衡、参数数量、危险函数、未使用变量、多余括号、覆盖内建函数等，报告含 error/warn 级别与建议。与 format_lisp_code 配合使用',
     inputSchema: {
       type: 'object',
       properties: {
