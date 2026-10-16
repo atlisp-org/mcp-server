@@ -1,156 +1,25 @@
+// =============================================================================
+// resource-readers.js — DWG/CAD 资源读取实现（从 resource-handlers.js 拆出）
+//
+// 职责：atlisp://dwg/*、atlisp://cad/* 等资源的读取实现（实体/文本/图纸信息/
+// 块引用/表数据/CAD 事件）。共享的 LISP 代码构建复用 lisp-code-builders.js，
+// 通用工具函数复用 resource-utils.js；包/平台/图纸列表与规范读取分别复用
+// metadata-readers.js、standards-readers.js（在此再导出以保持对外接口不变）。
+// 非 *-handlers.js 命名，不参与 handler-loader 自动发现。
+// =============================================================================
 import { cad } from '../cad.js';
-import { CAD_PLATFORMS, FILE_EXTENSIONS } from '../constants.js';
 import { log } from '../logger.js';
 import '../config.js';
-import fs from 'fs';
-import path from 'path';
 import { getCached, setCache } from './resource-cache.js';
-import { STANDARDS_DIR, TBL_QUERIES, TBL_KEY_ALIAS } from './resource-defs.js';
 import { parseLispList, parseLispRecursive, escapeLispString } from '../handler-utils.js';
-import { createError, ERROR_CODES } from '../errors.js';
-
-const ENTITY_PROPERTIES_LISP = `
-(defun entity:to-list (val)
-  (cond
-    ((= (type val) 'VARIANT) (entity:to-list (vlax-variant-value val)))
-    ((= (type val) 'SAFEARRAY) (vlax-safearray->list val))
-    (T val)))
-
-(defun entity:try-get (obj names / result val)
-  (foreach name names
-    (if (not (vl-catch-all-error-p
-               (setq val (vl-catch-all-apply
-                            (function vlax-get-property)
-                            (list obj name)))))
-      (setq result (cons (cons name (entity:to-list val)) result))))
-  (reverse result))
-
-(setq *common-props* '(ObjectName Handle Layer Color Linetype LinetypeScale Lineweight Visibility Material))
-
-(setq *entity-props*
-  '((AcDbLine StartPoint EndPoint Angle Delta Length Thickness Normal)
-    (AcDbCircle Center Radius Diameter Circumference Area Thickness Normal)
-    (AcDbArc Center Radius StartAngle EndAngle TotalAngle ArcLength Area Normal)
-    (AcDbPoint Position Thickness Normal)
-    (AcDbText TextString Position Height Width ObliqueAngle Rotation StyleName HorizontalAlignment VerticalAlignment Normal Backward UpsideDown)
-    (AcDbMText TextString Location Height Width Rotation StyleName AttachmentPoint DrawingDirection LinespacingFactor LinespacingDistance LinespacingStyle FlowDirection)
-    (AcDbBlockReference Name InsertionPoint Rotation XScale YScale ZScale Normal)
-    (AcDbPolyline Coordinates Closed ConstantWidth Elevation Normal Thickness LinetypeGeneration Area Length)
-    (AcDb2dPolyline Coordinates Closed Elevation Normal Thickness LinetypeGeneration Area Length Type Width)
-    (AcDb3dPolyline Coordinates Closed Type Normal Length Area)
-    (AcDbAlignedDimension DimLinePoint1 DimLinePoint2 ExtLinePoint1 ExtLinePoint2 TextPosition TextRotation Measurement)
-    (AcDbRotatedDimension DimLinePoint1 DimLinePoint2 ExtLinePoint1 ExtLinePoint2 TextPosition TextRotation Measurement Rotation)
-    (AcDbRadialDimension Center Diameter LeaderLength TextPosition)
-    (AcDbDiametricDimension Center Diameter LeaderLength TextPosition)
-    (AcDbAngularDimension AngleVertex AngleEndPoint ArcPoint TextPosition Measurement)
-    (AcDbHatch PatternName PatternType Area Elevation Normal NumberOfLoops AssociativeHatch HatchObjectType PatternAngle PatternScale PatternSpace ISOPenWidth)
-    (AcDbSpline Degree NumberOfControlPoints NumberOfFitPoints ControlPoints FitPoints Knots Weights Area Length Closed Periodic StartTanVector EndTanVector Elevation Normal)
-    (AcDbEllipse Center MajorRadius MinorRadius RadiusRatio StartAngle EndAngle Area Circumference Normal)
-    (AcDbRegion Area Perimeter Centroid MomentsOfInertia PrincipalMoments PrincipalDirections Normal)
-    (AcDb3dSolid Volume Area Centroid MomentsOfInertia PrincipalMoments PrincipalDirections)
-    (AcDbRasterImage ImageFile ImageWidth ImageHeight Origin Rotation Width Height ShowImage ClippingEnabled)
-    (AcDbLeader Coordinates ArrowheadType ArrowheadSize Color ScaleFactor StyleName TextString TextPosition Type Normal)
-    (AcDbViewport Center Width Height ScaleFactor CustomScale StandardScale GridOn SnapOn On DisplayLocked)
-    (AcDbTable TableStyleName Position Rows Columns Direction FlowDirection)))
-
-(defun entity:properties (ent / obj object-name result)
-  (setq obj (if (= (type ent) 'VLA-OBJECT) ent (vlax-ename->vla-object ent)))
-  (setq result (entity:try-get obj *common-props*))
-  (setq object-name (cdr (assoc 'ObjectName result)))
-  (if object-name
-    (setq result (append result (entity:try-get obj (cdr (assoc (read object-name) *entity-props*))))))
-  result)
-`;
-
-function _parseEntity(arr) {
-  if (!Array.isArray(arr) || arr.length < 5) return null;
-  const [type, handle, layer, color, linetype, ...rest] = arr;
-  const entity = {
-    type: String(type).toUpperCase().replace(/^"|"$/g, ''),
-    handle: String(handle),
-    layer: String(layer),
-    color,
-    linetype: String(linetype)
-  };
-
-  const entType = typeof entity.type === 'string' ? entity.type.toUpperCase() : entity.type;
-
-  if (/^(TEXT|MTEXT|ATTRIB|TCH_TEXT)$/.test(entType) && rest[0] != null) {
-    entity.text = String(rest[0]);
-  }
-
-  if (/^(LINE|LWPOLYLINE|POLYLINE|ARC|CIRCLE|SPLINE|ELLIPSE|XLINE|RAY)$/.test(entType)
-    && Array.isArray(rest[0])) {
-    entity.points = rest[0].map(pt => {
-      if (Array.isArray(pt) && pt.length >= 2)
-        return { x: Number(pt[0]), y: Number(pt[1]), z: Number(pt[2] || 0) };
-      return null;
-    }).filter(Boolean);
-  }
-
-  if (entType === 'INSERT' && rest[0] != null) {
-    entity.blockName = String(rest[0]);
-  }
-
-  return entity;
-}
-
-function _parseVlaEntity(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  return {
-    type: obj.type || null,
-    handle: obj.handle || null,
-    layer: obj.layer || '0',
-    color: obj.color !== undefined ? obj.color : 256,
-    linetype: obj.linetype || 'ByLayer'
-  };
-}
-
-function propertyPairsToObject(pairs) {
-  if (!Array.isArray(pairs)) return null;
-  const obj = {};
-  for (const pair of pairs) {
-    if (Array.isArray(pair) && pair.length >= 2) {
-      obj[String(pair[0])] = pair[1] !== null && pair[1] !== undefined ? pair[1] : null;
-    }
-  }
-  return obj;
-}
-
-function buildEntityPropertiesCode({ type, layer, bbox }) {
-  const items = [];
-  if (type) items.push(`(cons 0 "${escapeLispString(type)}")`);
-  if (layer) items.push(`(cons 8 "${escapeLispString(layer)}")`);
-  if (bbox) {
-    const parts = bbox.split(',').map(s => parseFloat(s.trim()));
-    if (parts.length === 4) {
-      const [x1, y1, x2, y2] = parts;
-      items.push(
-        `'(-4 . "<AND")`,
-        `'(-4 . ">=,>=,*") (list 10 ${x1} ${y1} 0.0)`,
-        `'(-4 . "<=,<=,*") (list 10 ${x2} ${y2} 0.0)`,
-        `'(-4 . "AND>")`
-      );
-    }
-  }
-  const filterExpr = items.length ? `(list ${items.join(' ')})` : 'nil';
-  const ssgetExpr = items.length ? `(ssget "_X" ${filterExpr})` : '(ssget "_X")';
-
-  return `(progn
-(vl-load-com)
-${ENTITY_PROPERTIES_LISP}
-(setq @e:total (if (setq @e:ss ${ssgetExpr}) (sslength @e:ss) 0)
-      @e:ents nil @e:i 0)
-(while (and @e:ss (< @e:i @e:total) (< (length @e:ents) 3000))
-  (setq @e:ents (cons (entity:properties (ssname @e:ss @e:i)) @e:ents)
-        @e:i (1+ @e:i)))
-(vl-prin1-to-string (list @e:total (reverse @e:ents))))`;
-}
-
-async function ensureCad() {
-  if (!cad.connected) await cad.connect();
-  if (!cad.connected) throw createError(ERROR_CODES.CAD_NOT_CONNECTED);
-}
+import { ensureCad, propertyPairsToObject } from './resource-utils.js';
+import {
+  buildEntityPropertiesCode,
+  buildTextContentCode,
+  buildBlockRefsCode,
+  buildTablesCode,
+  parseTableRecord,
+} from './lisp-code-builders.js';
 
 async function getEntityByHandle(handle) {
   await ensureCad();
@@ -318,50 +187,6 @@ async function getEntitiesSummary(cacheKey) {
     log(`getEntitiesSummary error: ${e.message}`);
     return { total: 0, summary: [] };
   }
-}
-
-function buildTextContentCode({ layer, bbox, offset, limit }) {
-  const items = [
-    `'(-4 . "<OR")`,
-    `'(0 . "TEXT")`,
-    `'(0 . "MTEXT")`,
-    `'(0 . "ATTRIB")`,
-    `'(-4 . "OR>")`,
-  ];
-  if (layer) items.push(`(cons 8 "${escapeLispString(layer)}")`);
-  if (bbox) {
-    const parts = bbox.split(',').map(s => parseFloat(s.trim()));
-    if (parts.length === 4) {
-      const [x1, y1, x2, y2] = parts;
-      items.push(
-        `'(-4 . "<AND")`,
-        `'(-4 . ">=,>=,*") (list 10 ${x1} ${y1} 0.0)`,
-        `'(-4 . "<=,<=,*") (list 10 ${x2} ${y2} 0.0)`,
-        `'(-4 . "AND>")`
-      );
-    }
-  }
-  const filterExpr = `(list ${items.join(' ')})`;
-
-  return `(progn
-(vl-load-com)
-(setq ss (ssget "_X" ${filterExpr}))
-(if (null ss)
-  (list "total" 0 "offset" ${offset} "limit" ${limit} "texts" nil)
-  (progn
-    (setq total (sslength ss) i ${offset} texts nil)
-    (while (and (< i total) (< (length texts) ${limit}))
-      (setq ent (ssname ss i) ed (entget ent) ins (cdr (assoc 10 ed)))
-      (setq typ (cdr (assoc 0 ed)) h (cdr (assoc 40 ed)))
-      (if (null h) (setq h 2.5))
-      (setq texts (append texts (list (list
-        "text" (vl-prin1-to-string (cdr (assoc 1 ed)))
-        "position" (list (car ins) (cadr ins) (caddr ins))
-        "height" h
-        "handle" (cdr (assoc 5 ed))
-      ))) i (1+ i)))
-    (list "total" total "offset" ${offset} "limit" ${limit} "texts" texts))))
-`;
 }
 
 async function getTextContent(params = {}) {
@@ -572,52 +397,6 @@ async function getDwgPath() {
   }
 }
 
-function buildBlockRefsCode(filterBlockName) {
-  const filterItems = ['(cons 0 "INSERT")'];
-  if (filterBlockName) {
-    filterItems.push(`(cons 2 "${escapeLispString(filterBlockName)}")`);
-  }
-  const filterCode = `(list ${filterItems.join(' ')})`;
-  return `(progn
-(vl-load-com)
-
-(defun @br:try-fn (fn arg / r)
-  (setq r (vl-catch-all-apply (function (lambda () (apply fn (list arg))))))
-  (if (vl-catch-all-error-p r) nil r))
-
-(defun @br:props (ent / ed r p2 p10 p50 p41 p42 p43)
-  (setq ed (entget ent)
-        p10 (cdr (assoc 10 ed))
-        p50 (cdr (assoc 50 ed))
-        p41 (cdr (assoc 41 ed))
-        p42 (cdr (assoc 42 ed))
-        p43 (cdr (assoc 43 ed)))
-  (setq r (vl-catch-all-apply
-            (function (lambda ()
-              (list
-                (cons "handle" (cdr (assoc 5 ed)))
-                (cons "layer" (cdr (assoc 8 ed)))
-                (cons "blockName" (cdr (assoc 2 ed)))
-                (cons "effectiveBlockName" (cdr (assoc 2 ed)))
-                (cons "insertionPoint" (list (car p10) (cadr p10) (caddr p10)))
-                (cons "rotation" p50)
-                (cons "scale" (list p41 p42 p43))
-                (cons "attributes" (@br:try-fn 'block:get-attributes ent))
-                (cons "dynamicProperties" (@br:try-fn 'block:get-properties ent)))))))
-  (if (vl-catch-all-error-p r) (list (cons "handle" (cdr (assoc 5 ed)))) r))
-
-(setq ss (ssget "_X" ${filterCode}))
-(if (null ss)
-  (list (cons "total" 0) (cons "blockRefs" nil))
-  (progn
-    (setq total (sslength ss) i 0 refs nil)
-    (while (< i total)
-      (setq r (@br:props (ssname ss i)))
-      (if r (setq refs (cons r refs)))
-      (setq i (1+ i)))
-    (list (cons "total" total) (cons "blockRefs" (list (reverse refs)))))))`;
-}
-
 async function getBlockRefs(params = {}) {
   const cacheKey = `dwg:block-refs:${params.blockName || 'all'}`;
   const cached = getCached(cacheKey);
@@ -678,72 +457,6 @@ async function getBlockRefs(params = {}) {
     log(`getBlockRefs error: ${e.message}`);
     throw e;
   }
-}
-
-const VLA_HELPER_LISP = `(defun @:get-props (obj prop-names / result p p-sym val)
-  (setq result nil)
-  (foreach p prop-names
-    (setq p-sym (read p))
-    (if (vlax-property-available-p obj p-sym)
-      (progn
-        (setq val (vl-catch-all-apply 'vlax-get (list obj p-sym)))
-        (if (not (vl-catch-all-error-p val))
-          (progn
-             (cond
-              ((= (type val) 'VLA-OBJECT) (setq val (strcat "@" (vla-get-objectname val))))
-              ((or (= (type val) 'STR) (= (type val) 'SAFEARRAY) (listp val)) (setq val (vl-prin1-to-string val))))
-            (setq result (cons (cons p val) result)))))))
-  (reverse result))`;
-
-function buildTablesCode(tblName) {
-  const raw = tblName.toLowerCase();
-  const key = TBL_KEY_ALIAS[raw] || raw;
-  const query = TBL_QUERIES[key];
-  const isVlaTable = key !== 'layer';
-  if (query) {
-    if (isVlaTable) {
-      return `(progn (vl-load-com) ${VLA_HELPER_LISP} ${query.lisp})`;
-    }
-    return `(progn (vl-load-com) ${query.lisp})`;
-  }
-  const parts = Object.values(TBL_QUERIES).map(q => `(vl-catch-all-apply '(lambda () ${q.lisp}))`);
-  return `(progn (vl-load-com) ${VLA_HELPER_LISP} (list ${parts.join(' ')}))`;
-}
-
-function parseTableRecord(rec, tableName) {
-  if (!rec || !Array.isArray(rec)) return null;
-  const obj = {};
-  const isLayer = tableName === 'layer';
-  for (const pair of rec) {
-    if (Array.isArray(pair) && pair.length >= 2) {
-      const key = String(pair[0]);
-      const val = pair[1];
-      const isDxfCode = typeof pair[0] === 'number';
-      if (isDxfCode) {
-        if (key === '2') obj.name = String(val);
-        else if (key === '62') obj.color = typeof val === 'number' ? val : 7;
-        else if (key === '6') obj.linetype = String(val);
-        else if (key === '70') {
-          obj.flags = typeof val === 'number' ? val : 0;
-          if (isLayer) {
-            obj.frozen = (val & 1) !== 0;
-            obj.locked = (val & 4) !== 0;
-          }
-        }
-        else if (key === '60') obj.on = val === 0;
-        else if (key === '1') obj.font = String(val);
-        else if (key === '40') obj.height = typeof val === 'number' ? val : 0;
-        else if (key === '41') obj.width = typeof val === 'number' ? val : 1;
-        else if (key === '42') obj.oblique = typeof val === 'number' ? val : 0;
-        else if (key === '3') obj.bigfont = String(val);
-        else if (key === '50') obj.flags = typeof val === 'number' ? val : 0;
-      } else {
-        if (key === 'Name') obj.name = val;
-        obj[key] = val;
-      }
-    }
-  }
-  return obj.name ? obj : null;
 }
 
 async function getTables(params = {}) {
@@ -837,175 +550,6 @@ async function getTables(params = {}) {
   }
 }
 
-async function getPackages(filterName = null) {
-  const cacheKey = filterName ? `packages:${filterName}` : 'packages:all';
-  const cached = getCached(cacheKey);
-  if (cached) return cached;
-
-  await ensureCad();
-
-  try {
-    const code = `(mapcar 'cdr @::*local-pkgs*)`;
-    const result = await cad.sendCommandWithResult(code);
-
-    if (!result || result === '' || result === 'nil') {
-      return [];
-    }
-
-    let raw = [];
-    try {
-      raw = JSON.parse(result);
-    } catch {
-      raw = parseLispList(result) || [];
-    }
-    if (!Array.isArray(raw)) raw = [];
-
-    const packages = raw.map(item => {
-      if (Array.isArray(item)) {
-        const pkg = { name: '', version: '0.0.0', description: '', loaded: true };
-        for (const entry of item) {
-          if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-            const [[key, val]] = Object.entries(entry);
-            const k = String(key);
-            const v = String(val);
-            if (k === ':NAME') pkg.name = v;
-            else if (k === ':VERSION') pkg.version = v;
-            else if (k === ':DESCRIPTION') pkg.description = v;
-            else if (k === ':FULL-NAME') pkg.fullName = v;
-            else if (k === ':AUTHOR') pkg.author = v;
-            else if (k === ':CATEGORY') pkg.category = v;
-            else if (k === ':URL') pkg.url = v;
-          }
-        }
-        return pkg;
-      }
-      if (typeof item === 'string' || typeof item === 'number') {
-        return { name: String(item), version: '0.0.0', loaded: true };
-      }
-      if (item && typeof item === 'object') {
-        const pkg = { name: '', version: '0.0.0', description: '', loaded: true };
-        const nameVal = item.name || item.Name || item.NAME || item[':NAME'];
-        if (nameVal) pkg.name = String(nameVal);
-        const verVal = item.version || item.Version || item.VERSION || item[':VERSION'];
-        if (verVal) pkg.version = String(verVal);
-        const descVal = item.description || item.Description || item.DESCRIPTION || item[':DESCRIPTION'];
-        if (descVal) pkg.description = String(descVal);
-        if (item.fullName || item.full_name) pkg.fullName = String(item.fullName || item.full_name);
-        if (item.author || item.Author) pkg.author = String(item.author || item.Author);
-        if (item.category || item.Category) pkg.category = String(item.category || item.Category);
-        if (item.url || item.Url || item.URL) pkg.url = String(item.url || item.Url || item.URL);
-        return pkg;
-      }
-      return null;
-    }).filter(Boolean);
-
-    if (filterName) {
-      const filtered = packages.filter(p => p.name === filterName);
-      setCache(cacheKey, filtered);
-      return filtered;
-    }
-    setCache(cacheKey, packages);
-    return packages;
-  } catch {
-    return [];
-  }
-}
-
-function getPlatforms() {
-  return CAD_PLATFORMS.map(name => ({
-    name,
-    extensions: FILE_EXTENSIONS[name] || []
-  }));
-}
-
-async function getDwgList() {
-  const cacheKey = 'cad:dwgs';
-  const cached = getCached(cacheKey);
-  if (cached) return cached;
-
-  await ensureCad();
-
-  try {
-    const code = `(progn
-      (vl-load-com)
-      (setq result nil)
-      (vlax-for doc (vla-get-Documents (vla-get-Application (vlax-get-acad-object)))
-        (setq result (cons (list (vla-get-Name doc) (vla-get-FullName doc)) result))
-      )
-      (reverse result)
-    )`;
-    const result = await cad.sendCommandWithResult(code);
-
-    if (!result || result === "" || result === "nil") {
-      return [];
-    }
-
-    let parsed = [];
-    try {
-      parsed = JSON.parse(result);
-    } catch {
-      const listResult = parseLispRecursive(result);
-      if (Array.isArray(listResult)) {
-        parsed = listResult;
-      }
-    }
-
-    if (!Array.isArray(parsed)) parsed = [];
-
-    const dwgList = parsed.map(item => {
-      if (Array.isArray(item) && item.length >= 2) {
-        return { name: String(item[0]), path: String(item[1]) };
-      }
-      return null;
-    }).filter(Boolean);
-
-    setCache(cacheKey, dwgList);
-    return dwgList;
-  } catch {
-    return [];
-  }
-}
-
-function loadStandardsFile(filename) {
-  const filePath = path.join(STANDARDS_DIR, filename);
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch (e) {
-    log(`Error loading standards file ${filename}: ${e.message}`);
-    return null;
-  }
-}
-
-const standardsCache = new Map();
-
-function getCachedStandards(key) {
-  const entry = standardsCache.get(key);
-  if (entry && Date.now() - entry.timestamp < 30000) return entry.data;
-  standardsCache.delete(key);
-  return null;
-}
-
-function setCachedStandards(key, data) {
-  standardsCache.set(key, { data, timestamp: Date.now() });
-}
-
-function getDraftingStandards() {
-  const cached = getCachedStandards('drafting');
-  if (cached) return cached;
-  const data = loadStandardsFile('drafting.json');
-  if (data) setCachedStandards('drafting', data);
-  return data || { error: '制图规范文件加载失败' };
-}
-
-function getCodingStandards() {
-  const cached = getCachedStandards('coding');
-  if (cached) return cached;
-  const data = loadStandardsFile('coding.json');
-  if (data) setCachedStandards('coding', data);
-  return data || { error: '编码规范文件加载失败' };
-}
-
 async function getCadEvents(_params) {
   await ensureCad();
   try {
@@ -1025,6 +569,11 @@ async function getCadEvents(_params) {
   }
 }
 
+// 包/平台/图纸列表元数据（实现复用 metadata-readers.js，接口保持不变）
+export { getPackages, getPlatforms, getDwgList } from './metadata-readers.js';
+// 制图/编码规范读取（实现复用 standards-readers.js，接口保持不变）
+export { getDraftingStandards, getCodingStandards } from './standards-readers.js';
+
 export {
   getEntityByHandle,
   getCadInfo,
@@ -1035,10 +584,5 @@ export {
   getDwgPath,
   getBlockRefs,
   getTables,
-  getPackages,
-  getPlatforms,
-  getDwgList,
-  getDraftingStandards,
-  getCodingStandards,
   getCadEvents,
 };
