@@ -1,0 +1,73 @@
+{
+  "name": "机械行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 14692-2008",
+  "description": "适用于机械行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "机械行业图层命名规范",
+      "rules": [
+        { "name": "M-OUTL", "prefix": "M-OUTL", "required": true, "color": 1, "linetype": "Continuous", "description": "轮廓线" },
+        { "name": "M-HIDD", "prefix": "M-HIDD", "required": true, "color": 8, "linetype": "HIDDEN", "description": "隐藏线" },
+        { "name": "M-CNTR", "prefix": "M-CNTR", "required": true, "color": 3, "linetype": "CENTER", "description": "中心线" },
+        { "name": "M-DIM", "prefix": "M-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "尺寸标注" },
+        { "name": "M-TEXT", "prefix": "M-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "M-HATCH", "prefix": "M-HATCH", "required": true, "color": 3, "linetype": "Continuous", "description": "剖面线" },
+        { "name": "M-SYMB", "prefix": "M-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "M-TOLR", "prefix": "M-TOLR", "required": false, "color": 4, "linetype": "Continuous", "description": "公差" },
+        { "name": "M-SRF", "prefix": "M-SRF", "required": false, "color": 6, "linetype": "Continuous", "description": "表面粗糙度" },
+        { "name": "M-WELD", "prefix": "M-WELD", "required": false, "color": 2, "linetype": "Continuous", "description": "焊接符号" },
+        { "name": "M-SECT", "prefix": "M-SECT", "required": false, "color": 1, "linetype": "Continuous", "description": "剖切线" },
+        { "name": "M-LEADER", "prefix": "M-LEADER", "required": false, "color": 4, "linetype": "Continuous", "description": "引线" },
+        { "name": "M-DEF", "prefix": "M-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" },
+        { "name": "M-TABL", "prefix": "M-TABL", "required": false, "color": 7, "linetype": "Continuous", "description": "表格" }
+      ]
+    },
+    "colors": {
+      "description": "机械行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "可见轮廓线、剖切线" },
+        { "color": 2, "name": "Yellow", "usage": "焊接符号" },
+        { "color": 3, "name": "Green", "usage": "中心线、剖面线" },
+        { "color": 4, "name": "Cyan", "usage": "尺寸标注、公差、引线" },
+        { "color": 5, "name": "Blue", "usage": "文字" },
+        { "color": 6, "name": "Magenta", "usage": "符号、表面粗糙度" },
+        { "color": 7, "name": "White/Black", "usage": "图框、表格" },
+        { "color": 8, "name": "Gray", "usage": "隐藏线" }
+      ]
+    },
+    "linetypes": {
+      "description": "机械行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "可见轮廓线" },
+        { "name": "HIDDEN", "description": "虚线", "usage": "隐藏线" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线、对称线" },
+        { "name": "PHANTOM", "description": "双点划线", "usage": "假想线、极限位置" },
+        { "name": "DASHDOT", "description": "点划线", "usage": "剖切线" }
+      ]
+    },
+    "textstyles": {
+      "description": "机械行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "仿宋", "height": 3.5, "width": 0.7, "required": true, "usage": "技术要求" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "尺寸标注" },
+        { "name": "TOLR", "font": "仿宋", "height": 2.0, "width": 0.7, "required": false, "usage": "公差标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "机械行业标注样式规范",
+      "rules": [
+        { "name": "DIM-MECH", "usage": "机械标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0, "unit": "millimeters" } },
+        { "name": "DIM-TOLR", "usage": "公差标注", "required": false, "properties": { "arrow": "closed filled", "text_height": 2.0, "precision": 3, "unit": "millimeters" } },
+        { "name": "STANDARD", "usage": "默认标注", "required": false, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "机械行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-M-图纸类型-序号.dwg", "example": "P2024-M-FP-01.dwg" }
+      ]
+    }
+  }
+}

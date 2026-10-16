@@ -1,0 +1,71 @@
+{
+  "name": "土木道桥行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50162-2014",
+  "description": "适用于土木道桥行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "土木道桥行业图层命名规范",
+      "rules": [
+        { "name": "C-ROAD", "prefix": "C-ROAD", "required": true, "color": 1, "linetype": "Continuous", "description": "道路" },
+        { "name": "C-EDGE", "prefix": "C-EDGE", "required": true, "color": 2, "linetype": "Continuous", "description": "路缘石" },
+        { "name": "C-BRDG", "prefix": "C-BRDG", "required": false, "color": 1, "linetype": "Continuous", "description": "桥梁" },
+        { "name": "C-TUNL", "prefix": "C-TUNL", "required": false, "color": 1, "linetype": "Continuous", "description": "隧道" },
+        { "name": "C-EATH", "prefix": "C-EATH", "required": false, "color": 3, "linetype": "Continuous", "description": "土方" },
+        { "name": "C-DRAIN", "prefix": "C-DRAIN", "required": true, "color": 5, "linetype": "Continuous", "description": "排水" },
+        { "name": "C-SIGN", "prefix": "C-SIGN", "required": false, "color": 6, "linetype": "Continuous", "description": "交通标志" },
+        { "name": "C-LINE", "prefix": "C-LINE", "required": false, "color": 2, "linetype": "DASHED", "description": "交通标线" },
+        { "name": "C-TOPO", "prefix": "C-TOPO", "required": true, "color": 3, "linetype": "Continuous", "description": "地形" },
+        { "name": "C-CONTOUR", "prefix": "C-CONTOUR", "required": false, "color": 3, "linetype": "Continuous", "description": "等高线" },
+        { "name": "C-AXIS", "prefix": "C-AXIS", "required": true, "color": 1, "linetype": "CENTER", "description": "中线" },
+        { "name": "C-DIM", "prefix": "C-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "C-TEXT", "prefix": "C-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "C-GRID", "prefix": "C-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "网格" },
+        { "name": "C-DEF", "prefix": "C-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "土木道桥行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "道路、桥梁、中线" },
+        { "color": 2, "name": "Yellow", "usage": "路缘石、标线" },
+        { "color": 3, "name": "Green", "usage": "土方、地形" },
+        { "color": 4, "name": "Cyan", "usage": "标注" },
+        { "color": 5, "name": "Blue", "usage": "文字、排水" },
+        { "color": 6, "name": "Magenta", "usage": "交通标志" },
+        { "color": 7, "name": "White/Black", "usage": "图框" },
+        { "color": 8, "name": "Gray", "usage": "网格、参照" }
+      ]
+    },
+    "linetypes": {
+      "description": "土木道桥行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "道路、结构轮廓" },
+        { "name": "CENTER", "description": "中心线", "usage": "道路中线" },
+        { "name": "DASHED", "description": "虚线", "usage": "标线、隐藏线" },
+        { "name": "PHANTOM", "description": "双点划线", "usage": "规划线" }
+      ]
+    },
+    "textstyles": {
+      "description": "土木道桥行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "土木道桥行业标注样式规范",
+      "rules": [
+        { "name": "DIM-CIVIL", "usage": "总图标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 3.0, "precision": 2, "unit": "meters" } },
+        { "name": "STANDARD", "usage": "默认标注", "required": false, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "土木道桥行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-C-图纸类型-序号.dwg", "example": "P2024-C-RP-01.dwg" }
+      ]
+    }
+  }
+}

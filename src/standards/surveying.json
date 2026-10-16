@@ -1,0 +1,66 @@
+{
+  "name": "测绘行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 20257-2017",
+  "description": "适用于测绘行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "测绘行业图层命名规范",
+      "rules": [
+        { "name": "SV-CONTR", "prefix": "SV-CONTR", "required": true, "color": 1, "linetype": "Continuous", "description": "控制点" },
+        { "name": "SV-BOUND", "prefix": "SV-BOUND", "required": true, "color": 2, "linetype": "Continuous", "description": "边界" },
+        { "name": "SV-CONTOUR", "prefix": "SV-CONTOUR", "required": true, "color": 3, "linetype": "Continuous", "description": "等高线" },
+        { "name": "SV-ELEV", "prefix": "SV-ELEV", "required": false, "color": 4, "linetype": "Continuous", "description": "高程点" },
+        { "name": "SV-BUILD", "prefix": "SV-BUILD", "required": true, "color": 1, "linetype": "Continuous", "description": "建筑" },
+        { "name": "SV-ROAD", "prefix": "SV-ROAD", "required": true, "color": 2, "linetype": "Continuous", "description": "道路" },
+        { "name": "SV-WATE", "prefix": "SV-WATE", "required": false, "color": 5, "linetype": "Continuous", "description": "水系" },
+        { "name": "SV-VEGE", "prefix": "SV-VEGE", "required": false, "color": 3, "linetype": "Continuous", "description": "植被" },
+        { "name": "SV-TEXT", "prefix": "SV-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "SV-SYMB", "prefix": "SV-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "SV-GRID", "prefix": "SV-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "方格网" },
+        { "name": "SV-DEF", "prefix": "SV-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "测绘行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "控制点、建筑" },
+        { "color": 2, "name": "Yellow", "usage": "边界、道路" },
+        { "color": 3, "name": "Green", "usage": "等高线、植被" },
+        { "color": 4, "name": "Cyan", "usage": "高程点" },
+        { "color": 5, "name": "Blue", "usage": "文字、水系" },
+        { "color": 6, "name": "Magenta", "usage": "符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框" },
+        { "color": 8, "name": "Gray", "usage": "方格网" }
+      ]
+    },
+    "linetypes": {
+      "description": "测绘行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "建筑、道路" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" },
+        { "name": "CENTER", "description": "中心线", "usage": "方格网" }
+      ]
+    },
+    "textstyles": {
+      "description": "测绘行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "ELEV", "font": "仿宋", "height": 2.0, "width": 0.7, "required": true, "usage": "高程标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "测绘行业标注样式规范",
+      "rules": [
+        { "name": "DIM-SURV", "usage": "测绘标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 3, "unit": "meters" } }
+      ]
+    },
+    "file_naming": {
+      "description": "测绘行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-SV-图纸类型-序号.dwg", "example": "P2024-SV-MP-01.dwg" }
+      ]
+    }
+  }
+}

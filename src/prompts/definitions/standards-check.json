@@ -1,0 +1,25 @@
+{
+  "name": "standards-check",
+  "description": "检查当前图纸是否符合制图规范，支持按行业和类别筛选",
+  "arguments": [
+    {
+      "name": "industry",
+      "description": "行业规范: 通用/建筑/结构/机械/电气/暖通给排水/土木道桥/测绘/室内装饰/景观园林",
+      "required": false,
+      "default": "通用"
+    },
+    {
+      "name": "categories",
+      "description": "检查类别: layers/colors/linetypes/lineweights/textstyles/dimstyles/file_naming",
+      "required": false,
+      "default": "all"
+    },
+    {
+      "name": "strict",
+      "description": "严格模式: true=所有警告都视为错误，false=仅检查必需项",
+      "required": false,
+      "default": "false"
+    }
+  ],
+  "handlerFile": "standards-check"
+}

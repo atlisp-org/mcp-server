@@ -1,0 +1,64 @@
+{
+  "name": "暖通给排水行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50114-2010",
+  "description": "适用于暖通给排水行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "暖通给排水行业图层命名规范",
+      "rules": [
+        { "name": "M-DUCT", "prefix": "M-DUCT", "required": true, "color": 6, "linetype": "Continuous", "description": "风管" },
+        { "name": "M-PIPE", "prefix": "M-PIPE", "required": true, "color": 1, "linetype": "Continuous", "description": "水管" },
+        { "name": "M-EQPM", "prefix": "M-EQPM", "required": true, "color": 2, "linetype": "Continuous", "description": "设备" },
+        { "name": "M-VALV", "prefix": "M-VALV", "required": false, "color": 3, "linetype": "Continuous", "description": "阀门" },
+        { "name": "P-WSUP", "prefix": "P-WSUP", "required": true, "color": 5, "linetype": "Continuous", "description": "给水管" },
+        { "name": "P-WAST", "prefix": "P-WAST", "required": true, "color": 3, "linetype": "Continuous", "description": "排水管" },
+        { "name": "P-RAIN", "prefix": "P-RAIN", "required": false, "color": 4, "linetype": "Continuous", "description": "雨水管" },
+        { "name": "M-DIM", "prefix": "M-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "M-TEXT", "prefix": "M-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "M-SYMB", "prefix": "M-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "M-DEF", "prefix": "M-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "暖通给排水行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "水管" },
+        { "color": 2, "name": "Yellow", "usage": "设备" },
+        { "color": 3, "name": "Green", "usage": "阀门、排水管" },
+        { "color": 4, "name": "Cyan", "usage": "标注、雨水管" },
+        { "color": 5, "name": "Blue", "usage": "文字、给水管" },
+        { "color": 6, "name": "Magenta", "usage": "风管、符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框" }
+      ]
+    },
+    "linetypes": {
+      "description": "暖通给排水行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "管道、设备" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏管道" },
+        { "name": "CENTER", "description": "中心线", "usage": "管道中心" }
+      ]
+    },
+    "textstyles": {
+      "description": "暖通给排水行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "暖通给排水行业标注样式规范",
+      "rules": [
+        { "name": "DIM-MECH", "usage": "暖通标注", "required": true, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "暖通给排水行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-M-图纸类型-序号.dwg", "example": "P2024-M-FP-01.dwg" }
+      ]
+    }
+  }
+}

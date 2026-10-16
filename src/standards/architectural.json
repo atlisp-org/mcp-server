@@ -1,0 +1,75 @@
+{
+  "name": "建筑行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50001-2017",
+  "description": "适用于建筑行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "建筑行业图层命名规范",
+      "rules": [
+        { "name": "A-WALL", "prefix": "A-WALL", "required": true, "color": 1, "linetype": "Continuous", "description": "墙体" },
+        { "name": "A-COLM", "prefix": "A-COLM", "required": true, "color": 1, "linetype": "Continuous", "description": "柱子" },
+        { "name": "A-DOOR", "prefix": "A-DOOR", "required": true, "color": 2, "linetype": "Continuous", "description": "门" },
+        { "name": "A-WIND", "prefix": "A-WIND", "required": true, "color": 2, "linetype": "Continuous", "description": "窗" },
+        { "name": "A-STAIR", "prefix": "A-STAIR", "required": false, "color": 3, "linetype": "Continuous", "description": "楼梯" },
+        { "name": "A-EVTR", "prefix": "A-EVTR", "required": false, "color": 3, "linetype": "Continuous", "description": "电梯" },
+        { "name": "A-ROOM", "prefix": "A-ROOM", "required": false, "color": 4, "linetype": "Continuous", "description": "房间" },
+        { "name": "A-AXIS", "prefix": "A-AXIS", "required": true, "color": 1, "linetype": "CENTER", "description": "轴线" },
+        { "name": "A-AXIS-CIRCLE", "prefix": "A-AXIS-CIRCLE", "required": false, "color": 1, "linetype": "CENTER", "description": "轴号" },
+        { "name": "A-DIM", "prefix": "A-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "A-TEXT", "prefix": "A-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "A-HATCH", "prefix": "A-HATCH", "required": false, "color": 3, "linetype": "Continuous", "description": "填充" },
+        { "name": "A-SYMB", "prefix": "A-SYMB", "required": false, "color": 6, "linetype": "Continuous", "description": "符号" },
+        { "name": "A-FURN", "prefix": "A-FURN", "required": false, "color": 4, "linetype": "Continuous", "description": "家具" },
+        { "name": "A-EQPM", "prefix": "A-EQPM", "required": false, "color": 6, "linetype": "Continuous", "description": "设备" },
+        { "name": "A-GRID", "prefix": "A-GRID", "required": false, "color": 8, "linetype": "CENTER", "description": "轴网" },
+        { "name": "A-DEF", "prefix": "A-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" },
+        { "name": "A-ANNO", "prefix": "A-ANNO", "required": false, "color": 5, "linetype": "Continuous", "description": "注释" }
+      ]
+    },
+    "colors": {
+      "description": "建筑行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "墙体、轴线、柱子" },
+        { "color": 2, "name": "Yellow", "usage": "门窗" },
+        { "color": 3, "name": "Green", "usage": "楼梯、电梯、填充" },
+        { "color": 4, "name": "Cyan", "usage": "标注、房间、家具" },
+        { "color": 5, "name": "Blue", "usage": "文字、注释" },
+        { "color": 6, "name": "Magenta", "usage": "设备、符号" },
+        { "color": 7, "name": "White/Black", "usage": "图框、默认" },
+        { "color": 8, "name": "Gray", "usage": "轴网、参照" }
+      ]
+    },
+    "linetypes": {
+      "description": "建筑行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "可见轮廓线" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线、对称线" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" },
+        { "name": "PHANTOM", "description": "双点划线", "usage": "假想线" }
+      ]
+    },
+    "textstyles": {
+      "description": "建筑行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "SUBTITLE", "font": "黑体", "height": 5.0, "width": 0.8, "required": false, "usage": "二级标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "尺寸标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "建筑行业标注样式规范",
+      "rules": [
+        { "name": "DIM-ARCH", "usage": "建筑标注", "required": true, "properties": { "arrow": "arch tick", "text_height": 2.5, "precision": 0, "unit": "millimeters" } },
+        { "name": "STANDARD", "usage": "默认标注", "required": false, "properties": { "arrow": "closed filled", "text_height": 2.5, "precision": 0 } }
+      ]
+    },
+    "file_naming": {
+      "description": "建筑行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-A-图纸类型-序号.dwg", "example": "P2024-A-FP-01.dwg" }
+      ]
+    }
+  }
+}

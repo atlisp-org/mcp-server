@@ -1,0 +1,68 @@
+{
+  "name": "室内装饰行业制图规范",
+  "version": "1.0",
+  "standard": "GB/T 50327-2001",
+  "description": "适用于室内装饰行业制图的规范标准",
+  "categories": {
+    "layers": {
+      "description": "室内装饰行业图层命名规范",
+      "rules": [
+        { "name": "D-WALL", "prefix": "D-WALL", "required": true, "color": 1, "linetype": "Continuous", "description": "墙体" },
+        { "name": "D-DOOR", "prefix": "D-DOOR", "required": true, "color": 2, "linetype": "Continuous", "description": "门" },
+        { "name": "D-WIND", "prefix": "D-WIND", "required": true, "color": 2, "linetype": "Continuous", "description": "窗" },
+        { "name": "D-FURN", "prefix": "D-FURN", "required": true, "color": 4, "linetype": "Continuous", "description": "家具" },
+        { "name": "D-EQPM", "prefix": "D-EQPM", "required": true, "color": 6, "linetype": "Continuous", "description": "设备" },
+        { "name": "D-FLOOR", "prefix": "D-FLOOR", "required": false, "color": 3, "linetype": "Continuous", "description": "地面" },
+        { "name": "D-CEIL", "prefix": "D-CEIL", "required": false, "color": 3, "linetype": "Continuous", "description": "天花" },
+        { "name": "D-MATE", "prefix": "D-MATE", "required": false, "color": 4, "linetype": "Continuous", "description": "材料标注" },
+        { "name": "D-DETL", "prefix": "D-DETL", "required": false, "color": 5, "linetype": "Continuous", "description": "详图" },
+        { "name": "D-DIM", "prefix": "D-DIM", "required": true, "color": 4, "linetype": "Continuous", "description": "标注" },
+        { "name": "D-TEXT", "prefix": "D-TEXT", "required": true, "color": 5, "linetype": "Continuous", "description": "文字" },
+        { "name": "D-HATCH", "prefix": "D-HATCH", "required": false, "color": 3, "linetype": "Continuous", "description": "填充" },
+        { "name": "D-AXIS", "prefix": "D-AXIS", "required": true, "color": 1, "linetype": "CENTER", "description": "轴线" },
+        { "name": "D-DEF", "prefix": "D-DEF", "required": false, "color": 7, "linetype": "Continuous", "description": "图框" }
+      ]
+    },
+    "colors": {
+      "description": "室内装饰行业颜色规范",
+      "rules": [
+        { "color": 1, "name": "Red", "usage": "墙体、轴线" },
+        { "color": 2, "name": "Yellow", "usage": "门窗" },
+        { "color": 3, "name": "Green", "usage": "地面、天花、填充" },
+        { "color": 4, "name": "Cyan", "usage": "家具、标注、材料" },
+        { "color": 5, "name": "Blue", "usage": "文字、详图" },
+        { "color": 6, "name": "Magenta", "usage": "设备" },
+        { "color": 7, "name": "White/Black", "usage": "图框" }
+      ]
+    },
+    "linetypes": {
+      "description": "室内装饰行业线型规范",
+      "rules": [
+        { "name": "Continuous", "description": "实线", "usage": "墙体、家具" },
+        { "name": "CENTER", "description": "中心线", "usage": "轴线" },
+        { "name": "DASHED", "description": "虚线", "usage": "隐藏线" }
+      ]
+    },
+    "textstyles": {
+      "description": "室内装饰行业文字样式规范",
+      "rules": [
+        { "name": "TITLE", "font": "黑体", "height": 7.0, "width": 0.8, "required": true, "usage": "图纸标题" },
+        { "name": "NOTE", "font": "宋体", "height": 3.5, "width": 0.7, "required": true, "usage": "说明文字" },
+        { "name": "DIM", "font": "仿宋", "height": 2.5, "width": 0.7, "required": true, "usage": "标注" },
+        { "name": "MATE", "font": "宋体", "height": 3.0, "width": 0.7, "required": false, "usage": "材料标注" }
+      ]
+    },
+    "dimstyles": {
+      "description": "室内装饰行业标注样式规范",
+      "rules": [
+        { "name": "DIM-INT", "usage": "室内标注", "required": true, "properties": { "arrow": "arch tick", "text_height": 2.5, "precision": 0, "unit": "millimeters" } }
+      ]
+    },
+    "file_naming": {
+      "description": "室内装饰行业文件命名规范",
+      "rules": [
+        { "pattern": "项目编码-D-图纸类型-序号.dwg", "example": "P2024-D-FP-01.dwg" }
+      ]
+    }
+  }
+}
