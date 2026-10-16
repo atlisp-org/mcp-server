@@ -2,6 +2,14 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.1] - 2026-10-16
+
+### 更新内容
+
+- fix: worker 轮换计数只统计外部请求，消除阈值漂移 (92a5dd1)
+- feat: 内存变化与 ERROR/WARN 日志输出到终端 (30484c9)
+- chore: 暂时关闭 atlisp.cn 健康上报（遥测 POST） (7270663)
+
 ## [1.11.0] - 2026-10-16
 
 ### 更新内容
