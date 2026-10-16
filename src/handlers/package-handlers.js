@@ -1,4 +1,4 @@
-import { log, error as logError } from '../logger.js';
+import {  error as logError } from '../logger.js';
 const PACKAGES_LIST_URL = process.env.PACKAGES_LIST_URL || 'http://s3.atlisp.cn/packages-list?fmt=json';
 import { cad } from '../cad.js';
 import { MOCK_PACKAGES } from '../constants.js';

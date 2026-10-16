@@ -114,17 +114,17 @@ export function listSessions() {
   return result;
 }
 
-function escapeLispString(str) {
+function _escapeLispString(str) {
   if (typeof str !== 'string') return '';
   return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-export async function loadHelpers(session) {
+export async function loadHelpers(_session) {
   await ensureCad();
   try {
     await cad.sendCommand(HELPER_DEFUNS + '\n');
   } catch (e) {
-    throw new Error(`Failed to load debug helpers: ${e.message}`);
+    throw new Error(`Failed to load debug helpers: ${e.message}`, { cause: e });
   }
 }
 
@@ -139,7 +139,7 @@ export async function fastForward(session) {
     } catch (e) {
       session.state = 'error';
       session.error = `Fast-forward error at chunk ${chunk.id}: ${e.message}`;
-      throw new Error(session.error);
+      throw new Error(session.error, { cause: e });
     }
     session.currentIndex++;
   }
@@ -191,7 +191,7 @@ export async function executeStep(session) {
   } catch (e) {
     session.state = 'error';
     session.error = `Step error at chunk ${chunk.id}: ${e.message}`;
-    throw new Error(session.error);
+    throw new Error(session.error, { cause: e });
   }
 
   session.currentIndex++;
@@ -255,7 +255,7 @@ export async function continueExecution(session) {
     } catch (e) {
       session.state = 'error';
       session.error = `Continue error at chunk ${chunk.id}: ${e.message}`;
-      throw new Error(session.error);
+      throw new Error(session.error, { cause: e });
     }
     session.currentIndex++;
     session.finalResult = null;

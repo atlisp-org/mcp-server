@@ -22,6 +22,7 @@ import * as subMgr from './subscription-manager.js';
 
 import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
 import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
+import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_call_tool, peer_cad_info, peer_cad_pool, peer_stats, peer_summary, peer_broadcast } from './handlers/peer-handlers.js';
 
 // 注册实例切换回调：通知已订阅客户端刷新资源
 // 缓存已在 cad-pool.setActive() 中通过 setInstanceKey() 自动隔离
@@ -33,8 +34,10 @@ pool.onInstanceSwitch(() => {
   }
 });
 
-// Re-export handleToolCall from the executor module
-export { handleToolCall } from './tool-executor.js';
+// Re-export handleToolCall from the executor module（同时在本模块内使用，
+// 让 batch_concurrent_tasks 走完整的限速/校验/Undo/审计路径）
+import { handleToolCall } from './tool-executor.js';
+export { handleToolCall };
 
 /**
  * @param {string} toolName
@@ -59,6 +62,7 @@ export const TOOL_HANDLERS = {
     get_platform_info:     () => ({ content: [{ type: 'text', text: `支持的 CAD 平台:\n${CAD_PLATFORMS.join('\n')}\n当前连接: ${cad.connected ? '已连接' : '未连接'}` }] }),
     get_system_status:      lazy('get_system_status'),
     bring_to_front:        lazy('bring_to_front'),
+    send_esc:              lazy('send_esc'),
 
     // === Lisp Execution ===
     eval_lisp:             lazy('eval_lisp', (a) => a?.code),
@@ -423,21 +427,21 @@ export const TOOL_HANDLERS = {
             return { content: [{ type: 'text', text: '最多支持 50 个并发任务' }], isError: true };
         }
 
+        const parentCtx = mcpContext.getStore();
         const results = await Promise.allSettled(a.tasks.map(async (task, idx) => {
-            const handler = TOOL_HANDLERS[task.tool];
-            if (!handler) return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: `未知工具: ${task.tool}` };
-
-            const ctx = mcpContext.getStore();
-            const prevInstance = ctx?._toolInstance || null;
-            if (ctx && task.instance) ctx._toolInstance = task.instance;
+            // 每个子任务在独立 AsyncLocalStorage 上下文中执行，避免并发写 _toolInstance 竞态；
+            // 统一走 handleToolCall，使限速/参数校验/Undo/审计对子工具同样生效。
+            const childCtx = { ...(parentCtx || {}) };
+            if (task.instance) childCtx._toolInstance = task.instance;
+            const childArgs = task.instance ? { ...(task.args || {}), instance: task.instance } : (task.args || {});
 
             try {
-                const result = await handler(task.args || {});
-                return { index: idx, tool: task.tool, instance: task.instance, ok: !result.isError, data: result.content?.[0]?.text || result };
+                const result = await mcpContext.run(childCtx, () =>
+                    handleToolCall(task.tool, childArgs, { sessionId: parentCtx?.sessionId })
+                );
+                return { index: idx, tool: task.tool, instance: task.instance, ok: !result?.isError, data: result?.content?.[0]?.text || result };
             } catch (e) {
                 return { index: idx, tool: task.tool, instance: task.instance, ok: false, error: e.message };
-            } finally {
-                if (ctx) ctx._toolInstance = prevInstance;
             }
         }));
 
@@ -688,6 +692,19 @@ export const TOOL_HANDLERS = {
         clearContext(ctx?.sessionId || 'default');
         return { content: [{ type: 'text', text: '上下文已清除' }] };
     },
+
+    // === Peer Discovery ===
+    peer_list,
+    peer_scan,
+    peer_connect,
+    peer_disconnect,
+    peer_forward,
+    peer_call_tool,
+    peer_cad_info,
+    peer_cad_pool,
+    peer_stats,
+    peer_summary,
+    peer_broadcast,
 
     // === Meta Tools ===
     search_tools,

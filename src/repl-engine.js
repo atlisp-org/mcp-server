@@ -1,12 +1,20 @@
 import { randomUUID } from 'crypto';
+import config from './config.js';
 import { cad } from './cad.js';
-import { log, error as logError } from './logger.js';
+import { log } from './logger.js';
 import { analyzeLispCode } from './lint-analyzer.js';
 
 const sessions = new Map();
 const MAX_SESSIONS = 50;
 const SESSION_TTL = 30 * 60 * 1000;
 const CLEANUP_INTERVAL = 5 * 60 * 1000;
+// 历史既没有条数上限也没有单条大小上限，而 executeInSession 每次都把整个历史
+// 回给调用方——第 n 次调用的响应里含 n 条 CAD 结果，分配量是平方级的。
+const MAX_HISTORY = Math.max(1, config.replHistoryMax || 100);
+const MAX_RESULT_CHARS = Math.max(256, config.replResultMaxChars || 8192);
+// 上限读配置而非常量，config.json 热重载后立即生效。
+const _maxHistory = () => Math.max(1, config.replHistoryMax || MAX_HISTORY);
+const _maxResultChars = () => Math.max(256, config.replResultMaxChars || MAX_RESULT_CHARS);
 
 let cleanupTimer = null;
 
@@ -24,7 +32,7 @@ function ensureCleanup() {
   cleanupTimer.unref();
 }
 
-const SETQ_RE = /\(setq\s+([a-z][a-z0-9:*\-]+)\s+/gi;
+const SETQ_RE = /\(setq\s+([a-z][a-z0-9:*-]*)\s+/gi;
 
 export class ReplSession {
   constructor(sessionId) {
@@ -51,14 +59,23 @@ export class ReplSession {
       throw new Error(`代码存在安全问题:\n${analysis.errors.map(e => `  L${e.line}: [${e.rule}] ${e.message}`).join('\n')}`);
     }
     const rawResult = await cad.sendCommandWithResult(code);
+    const maxChars = _maxResultChars();
+    const storedResult = typeof rawResult === 'string' && rawResult.length > maxChars
+      ? rawResult.slice(0, maxChars)
+      : rawResult;
     const entry = {
       code,
-      result: rawResult,
+      result: storedResult,
+      truncated: storedResult !== rawResult,
       timestamp: Date.now()
     };
     this.history.push(entry);
+    const maxHistory = _maxHistory();
+    if (this.history.length > maxHistory) {
+      this.history.splice(0, this.history.length - maxHistory);
+    }
     this.lastActivity = Date.now();
-    this.parseSetq(code, rawResult);
+    this.parseSetq(code, storedResult);
     return rawResult;
   }
 }

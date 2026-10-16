@@ -11,33 +11,16 @@ export async function openDwg(filePath) {
       return { content: [{ type: 'text', text: e.message }], isError: true };
     }
 
-    const code = `(progn
-        (vl-load-com)
-        (if (vl-file-directory-p (vl-filename-directory "${escapeLispString(filePath)}"))
-            (progn
-                (if (findfile "${escapeLispString(filePath)}")
-                    (progn
-                        (command "._OPEN" "${escapeLispString(filePath)}")
-                        "OPENED"
-                    )
-                    "NOTFOUND"
-                )
-            )
-            "INVALIDPATH"
-        )
-    )`;
     try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'OPENED' || result === '"OPENED"') {
+        const result = await cad.openDoc(filePath);
+        if (result && result.success) {
             return { content: [{ type: 'text', text: `已打开文件: ${filePath}` }] };
         }
-        if (result === 'NOTFOUND' || result === '"NOTFOUND"') {
+        const err = (result && result.error) || '未知错误';
+        if (/not found/i.test(err)) {
             return { content: [{ type: 'text', text: `文件不存在: ${filePath}` }], isError: true };
         }
-        if (result === 'INVALIDPATH' || result === '"INVALIDPATH"') {
-            return { content: [{ type: 'text', text: `路径无效: ${filePath}` }], isError: true };
-        }
-        return { content: [{ type: 'text', text: `打开失败: ${result}` }], isError: true };
+        return { content: [{ type: 'text', text: `打开失败: ${err}` }], isError: true };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -55,24 +38,13 @@ export async function saveDwg(filePath = null) {
       }
     }
 
-    const code = filePath
-        ? `(progn
-            (vl-load-com)
-            (command "._SAVEAS" "${escapeLispString(filePath)}")
-            "SAVED"
-        )`
-        : `(progn
-            (vl-load-com)
-            (command "._QSAVE")
-            "SAVED"
-        )`;
-
     try {
-        const result = await cad.sendCommandWithResult(code);
-        if (result === 'SAVED' || result === '"SAVED"') {
+        const result = await cad.saveDoc(filePath);
+        if (result && result.success) {
             return { content: [{ type: 'text', text: filePath ? `已保存为: ${filePath}` : '已保存当前文件' }] };
         }
-        return { content: [{ type: 'text', text: `保存失败: ${result}` }], isError: true };
+        const err = (result && result.error) || '未知错误';
+        return { content: [{ type: 'text', text: `保存失败: ${err}` }], isError: true };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -124,7 +96,7 @@ export async function closeDwg(save = false) {
         "CLOSED"
     )`;
     try {
-        const result = await cad.sendCommandWithResult(code);
+        await cad.sendCommandWithResult(code);
         return { content: [{ type: 'text', text: '已关闭图形' }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };

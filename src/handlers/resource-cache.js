@@ -26,11 +26,16 @@ function ensureCleanup() {
   cleanupTimer = setInterval(() => {
     const now = Date.now();
     const ttl = _ttl();
-    for (const cache of _instanceCaches.values()) {
+    for (const [instance, cache] of _instanceCaches) {
       for (const [key, entry] of cache) {
         if (now - entry.timestamp >= ttl) {
           cache.delete(key);
         }
+      }
+      // 每个 CAD 实例（ROT moniker 每次启动都不同）都会新建一个桶，
+      // 清空后必须删掉，否则外层 Map 随实例切换次数单调增长。
+      if (cache.size === 0 && instance !== (_instanceKey || _defaultKey)) {
+        _instanceCaches.delete(instance);
       }
     }
   }, CLEANUP_INTERVAL);

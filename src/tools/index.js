@@ -42,6 +42,8 @@ import { tools as batch_transaction_tools } from './batch-transaction-tools.js';
 import { tools as lint_tools } from './lint-tools.js';
 import { tools as debug_tools } from './debug-tools.js';
 import { tools as concurrent_tools } from './concurrent-tools.js';
+import { tools as peer_tools } from './peer-tools.js';
+import { tools as standards_tools } from './standards-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -65,13 +67,13 @@ const READ_ONLY_TOOLS = new Set([
   'list_page_setups',
   'list_data_sources',
   'external_db_query',
-  'list_tools_by_category', 'search_tools',
+  'list_tools_by_category', 'search_tools', 'get_tool_info',
   'list_tools_by_industry', 'list_tools_by_priority',
   'get_system_variable',
   'audit_log_query', 'audit_log_stats',
   'cad_pool_list', 'cad_pool_stats', 'cad_pool_health',
   'get_3d_solid_info',
-  'list_watches', 'list_webhooks', 'webhook_log',
+  'watch_list', 'webhook_list', 'webhook_log',
   'lisp_repl_list', 'lisp_repl_history',
   'agent_list_context', 'agent_get_context',
   'find_entities_near_point', 'find_entities_in_window',
@@ -85,6 +87,10 @@ const READ_ONLY_TOOLS = new Set([
   'list_lint_rules',
   'lint_project',
   'debug_get_state',
+  'check_drawing_standards', 'list_standards', 'load_standards', 'compare_standards',
+  'check_layer_naming', 'check_color_conformity', 'check_linetype_conformity',
+  'check_lineweight_conformity', 'check_text_style_conformity', 'check_dim_style_conformity',
+  'check_file_naming', 'generate_compliance_report',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -105,6 +111,7 @@ const DESTRUCTIVE_TOOLS = new Set([
   'delete_sheet', 'delete_xdata', 'detach_pdf', 'detach_xref', 'remove_hyperlink',
   'purge_all', 'purge_blocks', 'purge_layers', 'purge_styles', 'purge_registered_apps',
   'layer_merge', 'batch_delete', 'batch_rename', 'explode_block', 'explode_text',
+  'apply_standards_template',
 ]);
 
 const IDEMPOTENT_WRITE_TOOLS = new Set([
@@ -154,11 +161,12 @@ function getToolCategory(name) {
   if (/^(create_text_style|create_mleader_style|create_linetype|load_linetype|list_text_styles|list_linetypes|list_mleader_styles|create_dimension_style|set_dimstyle_var|list_dimension_styles|set_mleader_style_prop)/.test(n)) return '样式';
   if (/^(purge_|drawing_audit|drawing_recover|overkill)/.test(n)) return '清理';
   if (/^(replace_text|set_text_|justify_|convert_text|explode_text)/.test(n)) return '文字';
-  if (/^(eval_lisp|open_cad|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|install_atlisp|init_atlisp|get_system_status|get_system_variable|set_system_variable)/.test(n)) return '系统';
+  if (/^(eval_lisp|open_cad|connect_cad|get_cad|get_platform|get_system|at_command|new_document|bring_to_front|send_esc|install_atlisp|init_atlisp|get_system_status|get_system_variable|set_system_variable)/.test(n)) return '系统';
   if (/^(list_packages|search_packages|install_package|get_function_usage|list_symbols|import_funlib)/.test(n)) return '包与函数';
   if (/^(watch_|lisp_repl|webhook_|sandbox_|audit_|cad_pool_|session_|external_db_query|list_data_sources|stream_|analyze_lisp_code|format_lisp_code|list_lint_rules|lint_project)/.test(n)) return '高级';
   if (/^debug_/.test(n)) return '高级';
   if (/^skill_/.test(n)) return '高级';
+  if (/^(check_|apply_|list_|load_|save_|compare_|generate_compliance)/.test(n) && /standards|layer_naming|color_conformity|linetype_conformity|lineweight_conformity|text_style_conformity|dim_style_conformity|file_naming/.test(n)) return '规范标准';
   if (/^(add_geom_constraint|add_dim_constraint|del_constraint|list_constraints)/.test(n)) return '约束';
   if (/^(list_prompts|get_prompt|search_tools|list_tools_by_category|list_tools_by_industry|list_tools_by_priority|get_tool_info)/.test(n)) return '元工具';
   if (/^(agent_)/.test(n)) return 'Agent上下文';
@@ -254,6 +262,27 @@ export const tools = [
   ...lint_tools,
   ...debug_tools,
   ...concurrent_tools,
+  ...peer_tools,
+  ...standards_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
+
+import config from '../config.js';
+
+const _visibleCache = { cats: null, result: null };
+
+/**
+ * 按 config.toolCategories 过滤后的可见工具（空列表 = 全部暴露）。
+ * 仅影响 tools/list 等发现接口；工具调用校验仍使用完整 toolsByName。
+ */
+export function getVisibleTools() {
+  const cats = config?.toolCategories;
+  if (!Array.isArray(cats) || cats.length === 0) return tools;
+  const key = cats.join(',');
+  if (_visibleCache.cats !== key) {
+    _visibleCache.cats = key;
+    _visibleCache.result = tools.filter(t => cats.includes(t.annotations?.category));
+  }
+  return _visibleCache.result;
+}

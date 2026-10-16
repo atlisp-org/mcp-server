@@ -58,5 +58,7 @@ export function unlock() {
       fs.unlinkSync(LOCK_FILE);
       console.error(`锁文件已清理: ${LOCK_FILE}`);
     }
-  } catch {}
+  } catch (e) {
+    console.error(`[single-instance] 解锁检查失败: ${e.message}`);
+  }
 }

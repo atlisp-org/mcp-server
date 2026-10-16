@@ -96,7 +96,6 @@ export async function batchGetBlockAttributes(args) {
   if (!cad.connected) { await cad.connect(); }
   if (!cad.connected) return mcpError('未连接 CAD');
   try {
-    const filter = args.filter || '';
     const blockName = args.blockName || '';
     const lay = args.layer || '';
     let lispFilter = '(ssget "_X" ';
@@ -176,7 +175,7 @@ export async function batchSetBlockAttributes(args) {
           );
         }
         totalOk++;
-      } catch (e) {
+      } catch {
         totalFail++;
       }
     }

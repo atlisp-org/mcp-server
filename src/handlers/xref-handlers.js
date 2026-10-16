@@ -18,7 +18,7 @@ export async function attachXref(args) {
     const scale = args.scale || 1;
     const rotation = args.rotation || 0;
     const overlay = args.overlay ? '_O' : '_A';
-    const result = await cad.sendCommandWithResult(
+    await cad.sendCommandWithResult(
       `(command "_.XATTACH" "${path}" "${overlay}" "${point}" "${scale}" "${rotation}") (princ)`
     );
     return mcpSuccess(`外部参照已附着: ${args.path}`);

@@ -119,7 +119,7 @@ export async function setHatchProperties(handle, props) {
         "UPDATED"
     )`;
     try {
-        const result = await cad.sendCommandWithResult(code);
+        await cad.sendCommandWithResult(code);
         return { content: [{ type: 'text', text: `已更新填充属性` }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };

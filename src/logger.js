@@ -87,7 +87,7 @@ export function getLoggingNotify() {
 
 function notify(level, message) {
   if (_logNotify) {
-    try { _logNotify(level, message); } catch {}
+    try { _logNotify(level, message); } catch (e) { console.error('[logger] notify 回调失败:', e.message); }
   }
 }
 

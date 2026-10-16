@@ -43,7 +43,7 @@ class RateLimiter {
         const keyInfo = this.getKeyInfo(apiKey);
         const now = Date.now();
 
-        let entry = this.keyLimits.get(key);
+        const entry = this.keyLimits.get(key);
 
         if (!entry || now - entry.windowStart > this.windowMs) {
             this.keyLimits.set(key, { count: 1, windowStart: now, limit, name: keyInfo.name });

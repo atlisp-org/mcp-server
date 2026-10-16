@@ -140,7 +140,6 @@ export const TOOL_INDUSTRIES = {
   import_dgn: ['测绘', '土木道桥', '通用'],
   export_dxf: ['测绘', '土木道桥', '通用'],
   export_dgn: ['测绘', '土木道桥', '通用'],
-  create_3d_face: ['测绘', '机械', '通用'],
 
   // 土木道桥：测量、多段线/样条、视图缩放、清理
   measure_distance: ['土木道桥', '通用'],
@@ -160,6 +159,22 @@ export const TOOL_INDUSTRIES = {
   draw_table: ['室内装饰', '通用'],
   insert_block: ['室内装饰', '建筑', '通用'],
   get_blocks: ['室内装饰', '建筑', '通用'],
+
+  // 规范标准工具
+  check_drawing_standards: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  apply_standards_template: ['建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  list_standards: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  load_standards: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  save_standards: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  compare_standards: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_layer_naming: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_color_conformity: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_linetype_conformity: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_lineweight_conformity: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_text_style_conformity: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_dim_style_conformity: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  check_file_naming: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
+  generate_compliance_report: ['通用', '建筑', '结构', '机械', '电气', '暖通给排水', '土木道桥', '测绘', '室内装饰', '景观园林'],
 };
 
 // 核心高频工具（静态基准，动态微调在查询时叠加）
@@ -222,6 +237,7 @@ export const RARE_TOOLS = new Set([
   'xref_compare', 'xref_convert_to_block', 'xref_demote', 'xref_path_relative',
   'export_stl', 'import_dgn', 'export_dgn',
   'create_dgn_underlay', 'create_dwf_underlay',
+  'apply_standards_template', 'save_standards', 'compare_standards', 'generate_compliance_report',
 ]);
 
 // 整类视为低频的 category（新增工具自动落入，无需逐个策展）

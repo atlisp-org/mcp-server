@@ -2,7 +2,7 @@ import { cad } from '../cad.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { log, error as logError } from '../logger.js';
+import {  error as logError } from '../logger.js';
 import { escapeLispString } from '../handler-utils.js';
 
 const DATA_DIR = path.join(os.homedir(), '.atlisp', 'data');
@@ -13,7 +13,7 @@ function ensureDataDir() {
 }
 
 function validateSourcePath(source) {
-  const sanitized = source.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const sanitized = source.replace(/[^a-zA-Z0-9_-]/g, '_');
   if (sanitized !== source) {
     logError(`external-handlers: sanitized source "${source}" -> "${sanitized}"`);
   }
@@ -72,7 +72,7 @@ function queryCSV(filePath, filters = {}) {
 }
 
 export function externalDbQuery(args) {
-  const { source, query, filters } = args;
+  const { source, filters } = args;
   ensureDataDir();
 
   if (!source) {
@@ -126,7 +126,7 @@ export function importExternalData(args) {
       try {
         const altPath = validateSourcePath(source + ext);
         if (fs.existsSync(altPath)) { filePath = altPath; break; }
-      } catch {}
+      } catch (e) { logError(`探测候选路径失败: ${e.message}`); }
     }
   }
   if (!fs.existsSync(filePath)) {
@@ -150,10 +150,11 @@ export function importExternalData(args) {
   const createEntities = [];
 
   for (const row of rows) {
-    const x = parseFloat(row[mapping?.x || 'x' || 'X']);
-    const y = parseFloat(row[mapping?.y || 'y' || 'Y']);
-    const z = parseFloat(row[mapping?.z || 'z' || 'Z'] || '0');
-    const label = row[mapping?.label || 'label' || 'name'] || '';
+    const col = (mappedKey, fallbackKeys) => mappedKey || (fallbackKeys.find((k) => k in row) ?? fallbackKeys[0]);
+    const x = parseFloat(row[col(mapping?.x, ['x', 'X'])]);
+    const y = parseFloat(row[col(mapping?.y, ['y', 'Y'])]);
+    const z = parseFloat(row[col(mapping?.z, ['z', 'Z'])] ?? '0');
+    const label = row[col(mapping?.label, ['label', 'name'])] || '';
 
     if (!isNaN(x) && !isNaN(y)) {
       if (label) {

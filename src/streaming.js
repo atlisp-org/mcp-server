@@ -76,7 +76,7 @@ export async function streamEntitiesByType({ type = null, layer = null, chunk = 
   });
 }
 
-export async function streamTextContent({ layer = null, bbox = null, offset = 0, limit = 100 }) {
+export async function streamTextContent({ layer = null, bbox: _bbox = null, offset = 0, limit = 100 }) {
   const textFilters = [`(cons 0 "TEXT")`, `(cons 0 "MTEXT")`];
   if (layer) textFilters.push(`(cons 8 "${escapeLispStr(layer)}")`);
   const filterExpr = `(list '(-4 . "<OR") ${textFilters.join(' ')} '(-4 . "OR>"))`;

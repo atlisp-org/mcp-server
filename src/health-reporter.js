@@ -4,7 +4,7 @@ import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
 import { sessionServers } from './mcp-server-state.js';
 import { sessionManager } from './subscription-manager.js';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 
 const REPORT_URL = 'https://atlisp.cn/api/mcp/health';
 const REPORT_INTERVAL = config.heartbeatInterval || 30000;
@@ -14,13 +14,13 @@ function gatherHealth() {
     let cadResponseTime = 0;
     if (cad.connected) {
         const t0 = Date.now();
-        try { cad.ping(); } catch {}
+        try { cad.ping(); } catch (e) { logError(`health ping 失败: ${e.message}`); }
         cadResponseTime = Date.now() - t0;
     }
 
     const memUsage = process.memoryUsage();
     let sseCount = 0;
-    try { sseCount = sessionManager?.count?.() || 0; } catch {}
+    try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError(`获取 SSE 会话数失败: ${e.message}`); }
 
     return {
         clientId: config.clientId || os.hostname(),

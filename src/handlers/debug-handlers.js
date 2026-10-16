@@ -1,6 +1,6 @@
 import { withCadConnection, mcpSuccess, mcpError } from '../handler-utils.js';
 import {
-  createSession, getSession, closeSession, listSessions,
+  createSession, getSession, closeSession,
   loadHelpers, fastForward, executeStep, continueExecution, evaluateExpression,
 } from '../debug-engine.js';
 

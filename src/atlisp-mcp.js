@@ -12,26 +12,33 @@ const { version } = require(path.join(__dirname, '..', 'package.json'));
 import express from 'express';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { cad, onDocumentChanged } from './cad.js';
-import { CAD_PLATFORMS, FILE_EXTENSIONS, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION } from './constants.js';
+import {  SERVER_NAME } from './constants.js';
 import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
-import { listResources, readResource, RESOURCES, clearCache } from './handlers/resource-handlers.js';
+import {  clearCache, RESOURCES } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 import { sessionManager } from './subscription-manager.js';
-import { SseSession } from './sse-session.js';
+
 
 import config from './config.js';
 import { setupRoutes } from './routes.js';
-import { mcpContext, getOrCreateSessionServer, removeSessionServer, broadcastToAllSessions, sessionServers, createStdioServer } from './mcp-server-state.js';
+import { mcpContext, removeSessionServer, sessionServers, createStdioServer } from './mcp-server-state.js';
 import { tools, handleToolCall } from './mcp-tools.js';
 import { createWebSocketServer } from './websocket-transport.js';
-import { loadPlugins, initPlugins, getPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher } from './plugin-loader.js';
-import { registerTool, callCustomTool, getCustomHandlers } from './tool-registry.js';
+import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher, getPlugins } from './plugin-loader.js';
+import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
 import { startHealthReporter, stopHealthReporter } from './health-reporter.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
 import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
+import peerManager from './peer-manager.js';
+import { isAuthConfigured } from './auth.js';
+
+// 兜底：CommandQueue 清理/去重、worker 重置等产生的 promise rejection 不应杀死服务器进程
+process.on('unhandledRejection', (reason) => {
+  try { logError?.('[atlisp-mcp] unhandledRejection:', reason?.message || reason); } catch (e) {}
+});
 
 export { tools, handleToolCall } from './mcp-tools.js';
 export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
@@ -39,6 +46,27 @@ export { loadAtlibFunctionLib } from './handlers/function-handlers.js';
 const isMcpScript = process.argv[1]?.includes('atlisp-mcp');
 if (isMcpScript) {
     const cliArgs = process.argv.slice(2);
+
+    if (cliArgs.includes('--mem') || cliArgs.includes('--mem-once') || cliArgs.includes('--mem-interval')) {
+        const idx = cliArgs.indexOf('--mem-interval');
+        const intervalSec = idx >= 0 ? Number(cliArgs[idx + 1]) : 2;
+        if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
+            console.error('--mem-interval 需要一个正数（秒）');
+            process.exit(1);
+        }
+        const { runMemMonitor } = await import('./mem-monitor.js');
+        await runMemMonitor({
+            host: process.env.HOST || config.host,
+            port: Number(process.env.PORT || config.port),
+            apiKey: process.env.MCP_API_KEY || config.apiKey || '',
+            ssl: Boolean(config.sslKey && config.sslCert),
+            intervalSec,
+            intervalMs: intervalSec * 1000,
+            once: cliArgs.includes('--mem-once'),
+        });
+        process.exit(0);
+    }
+
     for (let i = 0; i < cliArgs.length; i++) {
         const arg = cliArgs[i];
         if (arg === '--version' || arg === '-v') {
@@ -70,10 +98,13 @@ Options:
   --lint-off                   Same as --no-lint
   --api-key <key>              API key for authentication
   --client-id <id>             Client identifier for remote health report
-  --security-level <type>      Security level: strict, standard, relaxed (default: strict)
+  --security-level <type>      Security level: strict, standard, relaxed (default: relaxed)
   --install-autostart          Register server to auto-start after user login
   --uninstall-autostart        Remove auto-start registration
   --autostart-status           Check if auto-start is installed
+  --mem                        Terminal memory monitor (polls /health/full, Ctrl+C to exit)
+  --mem-interval <sec>         Memory monitor refresh interval (default: 2)
+  --mem-once                   Memory monitor single snapshot then exit
 
 Environment Variables:
   TRANSPORT             Transport mode (http/stdio/ws)
@@ -86,7 +117,7 @@ Environment Variables:
   METRICS_ENABLED       Enable /metrics endpoint (true/false, default: true)
   SSL_KEY_PATH          SSL key file path
   SSL_CERT_PATH         SSL certificate file path
-  SECURITY_LEVEL        Security level: strict, standard, relaxed (default: strict)
+  SECURITY_LEVEL        Security level: strict, standard, relaxed (default: relaxed)
   CONFIG_FILE           Path to config file
   LINT_PRESET           Lint preset (recommended/strict/relaxed)
   LINT_CONFIG_PATH      Path to atlisp-lint.json
@@ -102,6 +133,8 @@ Examples:
   atlisp-mcp                           Start HTTP server on port 8110
   atlisp-mcp --port 3000               Start HTTP server on port 3000
   atlisp-mcp --stdio                   Start in stdio mode for MCP clients
+  atlisp-mcp --mem                     Watch server memory usage in the terminal
+  atlisp-mcp --mem --mem-once          Print one memory snapshot and exit
   atlisp-mcp --config ~/my.json        Use custom config file
   atlisp-mcp --debug                   Enable debug output
   atlisp-mcp --ssl-key key.pem --ssl-cert cert.pem  Start HTTPS server
@@ -175,6 +208,9 @@ For more info: https://atlisp.cn
 
 if (config.apiKey) log('API Key authentication enabled');
 
+const { setLocale } = await import('./i18n.js');
+setLocale(config.locale || 'zh-CN');
+
 if (config.autoConnect) {
     log('Attempting to connect to CAD on startup...');
     const { ensureCadConnected } = await import('./handler-utils.js');
@@ -187,8 +223,28 @@ if (config.autoConnect) {
 }
 
 export async function startServer() {
+    const startTime = Date.now();
+    const _memBefore = process.memoryUsage();
+
+    console.error('\n========== @lisp MCP Server 启动 ==========');
+    console.error(`版本: ${version}`);
+    console.error(`Node.js: ${process.version}`);
+    console.error(`平台: ${process.platform} ${process.arch}`);
+    console.error(`PID: ${process.pid}`);
+    console.error(`工作目录: ${process.cwd()}`);
+    console.error('');
+
+    // 加载插件
+    console.error('[1/6] 加载插件...');
     await loadPlugins();
     initPlugins({ cad, config, log, registerTool, tools });
+    const pluginCount = getPlugins().length;
+    console.error(`  ✓ 已加载 ${pluginCount} 个插件`);
+
+    // 启动 Peer 发现
+    console.error('[2/6] 启动 Peer 发现...');
+    peerManager.start();
+    console.error(`  ✓ Peer 发现已启动 (端口: ${config.peerDiscovery?.port || 9811})`);
 
     // Watch for plugin file changes
     onPluginChange((type, name) => {
@@ -210,10 +266,30 @@ export async function startServer() {
                     broadcastPromptsListChanged();
                 }
             });
+            console.error('  ✓ Prompt 目录监听已启用');
         }
     } catch (e) {
         logError(`Failed to start prompt watcher: ${e.message}`);
     }
+
+    // 显示配置信息
+    console.error('\n[3/6] 配置信息:');
+    console.error(`  传输模式: ${config.transport}`);
+    console.error(`  端口: ${config.port}`);
+    console.error(`  主机: ${config.host}`);
+    console.error(`  安全级别: ${config.securityLevel || 'relaxed'}`);
+    console.error(`  Lint 预设: ${config.lintPreset || 'recommended'}`);
+    console.error(`  自动连接: ${config.autoConnect ? '是' : '否'}`);
+    console.error(`  API Key: ${config.apiKey ? '已启用' : '未设置'}`);
+    console.error(`  调试模式: ${process.env.DEBUG === 'true' || process.env.DEBUG === '1' ? '是' : '否'}`);
+
+    // 显示工具信息
+    console.error('\n[4/6] 工具注册:');
+    console.error(`  ✓ 已注册 ${tools.length} 个工具`);
+
+    // 显示资源信息
+    console.error('\n[5/6] 资源列表:');
+    console.error(`  ✓ ${Object.keys(RESOURCES).length} 个资源 URI`);
 
     if (config.transport === 'stdio') {
         const mcpServer = createStdioServer({ tools, handleToolCall });
@@ -223,9 +299,10 @@ export async function startServer() {
         await mcpContext.run({ sessionId }, async () => {
             await mcpServer.connect(transport);
         });
-        console.error(`${SERVER_NAME} 运行在 stdio 模式`);
+        console.error('\n[6/6] 服务器就绪:');
+        console.error(`  ${SERVER_NAME} 运行在 stdio 模式`);
 
-        subMgr.setNotify((uri, data) => {
+        subMgr.setNotify((uri, _data) => {
             mcpServer.sendResourceUpdated({ uri }).catch(err => {
                 logError(`Failed to send resource update: ${err.message}`);
             });
@@ -233,14 +310,15 @@ export async function startServer() {
     } else {
         const app = express();
 
-        setupRoutes(app);
+        // streamable-http 模式下由 setupStreamableHttpRoutes 注册 /mcp，避免被默认路由抢先匹配
+        setupRoutes(app, { registerMcpRoutes: config.transport !== 'streamable-http' });
         setLoggingNotify((level, message) => {
             for (const [sid, { server }] of sessionServers) {
                 server.sendLoggingMessage({ level, data: message }, sid).catch(() => {});
             }
         });
 
-        subMgr.setNotify((uri, data) => {
+        subMgr.setNotify((uri, _data) => {
             scheduleResourceUpdated(uri);
             for (const session of sessionManager.listActive()) {
                 sessionManager.sendToClient(session.clientId, 'resource_updated', { uri });
@@ -260,10 +338,18 @@ export async function startServer() {
                 cert: fs.readFileSync(config.sslCert, 'utf-8'),
             };
             httpsServer = https.createServer(sslOptions, app);
+            console.error('  ✓ SSL 已启用');
         }
 
         const rawServer = httpsServer || http.createServer(app);
         createWebSocketServer(rawServer);
+
+        const isLoopbackHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host);
+        if (!isLoopbackHost && !isAuthConfigured(config)) {
+            console.error('\n⚠ 安全警告: 未配置 API Key 却绑定到非回环地址 ' + config.host);
+            console.error('  任何能访问该地址的网络客户端都可执行任意 CAD/LISP 操作。');
+            console.error('  请设置 MCP_API_KEY，或使用 --host 127.0.0.1 仅限本机访问。\n');
+        }
 
         const lock = acquirePortLock(config.port, config.host);
         if (!lock.ok) {
@@ -277,7 +363,22 @@ export async function startServer() {
         const httpServer = rawServer.listen(config.port, config.host, async () => {
             const proto = useSsl ? 'https' : 'http';
             const mode = config.transport === 'ws' ? 'WebSocket' : config.transport === 'streamable-http' ? 'Streamable HTTP' : '多会话';
-            console.error(`@lisp MCP Server 启动 - ${proto}://${config.host}:${config.port} (${mode}模式)`);
+
+            console.error('\n[6/6] 服务器就绪:');
+            console.error(`  ✓ ${proto}://${config.host}:${config.port} (${mode}模式)`);
+            console.error(`  ✓ PID: ${process.pid}`);
+            console.error(`  ✓ 运行时间: ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+
+            // 显示内存使用情况
+            const memAfter = process.memoryUsage();
+            console.error('\n内存使用:');
+            console.error(`  RSS: ${(memAfter.rss / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  堆已用: ${(memAfter.heapUsed / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  堆总计: ${(memAfter.heapTotal / 1024 / 1024).toFixed(1)} MB`);
+            console.error(`  外部: ${(memAfter.external / 1024 / 1024).toFixed(1)} MB`);
+
+            console.error('\n==========================================\n');
+
             startHealthReporter();
         });
 
@@ -285,6 +386,7 @@ export async function startServer() {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
             stopHealthReporter();
             stopPluginWatcher();
+            peerManager.stop();
             if (promptsWatcher) { promptsWatcher.close(); promptsWatcher = null; }
             sessionManager.closeAll();
             for (const [sid] of sessionServers) {

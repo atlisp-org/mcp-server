@@ -10,84 +10,81 @@ function clearAndNotify(uris) {
   }
 }
 
-export function notifyResourceChanges(toolName) {
-  const ENTITIES = ['atlisp://dwg/entities'];
-  const TBL = ['atlisp://dwg/tbl'];
-  const BLOCK_REFS = ['atlisp://dwg/block-refs'];
-  const TEXT = ['atlisp://dwg/text-content'];
-  const GROUPS = ['atlisp://dwg/groups'];
+const ENTITIES = ['atlisp://dwg/entities'];
+const TBL = ['atlisp://dwg/tbl'];
+const BLOCK_REFS = ['atlisp://dwg/block-refs'];
+const TEXT = ['atlisp://dwg/text-content'];
+const GROUPS = ['atlisp://dwg/groups'];
 
-  if (toolName.startsWith('draw_') || toolName.startsWith('create_3d_') || toolName === 'draw_hatch') {
-    return clearAndNotify(ENTITIES);
+/**
+ * 资源失效规则表。**顺序敏感**：从上往下第一条命中的规则生效，因此更具体的
+ * 规则（或历史上先匹配的规则）必须排在前面。每条规则命中条件为
+ * `prefixes` 任一前缀匹配 或 `exact` 精确匹配。
+ *
+ * @type {{ prefixes?: string[], exact?: string[], uris: string[] }[]}
+ */
+const RULES = [
+  { prefixes: ['draw_', 'create_3d_'], uris: ENTITIES },
+  {
+    prefixes: ['batch_', 'boolean_'],
+    exact: [
+      'explode_block', 'explode_text', 'insert_block', 'overkill', 'stretch',
+      'trim_entity', 'extend_entity', 'fillet', 'chamfer', 'break_entity', 'join_entities',
+      'offset_entity', 'mirror_entity', 'move_entity', 'copy_entity', 'rotate_entity', 'scale_entity',
+      'array_rectangular', 'array_polar',
+    ],
+    uris: [...ENTITIES, ...BLOCK_REFS],
+  },
+  { prefixes: ['delete_', 'purge_'], uris: [...ENTITIES, ...BLOCK_REFS, ...TBL] },
+  {
+    prefixes: ['create_layer', 'delete_layer', 'set_layer', 'layer_'],
+    exact: ['set_current_layer'],
+    uris: TBL,
+  },
+  {
+    prefixes: ['create_dimension', 'create_text_style', 'create_linetype', 'load_linetype', 'create_mleader_style'],
+    uris: TBL,
+  },
+  { prefixes: ['create_block'], uris: [...BLOCK_REFS, ...TBL] },
+  {
+    prefixes: ['open_dwg', 'close_dwg'],
+    exact: ['new_document'],
+    uris: ['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', ...TBL, ...ENTITIES, ...BLOCK_REFS, ...TEXT],
+  },
+  { exact: ['save_dwg'], uris: ['atlisp://dwg/name', 'atlisp://dwg/path'] },
+  {
+    prefixes: ['attach_xref', 'detach_xref', 'reload_xref', 'bind_xref', 'unload_xref', 'clip_xref', 'path_xref', 'xref_'],
+    uris: [...TBL, ...ENTITIES],
+  },
+  { prefixes: ['attach_pdf', 'detach_pdf', 'import_dxf', 'import_dgn', 'export_'], uris: ENTITIES },
+  { prefixes: ['set_xdata', 'delete_xdata', 'copy_xdata', 'import_xdata'], uris: ENTITIES },
+  { prefixes: ['create_hyperlink', 'remove_hyperlink'], uris: ENTITIES },
+  { exact: ['connect_cad'], uris: ['atlisp://cad/info', ...TBL, 'atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://packages'] },
+  { prefixes: ['install_', 'init_'], uris: ['atlisp://packages', 'atlisp://cad/info'] },
+  { prefixes: ['create_group', 'delete_group', 'batch_create_group', 'batch_add_to_group'], uris: GROUPS },
+  {
+    prefixes: ['set_block_attribute', 'batch_set_block_attribute', 'set_dynamic_block_property', 'set_block_parameter', 'set_visibility_state'],
+    uris: BLOCK_REFS,
+  },
+  { exact: ['set_entity'], uris: ENTITIES },
+];
+
+function ruleMatches(rule, toolName) {
+  if (rule.exact && rule.exact.includes(toolName)) return true;
+  if (rule.prefixes) {
+    for (const prefix of rule.prefixes) {
+      if (toolName.startsWith(prefix)) return true;
+    }
   }
-  if (toolName.startsWith('batch_') || toolName.startsWith('boolean_') ||
-      ['explode_block', 'explode_text', 'insert_block', 'overkill', 'stretch',
-       'trim_entity', 'extend_entity', 'fillet', 'chamfer', 'break_entity', 'join_entities',
-       'offset_entity', 'mirror_entity', 'move_entity', 'copy_entity', 'rotate_entity', 'scale_entity',
-       'array_rectangular', 'array_polar',
-      ].includes(toolName)) {
-    return clearAndNotify([...ENTITIES, ...BLOCK_REFS]);
-  }
-  if (toolName.startsWith('delete_') || toolName.startsWith('purge_')) {
-    return clearAndNotify([...ENTITIES, ...BLOCK_REFS, ...TBL]);
-  }
-  if (toolName.startsWith('create_layer') || toolName.startsWith('delete_layer') ||
-      toolName.startsWith('set_layer') || toolName.startsWith('layer_') ||
-      toolName === 'set_current_layer') {
-    return clearAndNotify(TBL);
-  }
-  if (toolName.startsWith('create_dimension') || toolName.startsWith('create_text_style') ||
-      toolName.startsWith('create_linetype') || toolName.startsWith('load_linetype') ||
-      toolName.startsWith('create_mleader_style')) {
-    return clearAndNotify(TBL);
-  }
-  if (toolName.startsWith('create_block') || toolName === 'insert_block') {
-    return clearAndNotify([...BLOCK_REFS, ...TBL]);
-  }
-  if (toolName.startsWith('open_dwg') || toolName.startsWith('close_dwg') ||
-      toolName === 'new_document') {
-    return clearAndNotify(['atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', ...TBL, ...ENTITIES, ...BLOCK_REFS, ...TEXT]);
-  }
-  if (toolName === 'save_dwg') {
-    return clearAndNotify(['atlisp://dwg/name', 'atlisp://dwg/path']);
-  }
-  if (toolName.startsWith('attach_xref') || toolName.startsWith('detach_xref') ||
-      toolName.startsWith('reload_xref') || toolName.startsWith('bind_xref') ||
-      toolName.startsWith('unload_xref') || toolName.startsWith('clip_xref') ||
-      toolName.startsWith('path_xref') || toolName.startsWith('xref_')) {
-    return clearAndNotify([...TBL, ...ENTITIES]);
-  }
-  if (toolName.startsWith('attach_pdf') || toolName.startsWith('detach_pdf') ||
-      toolName.startsWith('import_dxf') || toolName.startsWith('import_dgn') ||
-      toolName.startsWith('export_')) {
-    return clearAndNotify(ENTITIES);
-  }
-  if (toolName.startsWith('set_xdata') || toolName.startsWith('delete_xdata') ||
-      toolName.startsWith('copy_xdata') || toolName.startsWith('import_xdata')) {
-    return clearAndNotify(ENTITIES);
-  }
-  if (toolName.startsWith('create_hyperlink') || toolName.startsWith('remove_hyperlink')) {
-    return clearAndNotify(ENTITIES);
-  }
-  if (toolName === 'connect_cad') {
-    return clearAndNotify(['atlisp://cad/info', ...TBL, 'atlisp://dwg/name', 'atlisp://dwg/path', 'atlisp://cad/dwgs', 'atlisp://packages']);
-  }
-  if (toolName.startsWith('install_') || toolName.startsWith('init_')) {
-    return clearAndNotify(['atlisp://packages', 'atlisp://cad/info']);
-  }
-  if (toolName.startsWith('create_group') || toolName.startsWith('delete_group') ||
-      toolName.startsWith('batch_create_group') || toolName.startsWith('batch_add_to_group')) {
-    return clearAndNotify(GROUPS);
-  }
-  if (toolName.startsWith('set_block_attribute') || toolName.startsWith('batch_set_block_attribute') ||
-      toolName.startsWith('set_dynamic_block_property') || toolName.startsWith('set_block_parameter') ||
-      toolName.startsWith('set_visibility_state')) {
-    return clearAndNotify(BLOCK_REFS);
-  }
-  if (toolName === 'set_entity') {
-    return clearAndNotify(ENTITIES);
-  }
-  if (toolName.startsWith('create_page_setup') || toolName.startsWith('set_page_setup')) {
-    return;
+  return false;
+}
+
+export function notifyResourceChanges(toolName) {
+  for (const rule of RULES) {
+    if (ruleMatches(rule, toolName)) {
+      return clearAndNotify(rule.uris);
+    }
   }
 }
+
+export { RULES as _RESOURCE_INVALIDATION_RULES };

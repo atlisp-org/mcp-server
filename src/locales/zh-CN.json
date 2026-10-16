@@ -1,10 +1,12 @@
 {
-  "cad.notConnected": "CAD 未连接",
+  "cad.notConnected": "未连接 CAD",
   "cad.notConnectedHint": "未连接 CAD，请先调用 connect_cad",
   "cad.busy": "CAD 忙碌，请稍后重试",
   "cad.noDocument": "CAD 中没有打开的文档",
   "cad.sendFailed": "发送失败",
   "cad.circuitBreakerOpen": "CAD 不可用，稍后重试",
+  "cad.stalled": "CAD 停滞",
+  "cad.stallTimeout": "消息 {0} 超时 ({1}ms)",
 
   "error.invalidParams": "无效的参数",
   "error.methodNotFound": "方法不存在",

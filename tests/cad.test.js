@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 process.env.MESSAGE_TIMEOUT = '200';
 process.env.CAD_COMMAND_TIMEOUT = '80';
@@ -60,8 +60,17 @@ describe('CadConnection', () => {
   });
 
   describe('connect', () => {
+    let origPlatform;
+    beforeEach(() => {
+      origPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+    });
+
     it('returns false when not available', async () => {
-      vi.spyOn(cad, 'isAvailable').mockReturnValue(false);
+      Object.defineProperty(process, 'platform', { value: 'linux' });
       const result = await cad.connect();
       expect(result).toBe(false);
     });
@@ -250,6 +259,15 @@ describe('CadConnection', () => {
   });
 
   describe('stall detection', () => {
+    let origPlatform;
+    beforeEach(() => {
+      origPlatform = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+    });
+
     it('marks stalled and rejects with CAD_BUSY on command timeout', async () => {
       cad.connected = true;
       const getHandler = captureHandler();

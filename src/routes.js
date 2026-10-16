@@ -1,5 +1,6 @@
 import os from 'os';
-import express from 'express';
+import v8 from 'v8';
+import 'express';
 import { randomUUID, createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -9,15 +10,16 @@ import config, { reloadConfig } from './config.js';
 import { log, error as logError, logRequest, logResponse } from './logger.js';
 import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
-import { sessionManager, setNotify as subMgrSetNotify } from './subscription-manager.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { mcpContext, getOrCreateSessionServer, removeSessionServer, broadcastToAllSessions, sessionServers } from './mcp-server-state.js';
+import peerManager from './peer-manager.js';
+import { sessionManager } from './subscription-manager.js';
+
+import { mcpContext, getOrCreateSessionServer, removeSessionServer, sessionServers, touchSession } from './mcp-server-state.js';
 import { SseSession, parseLastEventId } from './sse-session.js';
 import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
 import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from './rate-limiter.js';
-import { tools } from './tools/index.js';
-import { getApiKeyRole, canAccess } from './auth.js';
+import { getVisibleTools } from './tools/index.js';
+import { getApiKeyRole, canAccess, resolveApiKeyRole } from './auth.js';
 import { SERVER_VERSION } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -39,7 +41,7 @@ const htmlCache = {};
 let cachedToolsJson = null; let cachedToolsJsonAt = 0;
 function getToolsJson() {
     if (cachedToolsJson && Date.now() - cachedToolsJsonAt < 30000) return cachedToolsJson;
-    cachedToolsJson = JSON.stringify(tools.map(t => ({
+    cachedToolsJson = JSON.stringify(getVisibleTools().map(t => ({
         name: t.name, description: t.description, inputSchema: t.inputSchema
     })));
     cachedToolsJsonAt = Date.now();
@@ -48,7 +50,6 @@ function getToolsJson() {
 
 const mcpLimiter = createRateLimitMiddleware();
 const pendingMcpRequests = new Map();
-const { apiKey, apiKeys, enableCors, corsOrigin } = config;
 
 const JSON_CONTENT_TYPES = ['application/json', 'application/json-rpc', 'application/vnd.api+json'];
 
@@ -86,39 +87,36 @@ export function createLoggingMiddleware() {
     };
 }
 
+function extractBearerKey(req) {
+    const auth = req.get('Authorization');
+    if (!auth) return null;
+    return auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth.trim();
+}
+
 export function createAuthMiddleware() {
-    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/debug', '/playground'];
+    // 公开端点：仅保留监控与静态文档。管理/调试类端点（/debug、/health/full 等）
+    // 必须经过鉴权，避免泄露会话/内存/环境等运行态信息。
+    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/playground', '/go'];
     return (req, res, next) => {
         // Public GET endpoints are unrestricted
-        if (PUBLIC_PATHS.includes(req.path)) return next();
+        if (req.method === 'OPTIONS' || PUBLIC_PATHS.includes(req.path)) return next();
 
-        const auth = req.get('Authorization');
-        const key = auth ? auth.replace('Bearer ', '') : null;
-
-        // Check single apiKey (legacy admin)
-        if (apiKey && key === apiKey) {
+        const key = extractBearerKey(req);
+        const role = resolveApiKeyRole(key, config);
+        if (role) {
             req.apiKey = key;
-            req.role = 'admin';
-            return next();
-        }
-
-        // Check apiKeys array
-        if (key && apiKeys && Array.isArray(apiKeys)) {
-            const found = apiKeys.find(k => k.key === key);
-            if (found) {
-                req.apiKey = key;
-                req.role = found.role || 'operator';
-                return next();
-            }
-        }
-
-        // No auth configured = full access
-        if (!apiKey && (!apiKeys || apiKeys.length === 0)) {
-            req.role = 'admin';
+            req.role = role;
             return next();
         }
 
         return res.status(401).json({ error: 'Unauthorized' });
+    };
+}
+
+function createAdminMiddleware() {
+    return (req, res, next) => {
+        if (req.role === 'admin') return next();
+        return res.status(403).json({ error: 'Forbidden: admin role required' });
     };
 }
 
@@ -127,7 +125,7 @@ function originMatches(pattern, origin) {
     if (!origin) return false;
     const getHost = s => s.replace(/^https?:\/\//, '').replace(/:\d+$/, '').toLowerCase();
     const oHost = getHost(origin);
-    let pHost = getHost(pattern);
+    const pHost = getHost(pattern);
     if (pHost.startsWith('*.')) {
         const suffix = pHost.slice(1);
         return oHost === suffix.slice(1) || oHost.endsWith(suffix);
@@ -136,10 +134,10 @@ function originMatches(pattern, origin) {
 }
 
 export function createCorsMiddleware() {
-    const allowedOrigins = corsOrigin.split(',').map(s => s.trim()).filter(Boolean);
-    const allowAll = allowedOrigins.includes('*');
     return (req, res, next) => {
-        if (!enableCors) return next();
+        if (!config.enableCors) return next();
+        const allowedOrigins = (config.corsOrigin || '').split(',').map(s => s.trim()).filter(Boolean);
+        const allowAll = allowedOrigins.includes('*');
         const origin = req.headers.origin;
         const isPnaPreflight = req.method === 'OPTIONS' && req.headers['access-control-request-private-network'] === 'true';
         if (allowAll) {
@@ -147,7 +145,7 @@ export function createCorsMiddleware() {
                 res.setHeader('Access-Control-Allow-Origin', origin);
                 res.setHeader('Vary', 'Origin');
             } else {
-                res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+                res.setHeader('Access-Control-Allow-Origin', config.corsOrigin);
             }
         } else if (origin && allowedOrigins.some(p => originMatches(p, origin))) {
             res.setHeader('Access-Control-Allow-Origin', origin);
@@ -168,7 +166,7 @@ export function createCorsMiddleware() {
 }
 
 export function createErrorHandler() {
-    return (err, req, res, next) => {
+    return (err, req, res, _next) => {
         logError(`Unhandled error: ${err.message}`, { stack: err.stack, path: req.path });
         res.status(500).json({ error: 'Internal server error', message: err.message });
     };
@@ -178,34 +176,37 @@ function authorizeRequest(req, toolName) {
     if (req.role) {
         return canAccess(req.role, toolName);
     }
-    const auth = req.get('Authorization');
-    const key = auth ? auth.replace('Bearer ', '') : null;
-    const role = getApiKeyRole(key, config);
+    const role = getApiKeyRole(extractBearerKey(req), config);
     return canAccess(role, toolName);
 }
 
 function createRbacMiddleware() {
     return (req, res, next) => {
-        const body = req.body;
-        if (body && body.method === 'tools/call' && body.params && body.params.name) {
-            const toolName = body.params.name;
-            if (!authorizeRequest(req, toolName)) {
-                return res.status(403).json({
-                    jsonrpc: '2.0',
-                    id: body.id || null,
-                    error: { code: -32000, message: 'Forbidden: insufficient permissions' }
-                });
+        // JSON-RPC 批量请求（数组）也要逐个校验，否则 viewer 可用 [{...tools/call...}] 绕过 RBAC
+        const bodies = Array.isArray(req.body) ? req.body : [req.body];
+        for (const body of bodies) {
+            if (body && body.method === 'tools/call' && body.params && body.params.name) {
+                const toolName = body.params.name;
+                if (!authorizeRequest(req, toolName)) {
+                    return res.status(403).json({
+                        jsonrpc: '2.0',
+                        id: body.id || null,
+                        error: { code: -32000, message: 'Forbidden: insufficient permissions' }
+                    });
+                }
             }
         }
         next();
     };
 }
 
-export function setupRoutes(app) {
+export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
     app.use(createJsonBodyParser());
     app.use(createLoggingMiddleware());
-    app.use(createAuthMiddleware());
+    // CORS 必须在鉴权之前：否则配置了 API Key 时，浏览器预检 OPTIONS 会被 401/403
+    // 直接拒绝且不带 CORS 头，跨域请求一步都走不出去。
     app.use(createCorsMiddleware());
+    app.use(createAuthMiddleware());
 
     app.use((req, res, next) => {
         const start = Date.now();
@@ -221,7 +222,7 @@ export function setupRoutes(app) {
         let cadResponseTime = 0;
         if (cad.connected) {
             const t0 = Date.now();
-            try { await cad.ping(); } catch {}
+            try { await cad.ping(); } catch (e) { logError('health ping 失败:', e.message); }
             cadResponseTime = Date.now() - t0;
         }
 
@@ -229,7 +230,7 @@ export function setupRoutes(app) {
         const cpuUsage = process.cpuUsage();
 
         let sseCount = 0;
-        try { sseCount = sessionManager?.count?.() || 0; } catch {}
+        try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError('获取 SSE 会话数失败:', e.message); }
         res.json({
             status: 'ok',
             cad: {
@@ -254,7 +255,7 @@ export function setupRoutes(app) {
             },
             mcp: {
                 sessions: sessionServers.size,
-                tools: tools.length,
+                tools: getVisibleTools().length,
                 sseSessions: sseCount
             },
             pool: {
@@ -273,14 +274,30 @@ export function setupRoutes(app) {
 
     app.get('/health/full', async (req, res) => {
         const memUsage = process.memoryUsage();
+        // heapSizeLimit 不在 process.memoryUsage() 里，必须走 v8
+        const heapSizeLimit = v8.getHeapStatistics().heap_size_limit;
         const poolStats = pool ? pool.getStats() : {};
         let sseCount = 0;
-        try { sseCount = sessionManager?.count?.() || 0; } catch {}
+        try { sseCount = sessionManager?.count?.() || 0; } catch (e) { logError('获取 SSE 会话数失败:', e.message); }
         res.json({
             status: 'ok', timestamp: new Date().toISOString(),
             cad: { connected: cad.connected, platform: cad.getPlatform?.(), version: cad.getVersion?.(), commandQueueSize: cad._getQueueSize ? cad._getQueueSize() : 0, restartCount: cad._getRestartCount ? cad._getRestartCount() : 0 },
-            system: { uptime: process.uptime(), memory: { rssMB: Math.round(memUsage.rss / 1024 / 1024), heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024), heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024) }, cpu: process.cpuUsage() },
-            mcp: { sessions: sessionServers.size, tools: tools.length, sseSessions: sseCount },
+            system: {
+                uptime: process.uptime(),
+                memory: {
+                    rssMB: Math.round(memUsage.rss / 1024 / 1024),
+                    heapUsedMB: Math.round(memUsage.heapUsed / 1024 / 1024),
+                    heapTotalMB: Math.round(memUsage.heapTotal / 1024 / 1024),
+                    externalMB: Math.round(memUsage.external / 1024 / 1024),
+                    arrayBuffersMB: Math.round((memUsage.arrayBuffers || 0) / 1024 / 1024),
+                    heapLimitMB: Math.round(heapSizeLimit / 1024 / 1024),
+                    heapUsedPct: heapSizeLimit
+                        ? Number(((memUsage.heapUsed / heapSizeLimit) * 100).toFixed(1))
+                        : null,
+                },
+                cpu: process.cpuUsage(),
+            },
+            mcp: { sessions: sessionServers.size, tools: getVisibleTools().length, sseSessions: sseCount },
             pool: poolStats,
         });
     });
@@ -292,7 +309,7 @@ export function setupRoutes(app) {
         });
     }
 
-    app.post('/config/reload', (req, res) => {
+    app.post('/config/reload', createAdminMiddleware(), (req, res) => {
         const success = reloadConfig();
         if (success) {
             log('Configuration reloaded');
@@ -303,8 +320,7 @@ export function setupRoutes(app) {
     });
 
     app.get('/rate-limit/status', (req, res) => {
-        const auth = req.get('Authorization');
-        const apiKey = auth ? auth.replace('Bearer ', '') : null;
+        const apiKey = extractBearerKey(req);
         const status = getRateLimitStatus(apiKey);
         res.json({
             limit: status.limit,
@@ -313,9 +329,8 @@ export function setupRoutes(app) {
         });
     });
 
-    app.post('/rate-limit/reset', (req, res) => {
-        const auth = req.get('Authorization');
-        const apiKey = auth ? auth.replace('Bearer ', '') : null;
+    app.post('/rate-limit/reset', createAdminMiddleware(), (req, res) => {
+        const apiKey = extractBearerKey(req);
         resetRateLimit(apiKey);
         res.json({ status: 'ok', message: 'Rate limit reset' });
     });
@@ -323,7 +338,7 @@ export function setupRoutes(app) {
     app.get('/api/docs', (req, res) => {
         const html = loadHtml('api-docs', {
             VERSION: SERVER_VERSION,
-            TOOLS_COUNT: tools.length,
+            TOOLS_COUNT: getVisibleTools().length,
         });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
@@ -345,7 +360,7 @@ export function setupRoutes(app) {
             SESSIONS_COUNT: sessionServers.size,
             CAD_STATUS_CLASS: cadConnected ? 'status-ok' : 'status-error',
             CAD_STATUS_TEXT: cadStatusText,
-            TOOLS_COUNT: tools.length,
+            TOOLS_COUNT: getVisibleTools().length,
         });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
@@ -359,12 +374,15 @@ export function setupRoutes(app) {
         res.send(html);
     });
 
-    app.all('/mcp', mcpLimiter, createRbacMiddleware(), handleMcpPost);
-    app.all('/mcp/:path', mcpLimiter, createRbacMiddleware(), handleMcpPost);
-    app.get('/mcp/stream', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+    if (registerMcpRoutes) {
+        // 具体路径必须注册在参数路径之前，否则 /mcp/:path 会先匹配掉 /mcp/stream
+        app.get('/mcp/stream', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+        app.all('/mcp', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+        app.all('/mcp/:path', mcpLimiter, createRbacMiddleware(), handleMcpPost);
+    }
 
     app.get('/sse', mcpLimiter, handleSse);
-    app.post('/message', mcpLimiter, handleMessage);
+    app.post('/message', mcpLimiter, createRbacMiddleware(), handleMessage);
 
     app.get('/cad/events', (req, res) => {
         const sessionId = randomUUID();
@@ -372,6 +390,35 @@ export function setupRoutes(app) {
         req.on('close', () => {
             unsubscribeEvents(sessionId);
         });
+    });
+
+    // === Peer Discovery API ===
+    app.get('/peers', (req, res) => {
+        const stats = peerManager.getStats();
+        res.json(stats);
+    });
+
+    app.post('/peers/scan', createAdminMiddleware(), async (req, res) => {
+        try {
+            const found = await peerManager.scanLan(req.body || {});
+            res.json({ discovered: found.length, peers: found });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/peers/connect', createAdminMiddleware(), (req, res) => {
+        const { host, port, apikey } = req.body || {};
+        if (!host) {
+            return res.status(400).json({ error: 'host is required' });
+        }
+        const peer = peerManager.addPeer(host, port || 8110, { apikey });
+        res.json({ connected: peer.healthy, peer });
+    });
+
+    app.delete('/peers/:id', createAdminMiddleware(), (req, res) => {
+        const removed = peerManager.removePeer(req.params.id);
+        res.json({ removed });
     });
 
     app.use(createErrorHandler());
@@ -427,12 +474,15 @@ async function handleMcpPost(req, res) {
 async function getMcpResponse(sessionId, body) {
     trackMcpMethod(body.method);
     if (body.method === 'tools/call') {
-        const dedupKey = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+        // 去重键必须包含 sessionId：否则不同会话发出内容相同的调用会共享同一个 promise，
+        // 导致跨会话结果串用（对破坏性调用尤其危险）。
+        const dedupKey = createHash('sha256').update(`${sessionId}:${JSON.stringify(body)}`).digest('hex');
         let promise = pendingMcpRequests.get(dedupKey);
         if (!promise) {
             promise = (async () => {
-                const { server, transport } = await getOrCreateSessionServer(sessionId);
+                const { transport } = await getOrCreateSessionServer(sessionId);
                 transport.resetCleanupTimer();
+                touchSession(sessionId);
                 return mcpContext.run({ sessionId }, async () => {
                     return transport.handleRequest(body);
                 });
@@ -443,8 +493,9 @@ async function getMcpResponse(sessionId, body) {
         return promise;
     }
 
-    const { server, transport } = await getOrCreateSessionServer(sessionId);
+    const { transport } = await getOrCreateSessionServer(sessionId);
     transport.resetCleanupTimer();
+    touchSession(sessionId);
     return mcpContext.run({ sessionId }, async () => {
         return transport.handleRequest(body);
     });
@@ -452,7 +503,7 @@ async function getMcpResponse(sessionId, body) {
 
 async function handleSse(req, res) {
     const lastEventId = parseLastEventId(req);
-    let sessionId = randomUUID();
+    const sessionId = randomUUID();
     let resumeMessages = [];
 
     if (lastEventId !== null) {
@@ -493,7 +544,7 @@ async function handleMessage(req, res) {
         return res.status(404).json({ error: 'Session not found' });
     }
     sessionManager.createSession(sessionId);
-    const { server, transport } = await getOrCreateSessionServer(sessionId);
+    const { transport } = await getOrCreateSessionServer(sessionId);
     transport.resetCleanupTimer();
 
     const body = req.body;

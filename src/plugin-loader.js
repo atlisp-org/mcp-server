@@ -6,7 +6,7 @@ import { log, error as logError } from './logger.js';
 const PLUGIN_DIR = path.join(os.homedir(), '.atlisp', 'mcp-plugins');
 
 let loadedPlugins = [];
-let watchCallbacks = [];
+const watchCallbacks = [];
 let watcher = null;
 
 export function getPluginDir() {

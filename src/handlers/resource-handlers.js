@@ -4,9 +4,9 @@ import { cad, getActiveConnection } from '../cad.js';
 import { pool } from '../cad-pool.js';
 import { CAD_PLATFORMS, FILE_EXTENSIONS } from '../constants.js';
 import { log } from '../logger.js';
-import { parseLispList, parseLispRecursive, lispPairsToObject, escapeLispString } from '../handler-utils.js';
+import { parseLispList, parseLispRecursive, escapeLispString } from '../handler-utils.js';
 import { createError, ERROR_CODES } from '../errors.js';
-import config from '../config.js';
+import '../config.js';
 import { tools } from '../tools/index.js';
 import { computeEffectivePriority, prioRank } from '../tools/params-utils.js';
 import { getAuditStats } from '../audit-log.js';
@@ -89,7 +89,7 @@ const VLA_HELPER_LISP = `(defun @:get-props (obj prop-names / result p p-sym val
 // Utility Functions
 // =============================================================================
 
-function parseEntity(arr) {
+function _parseEntity(arr) {
   if (!Array.isArray(arr) || arr.length < 5) return null;
   const [type, handle, layer, color, linetype, ...rest] = arr;
   const entity = {
@@ -117,7 +117,7 @@ function parseEntity(arr) {
   return entity;
 }
 
-function parseVlaEntity(obj) {
+function _parseVlaEntity(obj) {
   if (!obj || typeof obj !== 'object') return null;
   return {
     type: obj.type || null,
@@ -598,7 +598,6 @@ async function combineText(params = {}) {
     for (const item of row.items) {
       if (cur.length === 0) { cur.push(item); continue; }
       const prev = cur[cur.length - 1];
-      const localH = prev.height || mh;
       if (item.x - prev.x > xGapRatio) {
         row.lines.push(cur.map(t => t.text).join(''));
         cur = [item];
@@ -661,7 +660,7 @@ async function getDwgName() {
     const code = `(vl-princ-to-string (getvar "dwgname"))`;
     const name = await cad.sendCommandWithResult(code);
     return { name: name || null };
-  } catch (e) {
+  } catch {
     return { name: null };
   }
 }
@@ -692,7 +691,7 @@ async function getDwgPath() {
     }
 
     return { path: result, name: result };
-  } catch (e) {
+  } catch {
     return { path: null, name: null };
   }
 }
@@ -918,7 +917,7 @@ async function getPackages(filterName = null) {
     }
     setCache(cacheKey, packages);
     return packages;
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -984,7 +983,7 @@ async function getDwgList() {
     let parsed = [];
     try {
       parsed = JSON.parse(result);
-    } catch (e) {
+    } catch {
       const listResult = parseLispRecursive(result);
       if (Array.isArray(listResult)) {
         parsed = listResult;
@@ -1002,7 +1001,7 @@ async function getDwgList() {
 
     setCache(cacheKey, dwgList);
     return dwgList;
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -1047,7 +1046,7 @@ function getCodingStandards() {
   return data || { error: '编码规范文件加载失败' };
 }
 
-async function getCadEvents(params) {
+async function getCadEvents(_params) {
   await ensureCad();
   try {
     const code = `(progn (setq cnt 0) (if (setq ss (ssget "_X")) (setq cnt (sslength ss))) (list (cons "entityCount" cnt) (cons "dwgName" (getvar "dwgname")) (cons "dwgPath" (getvar "dwgprefix"))))`;
@@ -1123,7 +1122,7 @@ async function getDwgContext() {
   }
 }
 
-async function getDrawingAnalysis(params = {}) {
+async function getDrawingAnalysis(_params = {}) {
   const snapshot = await getCadSnapshot();
   if (!snapshot || !snapshot.cadConnected) {
     return { connected: false, error: 'CAD 未连接' };

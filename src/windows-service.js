@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { fileURLToPath } from 'url';
+
 
 const SERVICE_NAME = 'atlisp-mcp';
 const DISPLAY_NAME = '@lisp MCP Server';
@@ -107,8 +107,8 @@ function install(port, configFile, serviceUser, servicePassword) {
   }
 
   // Determine service account
-  let obj = 'LocalSystem';
-  let password = null;
+  let obj;
+  let password;
 
   if (serviceUser) {
     obj = serviceUser;
@@ -256,7 +256,7 @@ Options for install:
     } catch {
       log('Elevation cancelled or timed out.', 'red');
     }
-    finally { try { fs.unlinkSync(tmpPs1); } catch {} }
+    finally { try { fs.unlinkSync(tmpPs1); } catch (e) { log(`清理临时脚本失败: ${e.message}`, 'yellow'); } }
     return;
   }
 

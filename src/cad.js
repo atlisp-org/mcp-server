@@ -6,26 +6,34 @@ import { randomUUID } from 'crypto';
 import config from './config.js';
 import { setCadConnected } from './metrics.js';
 import { CircuitBreaker } from './cad-circuit-breaker.js';
-import { log, error as logError } from './logger.js';
-import { createError, ERROR_CODES, MCPError } from './errors.js';
+import {  error as logError } from './logger.js';
+import {  ERROR_CODES, MCPError } from './errors.js';
+import { withSpan } from './tracing.js';
+import { t } from './i18n.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
+
+// 兜底：队列清理/去重、worker 重置等产生的 promise rejection 不应杀死进程
+process.on('unhandledRejection', (reason) => {
+  try { logError('[atlisp-mcp:cad] unhandledRejection:', reason?.message || reason); } catch (e) {}
+});
 
 const MESSAGE_TIMEOUT = config.messageTimeout;
 const CAD_COMMAND_TIMEOUT = config.cadCommandTimeout;
 const STALL_COOLDOWN = config.stallCooldown;
 const HEARTBEAT_PING_TIMEOUT = config.heartbeatPingTimeout;
 const HEARTBEAT_INTERVAL = config.heartbeatInterval;
-const MAX_RESTART_ATTEMPTS = 5;
-const RESTART_BACKOFF_BASE = 1000;
+const MAX_RESTART_ATTEMPTS = 10; // 增加重启次数
+const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
+const MAX_REQUESTS_PER_WORKER = 100; // 每个worker最大处理请求数，超过后轮换
 
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const PRIORITY_HIGH = 0;
 const PRIORITY_NORMAL = 1;
-const PRIORITY_LOW = 2;
-const MAX_QUEUE_SIZE = 500;
+const _PRIORITY_LOW = 2;
+const MAX_QUEUE_SIZE = 1000; // 增加队列大小，减少拒绝请求
 
 const READ_PREFIXES = new Set([
   '(tblnext', '(ssget', '(entget', '(entsel', '(tblsearch',
@@ -230,6 +238,11 @@ class CommandQueue {
   }
 
   enqueueHighPriority(command) {
+    const total = this._queues.reduce((s, q) => s + q.length, 0);
+    if (total >= MAX_QUEUE_SIZE) {
+      command.reject(new Error('Command queue full, try again later'));
+      return;
+    }
     this._queues[PRIORITY_HIGH].push(command);
     this._process();
   }
@@ -337,7 +350,7 @@ class CadConnection {
    * @returns {Promise<boolean>}
    */
   async sendCommand(code) {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
@@ -357,7 +370,7 @@ class CadConnection {
    * @returns {Promise<string|{ text: string, rawBase64: string }>}
    */
   async sendCommandWithResult(code, encoding = null, raw = false) {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
@@ -389,11 +402,11 @@ class CadConnection {
     return { stalled: remainingMs > 0, reason: this._stallReason, remainingMs: Math.max(0, remainingMs) };
   }
 
-  _stallError(reason = this._stallReason || 'CAD 停滞') {
+  _stallError(reason = this._stallReason || t('cad.stalled')) {
     const info = this.getStallInfo();
     return new MCPError(
       ERROR_CODES.CAD_BUSY,
-      `CAD 停滞中（可能等待输入或弹窗）：${reason}。冷却期内命令将快速失败，可人工处理 CAD 后重试，或打开新 CAD 实例继续任务`,
+      `${t('cad.stalled')}中（可能等待输入或弹窗）：${reason}。冷却期内命令将快速失败，可人工处理 CAD 后重试，或打开新 CAD 实例继续任务`,
       { reason: info.reason || reason, remainingMs: info.remainingMs }
     );
   }
@@ -417,7 +430,7 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'isBusy', platform: this._platform });
       return result && result.isBusy;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -427,27 +440,59 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'hasdoc', platform: this._platform });
       return result || { hasDoc: false, docCount: 0 };
-    } catch (e) {
+    } catch {
       return { hasDoc: false, docCount: 0 };
     }
   }
 
   async newDoc() {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     try {
       const result = await this._sendMessage({ type: 'newdoc', platform: this._platform });
       return result && result.success;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
 
+  async openDoc(filePath) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    if (this.isStalled()) throw this._stallError();
+    try {
+      const result = await this._sendMessage({ type: 'opendoc', platform: this._platform, filePath });
+      return result || { success: false, error: 'unknown' };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  async saveDoc(filePath = null) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    if (this.isStalled()) throw this._stallError();
+    try {
+      const result = await this._sendMessage({ type: 'savedoc', platform: this._platform, filePath });
+      return result || { success: false, error: 'unknown' };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   async bringToFront() {
-    if (!this.connected) throw new Error('未连接 CAD');
+    if (!this.connected) throw new Error(t('cad.notConnected'));
     try {
       const result = await this._sendMessage({ type: 'bringToFront', platform: this._platform });
       return result && result.success;
-    } catch (e) {
+    } catch {
+      return false;
+    }
+  }
+
+  async sendEsc(front = true) {
+    if (!this.connected) throw new Error(t('cad.notConnected'));
+    try {
+      const result = await this._sendMessage({ type: 'sendEsc', platform: this._platform, front });
+      return result && result.success;
+    } catch {
       return false;
     }
   }
@@ -458,7 +503,7 @@ class CadConnection {
     try {
       const result = await this._sendMessage({ type: 'getActiveDocInfo', platform: this._platform });
       return result || { docName: '', docPath: '', docCount: 0 };
-    } catch (e) {
+    } catch {
       return { docName: '', docPath: '', docCount: 0 };
     }
   }
@@ -473,12 +518,30 @@ class CadConnection {
     this._cb.reset();
   }
 
+  /**
+   * 只释放底层资源（worker 子进程 + 心跳定时器），不动全局连接状态。
+   * 连接池在失败路径上用它回收已 spawn 的 worker——否则每次重试都会留下一个
+   * 被 setInterval 闭包永久引用的 CadConnection，进程数和堆一起涨。
+   */
+  releaseResources() {
+    this._resetWorker();
+  }
+
   async ping() {
     try {
       const result = await this._sendMessage({ type: 'ping' });
       return result && result.pong;
-    } catch (e) {
+    } catch {
       return false;
+    }
+  }
+
+  async healthCheck() {
+    try {
+      const result = await this._sendMessage({ type: 'healthCheck' });
+      return result;
+    } catch (e) {
+      return { healthy: false, error: e.message };
     }
   }
 
@@ -509,6 +572,8 @@ class CadConnection {
     });
     w.connected = true;
     w._workerType = type;
+    w._spawnTime = Date.now();
+    w._requestCount = 0;
 
     this._setupStdoutHandler(w);
 
@@ -521,7 +586,7 @@ class CadConnection {
         this._cb.recordFailure();
         this._clearStall();
         const exitError = new Error(`Primary worker exited with code ${code}`);
-        for (const [id, entry] of this._pendingRequests) {
+        for (const entry of this._pendingRequests.values()) {
           clearTimeout(entry.timeout);
           entry._skipCb = true;
           entry.reject(exitError);
@@ -535,13 +600,15 @@ class CadConnection {
       } else {
         const idx = this._readWorkers.indexOf(w);
         if (idx >= 0) this._readWorkers.splice(idx, 1);
-        const poolSize = this._workerPoolSize;
-        const alive = this._readWorkers.filter(rw => rw.connected).length;
-        if (alive < poolSize - 1) {
-          const rw = this._spawnWorker('read');
-          this._readWorkers.push(rw);
-        }
+        // 主动轮换/重置导致的退出由调用方负责补位，避免重复 spawn
+        if (w._intentionalExit) return;
+        this._scheduleReadWorkerRestart();
       }
+    });
+
+    w.on('error', (err) => {
+      logError(`[${this._connectionId}] ${type} worker error:`, err.message);
+      w.connected = false;
     });
 
     return w;
@@ -562,12 +629,7 @@ class CadConnection {
     }
 
     if (isReadOnly && poolSize > 1) {
-      this._readWorkers = this._readWorkers.filter(rw => rw.connected);
-      const needed = poolSize - 1 - this._readWorkers.length;
-      for (let i = 0; i < needed; i++) {
-        const rw = this._spawnWorker('read');
-        this._readWorkers.push(rw);
-      }
+      this._ensureReadWorkers();
       if (this._readWorkers.length > 0) {
         this._readWorkerIndex = (this._readWorkerIndex + 1) % this._readWorkers.length;
         return this._readWorkers[this._readWorkerIndex];
@@ -577,8 +639,44 @@ class CadConnection {
     return this._primaryWorker;
   }
 
+  /** 同步补齐读 worker 池到 poolSize-1，返回存活的读 worker 列表。*/
+  _ensureReadWorkers() {
+    const poolSize = this._workerPoolSize;
+    if (poolSize <= 1) return this._readWorkers;
+    this._readWorkers = this._readWorkers.filter(rw => rw.connected);
+    const needed = poolSize - 1 - this._readWorkers.length;
+    for (let i = 0; i < needed; i++) {
+      this._readWorkers.push(this._spawnWorker('read'));
+    }
+    return this._readWorkers;
+  }
+
+  /** 读 worker 崩溃后的补位：指数退避，避免 worker 秒退时形成紧凑重启循环。*/
+  _scheduleReadWorkerRestart() {
+    const poolSize = this._workerPoolSize;
+    if (poolSize <= 1) return;
+    const attempt = (this._readRestartAttempts = (this._readRestartAttempts || 0) + 1);
+    const delay = Math.min(200 * Math.pow(2, attempt - 1), 5000);
+    const timer = setTimeout(() => {
+      this._readRestartTimers = this._readRestartTimers.filter(t => t !== timer);
+      if (this._readWorkers.filter(rw => rw.connected).length < poolSize - 1) {
+        this._readWorkers.push(this._spawnWorker('read'));
+      }
+    }, delay);
+    this._readRestartTimers.push(timer);
+  }
+
+  _failPending(message) {
+    for (const entry of this._pendingRequests.values()) {
+      clearTimeout(entry.timeout);
+      entry._skipCb = true;
+      entry.reject(new Error(message));
+    }
+    this._pendingRequests.clear();
+  }
+
   _resetWorker() {
-    for (const [id, { reject, timeout }] of this._pendingRequests) {
+    for (const { reject, timeout } of this._pendingRequests.values()) {
       clearTimeout(timeout);
       reject(new Error('Worker reset'));
     }
@@ -586,14 +684,15 @@ class CadConnection {
     this._commandQueue.clear();
 
     if (this._primaryWorker) {
-      try { this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
+      try { this._primaryWorker.connected = false; this._primaryWorker._intentionalExit = true; this._primaryWorker.kill(); } catch (e) { logError('[cad]', e?.message || e); }
       this._primaryWorker = null;
     }
     for (const rw of this._readWorkers) {
-      try { rw.kill(); } catch (e) { logError('[cad]', e?.message || e); }
+      try { rw.connected = false; rw._intentionalExit = true; rw.kill(); } catch (e) { logError('[cad]', e?.message || e); }
     }
     this._readWorkers = [];
     this._readWorkerIndex = 0;
+    this._readRestartAttempts = 0;
 
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
@@ -609,8 +708,33 @@ class CadConnection {
     this._readRestartTimers = [];
   }
 
+  _rotateWorker(oldWorker) {
+    // 优雅地关闭旧 worker
+    try {
+      oldWorker.connected = false;
+      oldWorker._intentionalExit = true;
+      oldWorker.kill();
+    } catch (e) {
+      logError('[cad]', '轮换 worker 时关闭旧 worker 失败:', e?.message || e);
+    }
+
+    // 如果是 primary worker，创建新的
+    if (oldWorker === this._primaryWorker) {
+      this._primaryWorker = this._spawnWorker('primary');
+      this._cb.recordSuccess();
+      if (!this._heartbeatTimer) this._startHeartbeat();
+      this._restartCount = 0;
+    } else {
+      // 如果是 read worker，从列表中移除并补齐
+      const idx = this._readWorkers.indexOf(oldWorker);
+      if (idx >= 0) this._readWorkers.splice(idx, 1);
+      this._ensureReadWorkers();
+    }
+  }
+
   _setupStdoutHandler(w) {
     let buffer = '';
+    let overflowing = false;
     const self = this;
 
     w.stdout.on('data', (data) => {
@@ -618,7 +742,27 @@ class CadConnection {
         buffer += data.toString();
         if (buffer.length > MAX_BUFFER_SIZE) {
           const lastNewline = buffer.lastIndexOf('\n');
-          buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer.slice(-MAX_BUFFER_SIZE);
+          if (lastNewline < 0) {
+            // 单条响应就超过上限：没有换行就无法按行解析。原来的做法是从中间截断，
+            // 会把 JSON 截成非法文本 → 解析失败 → 请求只能干等到超时。这里显式失败。
+            if (!overflowing) {
+              overflowing = true;
+              self._failPending(`worker 响应超过 ${MAX_BUFFER_SIZE} 字节上限`);
+            }
+            buffer = '';
+            return;
+          }
+          buffer = buffer.slice(lastNewline + 1);
+        }
+        if (overflowing) {
+          // 丢弃超大消息的剩余字节，直到遇到行尾再恢复正常解析
+          const nl = buffer.indexOf('\n');
+          if (nl < 0) {
+            buffer = '';
+            return;
+          }
+          buffer = buffer.slice(nl + 1);
+          overflowing = false;
         }
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -656,15 +800,26 @@ class CadConnection {
   _startHeartbeat() {
     if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
     const self = this;
+    let consecutiveFailures = 0;
+    
     this._heartbeatTimer = setInterval(async () => {
       if (self._stalledUntil > Date.now()) return;
+      
       try {
         const result = await self._sendMessageInternal({ type: 'ping' }, true, HEARTBEAT_PING_TIMEOUT);
         if (!result?.pong) {
-          logError(`[${self._connectionId}] heartbeat failed, worker may be dead`);
-          self._resetWorker();
+          consecutiveFailures++;
+          logError(`[${self._connectionId}] heartbeat failed (consecutive: ${consecutiveFailures})`);
+          if (consecutiveFailures >= 3) {
+            logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
+            self._resetWorker();
+            consecutiveFailures = 0;
+          }
           return;
         }
+        
+        consecutiveFailures = 0; // 重置连续失败计数
+        
         if (self._platform) {
           try {
             const docResult = await self._sendMessageInternal({ type: 'getActiveDocInfo', platform: self._platform }, true, HEARTBEAT_PING_TIMEOUT);
@@ -676,8 +831,13 @@ class CadConnection {
           }
         }
       } catch (e) {
-        logError(`[${self._connectionId}] heartbeat error:`, e.message);
-        self._resetWorker();
+        consecutiveFailures++;
+        logError(`[${self._connectionId}] heartbeat error (consecutive: ${consecutiveFailures}):`, e.message);
+        if (consecutiveFailures >= 3) {
+          logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
+          self._resetWorker();
+          consecutiveFailures = 0;
+        }
       }
     }, HEARTBEAT_INTERVAL);
   }
@@ -710,7 +870,9 @@ class CadConnection {
       await this._resetWorker();
       await this._getWorker(false);
     }
-    return this._sendMessageInternal(msg);
+    return withSpan(`cad.${msg.type}`, { 'cad.msg_type': msg.type }, () =>
+      this._sendMessageInternal(msg)
+    );
   }
 
   _sendMessageInternal(msg, noCircuitBreaker = false, timeoutMs = null) {
@@ -719,6 +881,16 @@ class CadConnection {
     const requestId = randomUUID();
     const self = this;
 
+    // 增加请求计数
+    w._requestCount = (w._requestCount || 0) + 1;
+
+    // 检查是否需要轮换 worker
+    if (w._requestCount >= MAX_REQUESTS_PER_WORKER && !noCircuitBreaker) {
+      logError(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
+      // 标记需要轮换，但在当前请求完成后执行
+      w._needsRotation = true;
+    }
+
     const effectiveTimeout = timeoutMs ?? (msg.type === 'ping' ? MESSAGE_TIMEOUT : CAD_COMMAND_TIMEOUT);
 
     return new Promise((resolve, reject) => {
@@ -726,19 +898,38 @@ class CadConnection {
         const p = self._pendingRequests.get(requestId);
         if (p) {
           self._pendingRequests.delete(requestId);
+          if (p.timeout !== timeout) clearTimeout(p.timeout);
           if (!noCircuitBreaker) self._cb.recordFailure();
           if (!noCircuitBreaker && msg.type !== 'ping') {
-            self._markStalled(`消息 ${msg.type} 超时 (${effectiveTimeout}ms)`);
-            reject(self._stallError());
+            self._markStalled(t('cad.stallTimeout', [msg.type, effectiveTimeout]));
+            p.reject(self._stallError());
             return;
           }
-          reject(new Error('Timeout waiting for worker'));
+          p.reject(new Error('Timeout waiting for worker'));
         }
       }, effectiveTimeout);
 
       const entry = {
-        resolve: (v) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); resolve(v); },
-        reject: (e) => { if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); reject(e); },
+        resolve: (v) => { 
+          if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); 
+          clearTimeout(timeout);
+          // 检查是否需要轮换 worker
+          if (w._needsRotation && !isReadOnly) {
+            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+            self._rotateWorker(w);
+          }
+          resolve(v); 
+        },
+        reject: (e) => { 
+          if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); 
+          clearTimeout(timeout);
+          // 检查是否需要轮换 worker
+          if (w._needsRotation && !isReadOnly) {
+            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+            self._rotateWorker(w);
+          }
+          reject(e); 
+        },
         timeout,
       };
       self._pendingRequests.set(requestId, entry);
@@ -849,7 +1040,10 @@ export const cad = {
   getStallInfo() { return _resolveConn().getStallInfo(); },
   async hasDoc() { return _resolveConn().hasDoc(); },
   async newDoc() { return _resolveConn().newDoc(); },
+  async openDoc(filePath) { return _resolveConn().openDoc(filePath); },
+  async saveDoc(filePath = null) { return _resolveConn().saveDoc(filePath); },
   async bringToFront() { return _resolveConn().bringToFront(); },
+  async sendEsc(front = true) { return _resolveConn().sendEsc(front); },
   async getActiveDocInfo() { return _resolveConn().getActiveDocInfo(); },
   async getInfo() { return _resolveConn().getInfo(); },
   async disconnect() { return _resolveConn().disconnect(); },

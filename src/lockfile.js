@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { error as logError } from './logger.js';
 import path from 'path';
 import os from 'os';
 
@@ -41,8 +42,8 @@ export function acquirePortLock(port, host) {
                 if (existing.pid && isAlive(existing.pid)) {
                     return { ok: false, pid: existing.pid, started: existing.started };
                 }
-            } catch {}
-            try { fs.unlinkSync(lp); } catch {}
+            } catch (e) { logError(`锁文件内容损坏，按陈旧锁处理: ${e.message}`); }
+            try { fs.unlinkSync(lp); } catch (e) { logError(`删除陈旧锁文件失败: ${e.message}`); }
         }
     }
     return { ok: false, pid: null, started: null };
@@ -54,7 +55,7 @@ export function releasePortLock(port) {
         try {
             const existing = JSON.parse(fs.readFileSync(lp, 'utf-8'));
             if (existing.pid !== process.pid) return;
-        } catch {}
+        } catch (e) { logError(`锁文件读取失败: ${e.message}`); }
         fs.unlinkSync(lp);
-    } catch {}
+    } catch (e) { logError(`释放锁文件失败: ${e.message}`); }
 }

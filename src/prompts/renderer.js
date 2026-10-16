@@ -1,9 +1,9 @@
 import { escapeLispString } from '../handler-utils.js';
 
-const PARAM_RE = /\{\{\{([\w.\[\]]+)\}\}\}|\{\{([\w.\[\]]+)\}\}/g;
+const PARAM_RE = /\{\{\{([\w.[\]]+)\}\}\}|\{\{([\w.[\]]+)\}\}/g;
 
 function resolvePath(obj, path) {
-  const parts = path.split(/[.\[\]]/g).filter(Boolean);
+  const parts = path.split(/[.[\]]/g).filter(Boolean);
   let val = obj;
   for (const p of parts) {
     if (val == null) return undefined;

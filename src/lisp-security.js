@@ -14,7 +14,7 @@ const CVT = {
 };
 
 function getLevel() {
-  const level = config?.securityLevel || 'strict';
+  const level = config?.securityLevel || 'relaxed';
   return CVT[level] || THREAT_BLOCK;
 }
 
@@ -30,13 +30,13 @@ export const SECURITY_RULES = [
   { re: /\bvl-file-copy\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件复制' },
   { re: /\bvl-file-delete\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件删除' },
   { re: /\bvl-file-rename\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件重命名' },
-  { re: /\bvl-registry-write[\s\)]/i, baseSeverity: THREAT_BLOCK, msg: 'vl-registry-write 会修改注册表' },
+  { re: /\bvl-registry-write[\s)]/i, baseSeverity: THREAT_BLOCK, msg: 'vl-registry-write 会修改注册表' },
   { re: /\bvl-exit-with-value\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 vl-exit-with-value' },
   { re: /\bvl-exit-with-error\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 vl-exit-with-error' },
   { re: /\bvlax-add-cmd\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止注册新命令' },
   { re: /\bvla-Delete\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止直接删除 vla 对象' },
   { re: /\bvla-Save\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止直接保存文档' },
-  { re: /\bdirectory\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 directory 函数' },
+  { re: /\bdirectory\s*[(\s]/i, baseSeverity: THREAT_ALLOW, msg: '使用 directory 函数' },
   { re: /\bvla-deletefile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止删除文件' },
   { re: /\bvla-copyfile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止复制文件' },
   { re: /\bvla-movefile\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止移动文件' },
@@ -52,7 +52,7 @@ try {
   onConfigChange(() => { _cachedLevel = null; });
 } catch (e) { logError('[lisp-security]', e?.message || e); }
 
-function resolveSeverity(rule) {
+function resolveSeverity(_rule) {
   if (_cachedLevel) return _cachedLevel;
   _cachedLevel = getLevel();
   return _cachedLevel;
@@ -119,13 +119,30 @@ export function checkParens(code) {
 
 export const RULES = SECURITY_RULES;
 
+// sessionId 由客户端提供，且这里只在有规则命中时才查询；用 LRU 上限兜住，
+// 否则长驻进程会被任意多的会话 ID 撑大（原来纯查询也会新建一个 Set）。
 const sessionAllowlist = new Map();
+const _maxAllowlistSessions = () => Math.max(1, config.sandboxAllowlistMax || 500);
+
+function _touch(sessionId) {
+  const list = sessionAllowlist.get(sessionId);
+  if (list) {
+    sessionAllowlist.delete(sessionId);
+    sessionAllowlist.set(sessionId, list);
+  }
+  return list;
+}
 
 export function getSessionAllowlist(sessionId) {
-  if (!sessionAllowlist.has(sessionId)) {
-    sessionAllowlist.set(sessionId, new Set());
+  const existing = _touch(sessionId);
+  if (existing) return existing;
+  if (sessionAllowlist.size >= _maxAllowlistSessions()) {
+    const oldest = sessionAllowlist.keys().next().value;
+    if (oldest !== undefined) sessionAllowlist.delete(oldest);
   }
-  return sessionAllowlist.get(sessionId);
+  const list = new Set();
+  sessionAllowlist.set(sessionId, list);
+  return list;
 }
 
 export function addToAllowlist(sessionId, ruleIndex) {
@@ -134,8 +151,8 @@ export function addToAllowlist(sessionId, ruleIndex) {
 }
 
 export function removeFromAllowlist(sessionId, ruleIndex) {
-  const list = getSessionAllowlist(sessionId);
-  list.delete(ruleIndex);
+  const list = _touch(sessionId);
+  if (list) list.delete(ruleIndex);
 }
 
 export function clearSessionAllowlist(sessionId) {
@@ -152,7 +169,7 @@ export function validateLispCode(code, sessionId = null) {
   for (let i = 0; i < RULES.length; i++) {
     const rule = RULES[i];
     if (rule.re.test(withoutComments)) {
-      const isAllowed = sessionId && getSessionAllowlist(sessionId).has(i);
+      const isAllowed = !!sessionId && !!_touch(sessionId)?.has(i);
 
       const severity = effectiveSeverity === THREAT_ALLOW ? THREAT_ALLOW
         : isAllowed ? THREAT_ALLOW

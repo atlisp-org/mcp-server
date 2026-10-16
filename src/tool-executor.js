@@ -11,18 +11,21 @@ import { pool } from './cad-pool.js';
 import { writeAuditEntry } from './audit-log.js';
 import { mcpErrorResponse, ERROR_CODES, MCPError } from './errors.js';
 import { callCustomTool } from './tool-registry.js';
+import { withSpan } from './tracing.js';
+import { isForwardableTool, forwardToolCall as peerForwardToolCall, getAutoForwardPeer } from './peer-forward.js';
 
 function resolveConn(instance) {
   if (instance) return pool.getConnection(instance) || resolveCadConnection();
   return cad;
 }
 
-async function writeAuditSuccess(name, args, options) {
+async function writeAuditSuccess(name, args, options, target) {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
     tool: name, args: args || {},
     sessionId: options.sessionId || '',
     result: 'success',
+    target: target || '',
   });
 }
 
@@ -51,7 +54,7 @@ async function endUndo(instance) {
   try { await conn.sendCommand('(command "_.UNDO" "_END")'); } catch (e) { logError('[tool-executor]', e?.message || e); }
 }
 
-export async function handleToolCall(name, args, options = {}) {
+async function runToolCall(name, args, options) {
     const handler = TOOL_HANDLERS[name];
     if (!handler) {
         const customResult = callCustomTool(name, args);
@@ -95,10 +98,22 @@ export async function handleToolCall(name, args, options = {}) {
             return result;
         } catch (e) {
             logError(`Tool call error [${name}]: ${e.message}`, { tool: name, args });
-            await writeAuditError(name, args, options, e);
-            if (e instanceof MCPError && e.code === ERROR_CODES.INVALID_ARGS) {
-                return mcpErrorResponse(e);
+
+            // CAD 未连接且配置了远程转发：自动将工具调用转发到远程 peer
+            if (e instanceof MCPError && e.code === ERROR_CODES.CAD_NOT_CONNECTED && isForwardableTool(name)) {
+                const remote = await getAutoForwardPeer();
+                if (remote) {
+                    try {
+                        const result = await peerForwardToolCall(remote.id, name, args || {}, { apikey: remote.apikey });
+                        await writeAuditSuccess(name, args, options, `peer:${remote.id}`);
+                        return result;
+                    } catch (fe) {
+                        logError(`远程转发失败 [${name}]: ${fe.message} (peer: ${remote.url})`);
+                    }
+                }
             }
+
+            await writeAuditError(name, args, options, e);
             if (e instanceof MCPError) return mcpErrorResponse(e);
             if (e.message?.startsWith('Missing required') || e.message?.startsWith('Invalid type')) {
                 return mcpErrorResponse(new MCPError(ERROR_CODES.INVALID_ARGS, e.message));
@@ -110,4 +125,15 @@ export async function handleToolCall(name, args, options = {}) {
             if (undoBegun) await endUndo(instance);
         }
     });
+}
+
+/**
+ * 工具调用入口：包一层 OTel span（未启用 tracing 时零开销透传）
+ */
+export function handleToolCall(name, args, options = {}) {
+  return withSpan(`tool.${name}`, {
+    'tool.name': name,
+    'session.id': options.sessionId || '',
+    'tool.readOnly': READ_ONLY_TOOLS.has(name),
+  }, () => runToolCall(name, args, options));
 }

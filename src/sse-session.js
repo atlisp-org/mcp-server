@@ -4,6 +4,12 @@ import config from './config.js';
 const DEFAULT_HEARTBEAT_INTERVAL = config.heartbeatInterval || 30000;
 const DEFAULT_RETRY_INTERVAL = 30000;
 const MAX_SENT_MESSAGES = 1000;
+// 条数上限之外再加一道字节上限：#sentMessages 里存的是完整的 JSON-RPC 响应对象，
+// 单条 get_entities/stream_entities 结果可达数 MB，只按条数淘汰等于没有上限。
+const MAX_SENT_BYTES = Math.max(1, config.sseReplayMaxBytes || 8 * 1024 * 1024);
+// 客户端半开（不再读 socket）时 res.write 永远返回 false，背压缓冲只进不出，
+// 必须在超限时断开连接，否则单条 SSE 连接就能吃光整个堆。
+const MAX_BACKPRESSURE_BYTES = Math.max(1, config.sseBackpressureMaxBytes || 4 * 1024 * 1024);
 
 export const SSE_EVENTS = {
     MESSAGE: 'message',
@@ -25,7 +31,9 @@ export class SseSession {
     #sessionData = {};
     #subscriptions = new Set();
     #sentMessages = [];
+    #sentBytes = 0;
     #backpressureBuffer = [];
+    #backpressureBytes = 0;
     #drainHandler = null;
     #lastActivity = Date.now();
 
@@ -163,34 +171,47 @@ export class SseSession {
     _drainBuffer() {
         while (this.#backpressureBuffer.length > 0) {
             const batch = this.#backpressureBuffer.splice(0, 50);
+            let drained = 0;
             for (const item of batch) {
                 const ok = this.#res.write(item);
                 if (!ok) {
+                    this.#backpressureBytes -= drained;
                     this.#backpressureBuffer.unshift(...batch.slice(batch.indexOf(item)));
                     return;
                 }
+                drained += item.length;
             }
+            this.#backpressureBytes -= drained;
             this._flush();
         }
+    }
+
+    _enqueueBackpressure(content) {
+        if (this.#backpressureBytes + content.length > MAX_BACKPRESSURE_BYTES) {
+            // 客户端已经读不走了，继续缓冲只会把进程堆吃光——断开，让它重连。
+            this.close();
+            return false;
+        }
+        this.#backpressureBuffer.push(content);
+        this.#backpressureBytes += content.length;
+        return true;
     }
 
     _write(content) {
         if (!this.#active) return false;
         try {
             if (this.#backpressureBuffer.length > 0) {
-                this.#backpressureBuffer.push(content);
-                return true;
+                return this._enqueueBackpressure(content);
             }
             const result = this.#res.write(content);
             if (typeof this.#res.flush === 'function') {
                 this.#res.flush();
             }
             if (result === false) {
-                this.#backpressureBuffer.push(content);
-                return true;
+                return this._enqueueBackpressure(content);
             }
             return true;
-        } catch (e) {
+        } catch {
             this.#active = false;
             this.close();
             return false;
@@ -202,7 +223,7 @@ export class SseSession {
             if (typeof this.#res.flush === 'function') {
                 this.#res.flush();
             }
-        } catch (e) {
+        } catch {
             // Ignore flush errors
         }
     }
@@ -217,9 +238,11 @@ export class SseSession {
         const eventId = id !== null ? id : ++this.#lastEventId;
         this.updateActivity();
         const formatted = this._formatEvent(event, data, eventId);
-        this.#sentMessages.push({ event, data, id: eventId, timestamp: Date.now() });
-        if (this.#sentMessages.length > MAX_SENT_MESSAGES) {
-            this.#sentMessages.splice(0, this.#sentMessages.length - MAX_SENT_MESSAGES);
+        this.#sentMessages.push({ event, data, id: eventId, timestamp: Date.now(), bytes: formatted.length });
+        this.#sentBytes += formatted.length;
+        while (this.#sentMessages.length > MAX_SENT_MESSAGES
+            || (this.#sentBytes > MAX_SENT_BYTES && this.#sentMessages.length > 1)) {
+            this.#sentBytes -= this.#sentMessages.shift().bytes || 0;
         }
         this._write(formatted);
         this._flush();
@@ -287,9 +310,13 @@ export class SseSession {
             this.#drainHandler = null;
         }
         this.#backpressureBuffer = [];
+        this.#backpressureBytes = 0;
+        // 会话已终止，重放缓冲（可能几十 MB 的实体查询结果）没有任何读取方了。
+        this.#sentMessages = [];
+        this.#sentBytes = 0;
         try {
             this.#res.end();
-        } catch (e) {
+        } catch {
             // Ignore errors during close
         }
     }
@@ -327,7 +354,7 @@ export function createSseResponseHandler(res, acceptSse = false) {
     }
 
     return {
-        send: (data, done = false) => {
+        send: (data, _done = false) => {
             if (acceptSse) {
                 sendSSE(res, data);
             } else {

@@ -1,5 +1,6 @@
 import { cad } from '../cad.js';
-import { log } from '../logger.js';
+import { error as logError } from '../logger.js';
+
 import { mcpSuccess, mcpError, ensureCadConnected, escapeLispString } from '../handler-utils.js';
 
 export async function createSheetSet(name, description = '') {
@@ -331,7 +332,7 @@ export async function sheetSetCompare(args) {
           onlyIn1: (arr[0] || []).map(s => ({ name: String(s[0] || ''), path: String(s[1] || ''), layout: String(s[2] || '') })),
           onlyIn2: (arr[1] || []).map(s => ({ name: String(s[0] || ''), path: String(s[1] || ''), layout: String(s[2] || '') }))
         };
-      } catch {}
+      } catch (e) { logError(`图纸集比较数据解析失败: ${e.message}`); }
     }
     return mcpSuccess(JSON.stringify({
       sheetSetName1, sheetSetName2,

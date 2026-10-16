@@ -1,6 +1,6 @@
 {
   "name": "@atlisp/mcp",
-  "version": "1.8.32",
+  "version": "1.9.13",
   "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
   "type": "module",
   "bin": {
@@ -17,12 +17,15 @@
   "scripts": {
     "start": "node src/atlisp-mcp.js",
     "build": "npm run build:main && npm run build:worker && npm run build:rot",
-    "build:main": "esbuild src/atlisp-mcp.js --bundle --platform=node --target=node18 --format=esm --outdir=dist --external:edge-js --packages=external --banner:js=\"#!/usr/bin/env node\"",
-    "build:worker": "node -e \"const fs=require('fs');const path=require('path');for(const f of ['cad-worker.js','lisp-security.js','logger.js','config.js'])fs.copyFileSync('src/'+f,'dist/'+f);if(!fs.existsSync('dist/html'))fs.mkdirSync('dist/html');for(const f of fs.readdirSync('src/html'))fs.copyFileSync('src/html/'+f,'dist/html/'+f);if(!fs.existsSync('dist/handlers'))fs.mkdirSync('dist/handlers');for(const f of fs.readdirSync('src/handlers'))fs.copyFileSync('src/handlers/'+f,'dist/handlers/'+f);if(!fs.existsSync('dist/prompts/definitions'))fs.mkdirSync('dist/prompts/definitions',{recursive:true});for(const f of fs.readdirSync('src/prompts/definitions'))fs.copyFileSync('src/prompts/definitions/'+f,'dist/prompts/definitions/'+f)\"",
-    "build:rot": "powershell -Command \"& 'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe' /target:library /out:dist\\cad-rothelper.dll src\\cad-rothelper.cs\"",
+    "build:main": "esbuild src/atlisp-mcp.js --bundle --platform=node --target=node20 --format=esm --outdir=dist --external:edge-js --packages=external --banner:js=\"#!/usr/bin/env node\"",
+    "build:worker": "node scripts/copy-assets.mjs",
+    "build:rot": "node scripts/build-rot.mjs",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/",
+    "release": "node scripts/release.mjs",
     "test:e2e": "vitest run tests/e2e/",
     "test:e2e:docker": "docker compose -f docker-compose.test.yml build && vitest run tests/e2e/"
   },
@@ -46,22 +49,28 @@
   "dependencies": {
     "@atlisp/lint": "^0.2.8",
     "@atlisp/parser": "^0.1.6",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "~1.29.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/exporter-prometheus": "^0.218.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
     "@opentelemetry/instrumentation-http": "^0.218.0",
     "@opentelemetry/sdk-metrics": "^2.7.1",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
     "edge-js": "^25.0.1",
     "express": "^5.2.1",
     "iconv-lite": "^0.6.3",
     "ws": "^8.21.0",
-    "zod": "^3.24.0"
+    "zod": "^4.4.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.11",
     "esbuild": "^0.28.0",
+    "eslint": "^10.9.0",
+    "globals": "^17.11.0",
     "vitest": "^4.1.5"
   }
 }

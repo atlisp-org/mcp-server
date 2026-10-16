@@ -1,8 +1,9 @@
-import config from './config.js';
+import './config.js';
+import v8 from 'v8';
 import { metrics as otelMetrics } from '@opentelemetry/api';
 import { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 
 const MAX_HISTORY_VALUES = 1000;
 
@@ -162,6 +163,24 @@ class Metrics {
         lines.push('# HELP atlisp_mcp_cad_connected CAD connection status');
         lines.push('# TYPE atlisp_mcp_cad_connected gauge');
         lines.push(`atlisp_mcp_cad_connected ${this.counters.get('cad_connected') || 0}`);
+
+        // 进程内存：常驻服务一旦出现无界缓存，这里是唯一的早期信号
+        // （OOM 前兆是 heapUsed 单调上升，而不是 errors_total 变大）。
+        // 注意：heapSizeLimit 不在 process.memoryUsage() 中，必须走 v8。
+        const mem = process.memoryUsage();
+        const heapLimit = v8.getHeapStatistics().heap_size_limit;
+        lines.push('# HELP atlisp_mcp_memory_bytes Process memory usage in bytes');
+        lines.push('# TYPE atlisp_mcp_memory_bytes gauge');
+        lines.push(`atlisp_mcp_memory_bytes{type="rss"} ${mem.rss}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="heapTotal"} ${mem.heapTotal}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="heapUsed"} ${mem.heapUsed}`);
+        lines.push(`atlisp_mcp_memory_bytes{type="external"} ${mem.external}`);
+        lines.push('# HELP atlisp_mcp_heap_limit_bytes Configured V8 heap limit in bytes');
+        lines.push('# TYPE atlisp_mcp_heap_limit_bytes gauge');
+        lines.push(`atlisp_mcp_heap_limit_bytes ${heapLimit}`);
+        lines.push('# HELP atlisp_mcp_heap_used_ratio heapUsed / heapSizeLimit');
+        lines.push('# TYPE atlisp_mcp_heap_used_ratio gauge');
+        lines.push(`atlisp_mcp_heap_used_ratio ${heapLimit > 0 ? (mem.heapUsed / heapLimit).toFixed(6) : '0'}`);
 
         return lines.join('\n');
     }

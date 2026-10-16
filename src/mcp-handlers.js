@@ -19,14 +19,15 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { listResources, readResource } from './handlers/resource-handlers.js';
 import { listPrompts, getPrompt } from './handlers/prompt-handlers.js';
 import { SERVER_NAME, SERVER_VERSION, SERVER_CAPABILITIES } from './constants.js';
-import { subscribe, unsubscribe, list as subList, isSubscribed } from './subscription-manager.js';
+import { subscribe, unsubscribe, list as subList } from './subscription-manager.js';
 import { mcpContext } from './mcp-server-state.js';
-import { trackToolCall, trackError, trackCadCommand, trackMcpMethod } from './metrics.js';
+import { trackToolCall, trackError } from './metrics.js';
 import { checkToolRateLimit } from './rate-limiter.js';
-import { log, error as logError, setLoggingNotify } from './logger.js';
-import { tools } from './tools/index.js';
+import { log, error as logError } from './logger.js';
+
 import { cad } from './cad.js';
 import { setClientRoots } from './client-roots.js';
+import { getVisibleTools } from './tools/index.js';
 
 const COMPLETIONS_CACHE_TTL = 300;
 
@@ -95,13 +96,13 @@ const RESOURCE_TEMPLATES = [
 ];
 
 export function createMcpServer(handlers = {}) {
-    const { tools = [], handleToolCall = () => ({ content: [] }) } = handlers;
+    const { handleToolCall = () => ({ content: [] }) } = handlers;
 
     const server = new Server(
         { name: SERVER_NAME, version: SERVER_VERSION },
         {
             capabilities: SERVER_CAPABILITIES,
-            instructions: '这是一个 @lisp MCP 服务器，用于通过 AI Agent 控制 CAD (AutoCAD/ZWCAD/GStarCAD/BricsCAD)。支持 220+ 工具操作图元、图层、块、标注、布局、图纸集、打印等。'
+            instructions: '这是一个 @lisp MCP 服务器，用于通过 AI Agent 控制 CAD (AutoCAD/ZWCAD/GStarCAD/BricsCAD)。支持 330+ 工具操作图元、图层、块、标注、布局、图纸集、打印等。'
         }
     );
 
@@ -117,8 +118,9 @@ export function createMcpServer(handlers = {}) {
         const params = request.params || {};
         const cursor = decodeCursor(params.cursor);
         const PAGE_SIZE = 100;
-        const page = tools.slice(cursor, cursor + PAGE_SIZE);
-        const nextCursor = (cursor + PAGE_SIZE < tools.length) ? encodeCursor(cursor + PAGE_SIZE) : undefined;
+        const visible = getVisibleTools();
+        const page = visible.slice(cursor, cursor + PAGE_SIZE);
+        const nextCursor = (cursor + PAGE_SIZE < visible.length) ? encodeCursor(cursor + PAGE_SIZE) : undefined;
         return { tools: page, nextCursor };
     });
 
@@ -445,9 +447,9 @@ export function createMcpServer(handlers = {}) {
             const hatchPatterns = ['ANSI31','ANSI32','ANSI33','ANSI34','ANSI35','ANSI36','ANSI37','ANSI38','AR-B816','AR-B816C','AR-B88','AR-BRELM','AR-BRSTD','AR-CONC','AR-HBONE','AR-PARQ1','AR-RROOF','AR-RSHKE','AR-SAND','BOX','BRASS','BRICK','BRSTONE','CLAY','CORK','CROSS','DASH','DOLMIT','DOTS','EARTH','ESCHER','FLEX','GRASS','GRATE','HEX','HONEY','HOUND','INSUL','LINE','MUDST','NET','NET3','PLAST','PLASTI','SACNCR','SQUARE','STARS','STEEL','SWAMP','TRANS','TRIANG','ZIGZAG'];
             for (const p of hatchPatterns) { if (p.toLowerCase().startsWith(prefix)) values.push(p); }
         } else if (ref?.type === 'tool') {
-            for (const t of tools) { if (t.name.toLowerCase().startsWith(prefix)) values.push(t.name); }
+            for (const t of getVisibleTools()) { if (t.name.toLowerCase().startsWith(prefix)) values.push(t.name); }
         } else if (ref?.type === 'ref/parameter') {
-            const toolDef = tools.find(t => t.name === ref.name);
+            const toolDef = getVisibleTools().find(t => t.name === ref.name);
             if (toolDef?.inputSchema?.properties) {
                 const paramName = argument.name;
                 const paramDef = toolDef.inputSchema.properties[paramName];

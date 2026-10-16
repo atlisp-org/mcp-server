@@ -1,4 +1,4 @@
-import { createCadConnection, setActiveConnection, getActiveConnection, cad } from './cad.js';
+import { createCadConnection, setActiveConnection, cad } from './cad.js';
 import { log, error as logError } from './logger.js';
 import config from './config.js';
 import { discoverCadInstances } from './cad-rot-helper.js';
@@ -70,11 +70,10 @@ class CadConnectionPool {
       return true;
     }
 
-    if (!entry || entry.connection !== getActiveConnection()) {
-      const conn = createCadConnection();
+    if (!entry) {
       entry = {
         key,
-        connection: conn,
+        connection: createCadConnection(),
         platform: null,
         version: null,
         connected: false,
@@ -85,6 +84,9 @@ class CadConnectionPool {
       };
       this._instances.set(key, entry);
     }
+    // 已有条目（连接失败/已断开）时复用它自己的 connection，不要再造一个：
+    // 新对象会 spawn 自己的 worker，而旧对象的心跳 setInterval 闭包仍引用着它，
+    // 于是每次重试都泄漏一个 CadConnection + worker 进程。
 
     const conn = entry.connection;
     try {
@@ -107,9 +109,11 @@ class CadConnectionPool {
         return true;
       }
       log(`连接池: 实例 "${key}" 连接失败`);
+      conn.releaseResources?.();
       return false;
     } catch (e) {
       logError(`连接池: 实例 "${key}" 连接出错: ${e.message}`);
+      conn.releaseResources?.();
       return false;
     }
   }
@@ -225,8 +229,8 @@ class CadConnectionPool {
         const key = platform.toLowerCase();
         if (this._instances.has(key) && this._instances.get(key).connected) continue;
 
+        const tempConn = createCadConnection();
         try {
-          const tempConn = createCadConnection();
           const ok = await connectWithTimeout(tempConn, platform);
           if (ok) {
             const label = `${platform} ${tempConn.getVersion() || ''}`.trim();
@@ -243,10 +247,14 @@ class CadConnectionPool {
             });
             log(`连接池: 发现 ${label}`);
             resultEntries.push(this._instances.get(key));
+            continue;
           }
-        } catch (e) {
+        } catch {
           // Platform not available, skip
         }
+        // 探测失败/超时：tempConn 已经 spawn 过 worker，必须显式回收，
+        // 否则这个对象连同它的心跳定时器会一直留在堆里。
+        tempConn.releaseResources?.();
       }
     }
 
@@ -377,7 +385,7 @@ class CadConnectionPool {
    */
   async disconnectAll() {
     this.stopHealthCheck();
-    for (const [key, timer] of this._reconnectTimers) {
+    for (const [, timer] of this._reconnectTimers) {
       clearTimeout(timer);
     }
     this._reconnectTimers.clear();
@@ -401,7 +409,7 @@ class CadConnectionPool {
 
   _scheduleReconnect(key) {
     if (this._reconnectTimers.has(key)) return;
-    let count = this._reconnectCounts.get(key) || 0;
+    const count = this._reconnectCounts.get(key) || 0;
     if (count >= this._maxReconnectAttempts) {
       logError(`连接池: 实例 "${key}" 重试已达上限 (${this._maxReconnectAttempts})，放弃`);
       return;

@@ -1,5 +1,5 @@
 import { SseSession, SSE_EVENTS } from './sse-session.js';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -39,12 +39,12 @@ function loadPersistedSessionData(clientId) {
             return null;
         }
         return store.sessionData || {};
-    } catch (e) {
+    } catch {
         return null;
     }
 }
 
-function cleanupStaleSessions() {
+function _cleanupStaleSessions() {
     try {
         if (!fs.existsSync(SESSION_STORE_DIR)) return;
         const files = fs.readdirSync(SESSION_STORE_DIR);
@@ -57,7 +57,7 @@ function cleanupStaleSessions() {
                 if (Date.now() - store.savedAt > SESSION_STORE_TTL) {
                     fs.unlinkSync(filePath);
                 }
-            } catch (e) {
+            } catch {
                 try { fs.unlinkSync(filePath); } catch (e2) { logError('Failed to remove corrupt session file:', filePath, e2.message); }
             }
         }
@@ -211,7 +211,7 @@ export class SseSessionManager {
 
     broadcast(event, data) {
         let successCount = 0;
-        for (const [clientId, session] of this.#sessions) {
+        for (const session of this.#sessions.values()) {
             if (session.isActive && session.sendEvent(event, data)) {
                 successCount++;
             }
@@ -247,7 +247,7 @@ export class SseSessionManager {
             for (const handler of handlers) {
                 try {
                     handler(data);
-                } catch (e) {
+                } catch {
                     // Ignore handler errors
                 }
             }

@@ -27,7 +27,7 @@ export const getEntity = withCadConnection(async (handle) => {
 });
 
 export const setEntityProperty = withCadConnection(async (handle, property, value) => {
-    let propCode = '';
+    let propCode;
     switch (property) {
         case 'layer':
             propCode = `(cons 8 "${escapeLispString(value)}")`;

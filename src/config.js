@@ -9,15 +9,22 @@ const envSchema = z.object({
     TRANSPORT: z.enum(['http', 'stdio', 'ws']).optional().default('http'),
     MCP_API_KEY: z.string().optional().default(''),
     ENABLE_SSE: z.coerce.boolean().optional().default(true),
-    MESSAGE_TIMEOUT: z.coerce.number().optional().default(300000),
-    CAD_COMMAND_TIMEOUT: z.coerce.number().optional().default(120000),
-    STALL_COOLDOWN: z.coerce.number().optional().default(30000),
-    HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(10000),
-    HEARTBEAT_INTERVAL: z.coerce.number().optional().default(30000),
+    MESSAGE_TIMEOUT: z.coerce.number().optional().default(60000),      // 1分钟，减少超时时间
+    CAD_COMMAND_TIMEOUT: z.coerce.number().optional().default(30000),  // 30秒，减少超时时间
+    STALL_COOLDOWN: z.coerce.number().optional().default(15000),       // 15秒，减少冷却时间
+    HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(5000), // 5秒，减少心跳超时
+    HEARTBEAT_INTERVAL: z.coerce.number().optional().default(15000),   // 15秒，增加心跳频率
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
     ENABLE_CORS: z.coerce.boolean().optional().default(true),
-    CORS_ORIGIN: z.string().optional().default('https://atlisp.cn'),
+    // 浏览器驱动的桥接（atlisp.org/agent/bridge）需要本机 MCP 接受来自
+    // atlisp.cn 各子域与 localhost 的请求，否则预检直接 403，浏览器一步都走不出去。
+    //
+    // 写法是**只有 host、没有协议和端口**，这是刻意的：routes.js 的 originMatches
+    // 会先剥掉 scheme 与端口再比较（getHost）。所以 `localhost` 这条已经覆盖
+    // http://localhost:8100 / :8110 等本机所有端口；加了 https:// 反而看不出这一点，
+    // 容易被后人「修正」成逐个端口枚举。* 开头按子域后缀匹配。
+    CORS_ORIGIN: z.string().optional().default('localhost,*.atlisp.cn,atlisp.cn'),
     RATE_LIMIT_WINDOW: z.coerce.number().optional().default(60000),
     RATE_LIMIT_MAX: z.coerce.number().optional().default(100),
     RESOURCE_CACHE_TTL: z.coerce.number().optional().default(5000),
@@ -28,6 +35,10 @@ const envSchema = z.object({
     CONFIG_FILE: z.string().optional().default(''),
     API_KEY_RATE_LIMIT: z.coerce.number().optional().default(1000),
     METRICS_ENABLED: z.coerce.boolean().optional().default(true),
+    TRACING_ENABLED: z.coerce.boolean().optional().default(false),
+    TRACING_ENDPOINT: z.string().optional().default('http://127.0.0.1:4318/v1/traces'),
+    TOOL_CATEGORIES: z.string().optional().default(''),
+    LOCALE: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     REQUEST_LOG_ENABLED: z.coerce.boolean().optional().default(true),
     SSL_KEY_PATH: z.string().optional().default(''),
     SSL_CERT_PATH: z.string().optional().default(''),
@@ -41,7 +52,7 @@ const envSchema = z.object({
     LINT_CONFIG_PATH: z.string().optional().default(''),
     LINT_LEVEL: z.string().optional().default(''),
     NO_LINT: z.coerce.boolean().optional().default(false),
-    SECURITY_LEVEL: z.string().optional().default('strict'),
+    SECURITY_LEVEL: z.string().optional().default('relaxed'),
     CLIENT_ID: z.string().optional().default(''),
     MAX_ENTITY_LIMIT: z.coerce.number().optional().default(20000),
     READ_BATCH_WINDOW: z.coerce.number().optional().default(50),
@@ -49,6 +60,25 @@ const envSchema = z.object({
     AUTO_CONNECT: z.coerce.boolean().optional().default(false),
     AUTO_LAUNCH: z.coerce.boolean().optional().default(true),
     LAUNCH_TIMEOUT: z.coerce.number().optional().default(30000),
+    PEER_DISCOVERY_ENABLED: z.coerce.boolean().optional().default(true),
+    PEER_DISCOVERY_PORT: z.coerce.number().optional().default(9811),
+    PEER_DISCOVERY_INTERVAL: z.coerce.number().optional().default(5000),
+    PEER_DISCOVERY_SILENT: z.coerce.boolean().optional().default(false),
+    REMOTE_PEER_HOST: z.string().optional().default(''),
+    REMOTE_PEER_PORT: z.coerce.number().optional().default(8110),
+    REMOTE_PEER_API_KEY: z.string().optional().default(''),
+    REMOTE_PEER_AUTO_FORWARD: z.coerce.boolean().optional().default(false),
+    // 常驻进程的内存上限类参数：MCP Server 常年不重启，任何按「条数」而非「字节」
+    // 淘汰的缓存都会在几小时内把 4GB 堆吃光（一次 get_entities 就能返回几十 MB）。
+    SSE_REPLAY_MAX_BYTES: z.coerce.number().optional().default(8388608),   // SSE 重放缓冲 8MB
+    SSE_BACKPRESSURE_MAX_BYTES: z.coerce.number().optional().default(4194304), // SSE 背压缓冲 4MB
+    REPL_HISTORY_MAX: z.coerce.number().optional().default(100),          // REPL 每会话历史条数
+    REPL_RESULT_MAX_CHARS: z.coerce.number().optional().default(8192),    // REPL 单条结果保留字符数
+    WORKER_QUEUE_MAX: z.coerce.number().optional().default(200),          // worker 待处理队列上限
+    SANDBOX_ALLOWLIST_MAX: z.coerce.number().optional().default(500),     // 会话 allowlist 条数上限
+    SESSION_IDLE_TTL: z.coerce.number().optional().default(1800000),      // HTTP MCP 会话空闲 TTL 30min
+    AGENT_CONTEXT_MAX_SESSIONS: z.coerce.number().optional().default(200), // agent context 最大会话数
+    AGENT_CONTEXT_TTL: z.coerce.number().optional().default(1800000),     // agent context 会话 TTL 30min
 });
 
 const configSchema = z.object({
@@ -76,6 +106,8 @@ const configSchema = z.object({
     configFile: z.string().optional(),
     apiKeyRateLimit: z.number().optional(),
     metricsEnabled: z.boolean().optional(),
+    tracingEnabled: z.boolean().optional(),
+    tracingEndpoint: z.string().optional(),
     apiKeys: z.array(z.object({
         key: z.string(),
         limit: z.number(),
@@ -95,6 +127,8 @@ const configSchema = z.object({
     lintConfigPath: z.string().optional(),
     lintLevel: z.string().optional(),
     noLint: z.boolean().optional(),
+    toolCategories: z.array(z.string()).optional(),
+    locale: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
     maxEntityLimit: z.number().optional(),
@@ -103,6 +137,35 @@ const configSchema = z.object({
     autoConnect: z.boolean().optional(),
     autoLaunch: z.boolean().optional(),
     launchTimeout: z.number().optional(),
+    peerDiscovery: z.object({
+        enabled: z.boolean().optional(),
+        port: z.number().optional(),
+        broadcastInterval: z.number().optional(),
+        silent: z.boolean().optional(),
+        peers: z.array(z.object({
+            id: z.string().optional(),
+            host: z.string(),
+            port: z.number().optional(),
+            hostname: z.string().optional(),
+            version: z.string().optional(),
+            apikey: z.string().optional(),
+        })).optional(),
+    }).optional(),
+    remotePeer: z.object({
+        host: z.string(),
+        port: z.number().optional(),
+        apiKey: z.string().optional(),
+        autoForward: z.boolean().optional(),
+    }).optional(),
+    sseReplayMaxBytes: z.number().optional(),
+    sseBackpressureMaxBytes: z.number().optional(),
+    replHistoryMax: z.number().optional(),
+    replResultMaxChars: z.number().optional(),
+    workerQueueMax: z.number().optional(),
+    sandboxAllowlistMax: z.number().optional(),
+    sessionIdleTtl: z.number().optional(),
+    agentContextMaxSessions: z.number().optional(),
+    agentContextTtl: z.number().optional(),
 });
 
 function parseArgs() {
@@ -186,9 +249,13 @@ const configFilePath = env.CONFIG_FILE || cliArgs.configFile ||
 const fileConfig = loadConfigFile(configFilePath);
 
 const config = {
-    port: fileConfig?.port ?? cliArgs.port ?? env.PORT,
-    host: fileConfig?.host ?? cliArgs.host ?? env.HOST,
-    transport: fileConfig?.transport ?? cliArgs.transport ?? env.TRANSPORT,
+    // 优先级：CLI 参数 > 配置文件 > 环境变量。
+    // cliArgs 必须排最前——envSchema 里 PORT/HOST/TRANSPORT 带 .default()，
+    // env.X 恒有值，不能用来判断用户是否显式设置过；而配置文件一旦写了这些键，
+    // 排在前面的 cliArgs 会被静默覆盖（--port 传了不起作用）。
+    port: cliArgs.port ?? fileConfig?.port ?? env.PORT,
+    host: cliArgs.host ?? fileConfig?.host ?? env.HOST,
+    transport: cliArgs.transport ?? fileConfig?.transport ?? env.TRANSPORT,
     apiKey: fileConfig?.apiKey ?? env.MCP_API_KEY,
     enableSse: fileConfig?.enableSse ?? env.ENABLE_SSE,
     messageTimeout: fileConfig?.messageTimeout ?? env.MESSAGE_TIMEOUT,
@@ -211,9 +278,16 @@ const config = {
     apiKeyRateLimit: fileConfig?.apiKeyRateLimit ?? env.API_KEY_RATE_LIMIT,
     apiKeys: fileConfig?.apiKeys ?? [],
     metricsEnabled: fileConfig?.metricsEnabled ?? env.METRICS_ENABLED,
+    tracingEnabled: fileConfig?.tracingEnabled ?? env.TRACING_ENABLED,
+    tracingEndpoint: fileConfig?.tracingEndpoint ?? env.TRACING_ENDPOINT,
+    toolCategories: fileConfig?.toolCategories
+      ?? (env.TOOL_CATEGORIES
+        ? env.TOOL_CATEGORIES.split(',').map(s => s.trim()).filter(Boolean)
+        : []),
+    locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
-    sslKey: fileConfig?.sslKey ?? env.SSL_KEY_PATH ?? cliArgs.sslKey,
-    sslCert: fileConfig?.sslCert ?? env.SSL_CERT_PATH ?? cliArgs.sslCert,
+    sslKey: cliArgs.sslKey ?? fileConfig?.sslKey ?? env.SSL_KEY_PATH,
+    sslCert: cliArgs.sslCert ?? fileConfig?.sslCert ?? env.SSL_CERT_PATH,
     llmApiKey: fileConfig?.llmApiKey ?? env.LLM_API_KEY,
     llmApiUrl: fileConfig?.llmApiUrl ?? env.LLM_API_URL,
     llmModel: fileConfig?.llmModel ?? env.LLM_MODEL,
@@ -221,11 +295,11 @@ const config = {
     llmTemperature: fileConfig?.llmTemperature ?? env.LLM_TEMPERATURE,
     maxPoolSize: fileConfig?.maxPoolSize ?? 3,
     workerPoolSize: fileConfig?.workerPoolSize ?? env.WORKER_POOL_SIZE,
-    lintPreset: fileConfig?.lintPreset ?? cliArgs.lintPreset ?? (env.LINT_PRESET || undefined),
-    lintConfigPath: fileConfig?.lintConfigPath ?? cliArgs.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
-    lintLevel: fileConfig?.lintLevel ?? cliArgs.lintLevel ?? (env.LINT_LEVEL || undefined),
-    noLint: fileConfig?.noLint ?? cliArgs.noLint ?? env.NO_LINT,
-    securityLevel: fileConfig?.securityLevel ?? cliArgs.securityLevel ?? (env.SECURITY_LEVEL || 'strict'),
+    lintPreset: cliArgs.lintPreset ?? fileConfig?.lintPreset ?? (env.LINT_PRESET || undefined),
+    lintConfigPath: cliArgs.lintConfigPath ?? fileConfig?.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
+    lintLevel: cliArgs.lintLevel ?? fileConfig?.lintLevel ?? (env.LINT_LEVEL || undefined),
+    noLint: cliArgs.noLint ?? fileConfig?.noLint ?? env.NO_LINT,
+    securityLevel: cliArgs.securityLevel ?? fileConfig?.securityLevel ?? (env.SECURITY_LEVEL || 'relaxed'),
     clientId: fileConfig?.clientId ?? (env.CLIENT_ID || ''),
     maxEntityLimit: fileConfig?.maxEntityLimit ?? env.MAX_ENTITY_LIMIT,
     readBatchWindow: fileConfig?.readBatchWindow ?? env.READ_BATCH_WINDOW,
@@ -233,12 +307,39 @@ const config = {
     autoConnect: fileConfig?.autoConnect ?? env.AUTO_CONNECT,
     autoLaunch: fileConfig?.autoLaunch ?? env.AUTO_LAUNCH,
     launchTimeout: fileConfig?.launchTimeout ?? env.LAUNCH_TIMEOUT,
+    peerDiscovery: {
+        enabled: fileConfig?.peerDiscovery?.enabled ?? env.PEER_DISCOVERY_ENABLED,
+        port: fileConfig?.peerDiscovery?.port ?? env.PEER_DISCOVERY_PORT,
+        broadcastInterval: fileConfig?.peerDiscovery?.broadcastInterval ?? env.PEER_DISCOVERY_INTERVAL,
+        silent: fileConfig?.peerDiscovery?.silent ?? env.PEER_DISCOVERY_SILENT,
+        peers: fileConfig?.peerDiscovery?.peers ?? [],
+    },
+    remotePeer: (() => {
+        const host = fileConfig?.remotePeer?.host || env.REMOTE_PEER_HOST || '';
+        if (!host) return null;
+        return {
+            host,
+            port: fileConfig?.remotePeer?.port ?? env.REMOTE_PEER_PORT,
+            apiKey: fileConfig?.remotePeer?.apiKey || env.REMOTE_PEER_API_KEY || '',
+            autoForward: fileConfig?.remotePeer?.autoForward ?? env.REMOTE_PEER_AUTO_FORWARD,
+        };
+    })(),
+    sseReplayMaxBytes: fileConfig?.sseReplayMaxBytes ?? env.SSE_REPLAY_MAX_BYTES,
+    sseBackpressureMaxBytes: fileConfig?.sseBackpressureMaxBytes ?? env.SSE_BACKPRESSURE_MAX_BYTES,
+    replHistoryMax: fileConfig?.replHistoryMax ?? env.REPL_HISTORY_MAX,
+    replResultMaxChars: fileConfig?.replResultMaxChars ?? env.REPL_RESULT_MAX_CHARS,
+    workerQueueMax: fileConfig?.workerQueueMax ?? env.WORKER_QUEUE_MAX,
+    sandboxAllowlistMax: fileConfig?.sandboxAllowlistMax ?? env.SANDBOX_ALLOWLIST_MAX,
+    sessionIdleTtl: fileConfig?.sessionIdleTtl ?? env.SESSION_IDLE_TTL,
+    agentContextMaxSessions: fileConfig?.agentContextMaxSessions ?? env.AGENT_CONTEXT_MAX_SESSIONS,
+    agentContextTtl: fileConfig?.agentContextTtl ?? env.AGENT_CONTEXT_TTL,
 };
 
 if (config.lintConfigPath) process.env.LINT_CONFIG_PATH = config.lintConfigPath;
 if (config.lintPreset) process.env.LINT_PRESET = config.lintPreset;
 if (config.lintLevel) process.env.LINT_LEVEL = config.lintLevel;
 if (config.noLint) process.env.NO_LINT = 'true';
+if (config.securityLevel) process.env.SECURITY_LEVEL = config.securityLevel;
 
 export function validateConfig() {
     const errors = [];
@@ -270,7 +371,7 @@ export function validateConfig() {
     return true;
 }
 
-let configWatchers = [];
+const configWatchers = [];
 let configReloadLock = false;
 
 if (configFilePath && fs.existsSync(configFilePath)) {
@@ -282,7 +383,7 @@ if (configFilePath && fs.existsSync(configFilePath)) {
                 const newFileConfig = loadConfigFile(configFilePath);
                 if (newFileConfig) {
                     Object.assign(config, newFileConfig);
-                    configWatchers.forEach(fn => { try { fn(config); } catch {} });
+                    configWatchers.forEach(fn => { try { fn(config); } catch (e) { console.error('[config] watcher 回调失败:', e.message); } });
                 }
                 configReloadLock = false;
             }
@@ -304,7 +405,7 @@ export function reloadConfig() {
     const newFileConfig = loadConfigFile(config.configFile);
     if (newFileConfig) {
         Object.assign(config, newFileConfig);
-        configWatchers.forEach(fn => { try { fn(config); } catch {} });
+        configWatchers.forEach(fn => { try { fn(config); } catch (e) { console.error('[config] watcher 回调失败:', e.message); } });
         configReloadLock = false;
         return true;
     }

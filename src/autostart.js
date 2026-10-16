@@ -3,29 +3,45 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
-const AUTOSTART_NAME = 'atlisp-mcp';
+const WIN_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const WIN_AUTOSTART_NAME = 'atlisp-mcp';
+
+// `conhost.exe --headless` (Windows 10 1809+, kernel 10.0.17763) hosts node
+// without any console window using a signed Windows component. On Windows 7/8
+// (kernel 6.x) conhost has no --headless, but there is no Windows Terminal
+// either, so `powershell -WindowStyle Hidden` reliably hides the window there.
+function supportsHeadlessConhost() {
+    const [major = 0, , build = 0] = os.release().split('.').map(n => parseInt(n, 10));
+    if (major > 10) return true;
+    if (major === 10) return build >= 17763;
+    return false;
+}
+
+function getWindowsHiddenCommand() {
+    if (!supportsHeadlessConhost()) {
+        const base = `& '${process.execPath}' '${process.argv[1]}' --transport http`;
+        return `powershell -WindowStyle Hidden -Command "${base}"`;
+    }
+    const conhost = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'conhost.exe');
+    return `"${conhost}" --headless "${process.execPath}" "${process.argv[1]}" --transport http`;
+}
 
 function regAdd(args) {
-  const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
-  return result.stdout.toString();
+    const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
+    return result.stdout.toString();
 }
 
 function regDelete(args) {
-  const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
-  return result.stdout.toString();
+    const result = spawnSync('reg', args, { stdio: 'pipe', timeout: 5000, windowsHide: true });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(result.stderr.toString() || `reg exit code ${result.status}`);
+    return result.stdout.toString();
 }
 
 function getStartupCommand() {
-    const nodePath = process.execPath;
-    const scriptPath = process.argv[1];
-    if (process.platform === 'win32') {
-        return `& '${nodePath}' '${scriptPath}' --transport http`;
-    }
-    return `"${nodePath}" "${scriptPath}" --transport http`;
+    return `"${process.execPath}" "${process.argv[1]}" --transport http`;
 }
 
 function xdgAutostartDir() {
@@ -37,11 +53,9 @@ export function installAutostart() {
     const platform = process.platform;
 
     if (platform === 'win32') {
-        const baseCmd = getStartupCommand();
-        const psCmd = `powershell -WindowStyle Hidden -Command "${baseCmd}"`;
         try {
-            regAdd(['add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
-                '/v', AUTOSTART_NAME, '/t', 'REG_SZ', '/d', psCmd, '/f']);
+            regAdd(['add', WIN_RUN_KEY, '/v', WIN_AUTOSTART_NAME, '/t', 'REG_SZ',
+                '/d', getWindowsHiddenCommand(), '/f']);
             console.error(`自动启动已安装 (HKCU\\...\\Run)`);
             return true;
         } catch (e) {
@@ -53,7 +67,6 @@ export function installAutostart() {
     if (platform === 'darwin') {
         const plistDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
         const plistPath = path.join(plistDir, `com.atlisp.mcp.plist`);
-        const cmd = getStartupCommand().replace(/"/g, '&quot;');
         const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -116,8 +129,7 @@ export function uninstallAutostart() {
 
     if (platform === 'win32') {
         try {
-            regDelete(['delete', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
-                '/v', AUTOSTART_NAME, '/f']);
+            regDelete(['delete', WIN_RUN_KEY, '/v', WIN_AUTOSTART_NAME, '/f']);
             console.error('自动启动已卸载');
             return true;
         } catch (e) {
@@ -160,12 +172,12 @@ export function autostartStatus() {
     if (platform === 'win32') {
         try {
             const out = execSync(
-                `reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "${AUTOSTART_NAME}"`,
+                `reg query "${WIN_RUN_KEY}" /v "${WIN_AUTOSTART_NAME}"`,
                 { stdio: 'pipe', timeout: 5000, encoding: 'utf-8' }
             );
-            const match = out.match(/(\S+\.js)/);
+            const match = out.match(/([A-Za-z]:\\[^"]*\.js)/);
             return { installed: true, command: match ? match[1] : out.trim() };
-        } catch (_) {
+        } catch {
             return { installed: false };
         }
     }

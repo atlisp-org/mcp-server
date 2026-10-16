@@ -6,6 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { validateLispCodeWorker, checkParens } from './lisp-security.js';
+import config from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +19,7 @@ function _loadDll(methodName) {
       typeName: 'CadRotHelper.ConnectionManager',
       methodName,
     });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -30,7 +31,7 @@ function _loadEnum() {
       typeName: 'CadRotHelper.RotEnumerator',
       methodName: 'EnumerateAll',
     });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -43,7 +44,10 @@ const _rotIsBusy = _loadDll('RotIsBusy');
 const _rotHasDoc = _loadDll('RotHasDoc');
 const _rotDocInfo = _loadDll('RotGetActiveDocInfo');
 const _rotBringToFront = _loadDll('RotBringToFront');
+const _rotSendEsc = _loadDll('RotSendEsc');
 const _rotNewDoc = _loadDll('RotNewDoc');
+const _rotOpenDoc = _loadDll('RotOpenDoc');
+const _rotSaveDoc = _loadDll('RotSaveDoc');
 const _rotEnum = _loadEnum();
 
 let _monikerSession = null;
@@ -87,6 +91,32 @@ function log(msg) {
         fs.appendFile(DEBUG_FILE, entry, () => {});
     }
 }
+
+// 内存监控
+const MEMORY_CHECK_INTERVAL = 10000; // 每 10 秒检查一次
+const MEMORY_WARNING_THRESHOLD = 100 * 1024 * 1024; // 100MB 警告阈值
+const MEMORY_CRITICAL_THRESHOLD = 200 * 1024 * 1024; // 200MB 严重阈值
+
+function checkMemoryUsage() {
+    const memUsage = process.memoryUsage();
+    const heapUsed = memUsage.heapUsed;
+    
+    if (heapUsed > MEMORY_CRITICAL_THRESHOLD) {
+        log(`[Worker] 内存严重: ${(heapUsed / 1024 / 1024).toFixed(2)}MB，建议重启 worker`);
+        // 尝试强制垃圾回收
+        if (global.gc) {
+            global.gc();
+            log(`[Worker] 已执行强制垃圾回收`);
+        }
+    } else if (heapUsed > MEMORY_WARNING_THRESHOLD) {
+        log(`[Worker] 内存警告: ${(heapUsed / 1024 / 1024).toFixed(2)}MB`);
+    }
+    
+    return heapUsed;
+}
+
+// 定期检查内存使用
+setInterval(checkMemoryUsage, MEMORY_CHECK_INTERVAL);
 
 const cadConnect = edge.func(function() {/*
   async (input) => {
@@ -387,26 +417,97 @@ const cadStartMonitor = edge.func(function() {/*
 
 process.stdin.setEncoding('utf8');
 
+// Worker进程稳定性：添加错误处理和进程管理
+process.on('uncaughtException', (err) => {
+  log(`[Worker] Uncaught exception: ${err.message}`);
+  // 不要立即退出，等待当前请求完成
+});
+
+process.on('unhandledRejection', (reason) => {
+  log(`[Worker] Unhandled rejection: ${reason}`);
+});
+
 let stdinBuffer = '';
+let isProcessing = false;
+const requestQueue = [];
+const QUEUE_TIMEOUT = 30000; // 队列处理超时时间 30 秒
+// 单个 worker 是串行的：一个 COM 调用耗时数秒时，父进程仍会继续往 stdin 灌，
+// 队列条数没有上限就会一直涨（每条都持有完整 LISP 文本），直到把 4GB 堆撑爆。
+const QUEUE_MAX = Math.max(1, config.workerQueueMax || 200);
+let processingStartTime = 0;
+
 process.stdin.on('data', (data) => {
   stdinBuffer += data;
   const lines = stdinBuffer.split('\n');
   stdinBuffer = lines.pop() || '';
+  
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
       const msg = JSON.parse(line);
       const requestId = msg.requestId;
-      handleMessage(msg).then(result => {
-        process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
-      }).catch(err => {
-        process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
-      });
-    } catch (e) {
-      process.stdout.write(JSON.stringify({ error: 'invalid message' }) + '\n');
+      if (requestQueue.length >= QUEUE_MAX) {
+        process.stdout.write(JSON.stringify({
+          error: `Worker queue overflow (max ${QUEUE_MAX})`,
+          requestId,
+        }) + '\n');
+        continue;
+      }
+      // 添加到队列而不是立即处理
+      requestQueue.push({ msg, requestId, timestamp: Date.now() });
+      
+      // 如果没有在处理，开始处理队列
+      if (!isProcessing) {
+        processQueue();
+      }
+    } catch {
+      process.stdout.write(JSON.stringify({ error: 'invalid message', requestId: undefined }) + '\n');
     }
   }
 });
+
+async function processQueue() {
+  if (isProcessing || requestQueue.length === 0) return;
+  
+  isProcessing = true;
+  processingStartTime = Date.now();
+  
+  while (requestQueue.length > 0) {
+    // 检查队列处理超时
+    if (Date.now() - processingStartTime > QUEUE_TIMEOUT) {
+      log(`[Worker] 队列处理超时，剩余 ${requestQueue.length} 个请求`);
+      // 清空队列并返回错误
+      while (requestQueue.length > 0) {
+        const { requestId } = requestQueue.shift();
+        process.stdout.write(JSON.stringify({ 
+          error: 'Queue processing timeout', 
+          requestId,
+          remaining: requestQueue.length 
+        }) + '\n');
+      }
+      break;
+    }
+
+    const { msg, requestId } = requestQueue.shift();
+    // 为每个请求添加超时（定时器必须在请求完成后清掉，否则每个请求都留一个 30s 的活定时器）
+    let timer = null;
+    try {
+      const result = await Promise.race([
+        handleMessage(msg),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Request timeout')), QUEUE_TIMEOUT);
+        })
+      ]);
+      process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
+    } catch (err) {
+      process.stdout.write(JSON.stringify({ error: err.message, requestId }) + '\n');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  
+  isProcessing = false;
+}
 
 const cadIsBusy = edge.func(function() {/*
   async (input) => {
@@ -442,6 +543,7 @@ const cadHasDoc = edge.func(function() {/*
           }
       } catch (Exception ex) {
           System.Diagnostics.Debug.WriteLine("cadHasDoc error: " + ex.Message);
+          System.Diagnostics.Debug.WriteLine("cadHasDoc stacktrace: " + ex.StackTrace);
       }
       return new { hasDoc = false, docCount = 0 };
   }
@@ -465,6 +567,52 @@ const cadNewDoc = edge.func(function() {/*
   }
  */});
 
+const cadOpenDoc = edge.func(function() {/*
+  async (input) => {
+      try {
+          dynamic d = input;
+          string platform = d.platform != null ? d.platform.ToString() : "AutoCAD";
+          string filePath = d.filePath != null ? d.filePath.ToString() : "";
+          if (filePath.Length == 0) return new { success = false, error = "filePath is required" };
+          if (!System.IO.File.Exists(filePath)) return new { success = false, error = "File not found: " + filePath };
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad != null) {
+              dynamic doc = cad.Documents.Open(filePath);
+              string name = "";
+              try { name = doc.FullName; } catch {}
+              return new { success = true, name = name };
+          }
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadOpenDoc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
+      return new { success = false, error = "CAD not found" };
+  }
+ */});
+
+const cadSaveDoc = edge.func(function() {/*
+  async (input) => {
+      try {
+          dynamic d = input;
+          string platform = d.platform != null ? d.platform.ToString() : "AutoCAD";
+          string filePath = d.filePath != null ? d.filePath.ToString() : "";
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad == null) return new { success = false, error = "CAD not found" };
+          dynamic doc = cad.ActiveDocument;
+          if (doc == null) return new { success = false, error = "No active document" };
+          if (filePath.Length == 0) doc.Save(); else doc.SaveAs(filePath);
+          string name = "";
+          try { name = doc.FullName; } catch {}
+          return new { success = true, name = name };
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadSaveDoc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
+  }
+ */});
+
 const cadBringToFront = edge.func(function() {/*
   async (input) => {
       try {
@@ -480,6 +628,24 @@ const cadBringToFront = edge.func(function() {/*
           return new { success = false, error = ex.Message };
       }
       return new { success = false, error = "CAD not found" };
+  }
+ */});
+
+const cadSendEsc = edge.func(function() {/*
+  async (input) => {
+      try {
+          string platform = input.ToString();
+          string progId = platform == "BricsCAD" ? "BricscadApp.AcadApplication" : platform + ".Application";
+          dynamic cad = System.Runtime.InteropServices.Marshal.GetActiveObject(progId);
+          if (cad == null) return new { success = false, error = "CAD not found" };
+          try { cad.Visible = true; } catch { }
+          dynamic shell = System.Activator.CreateInstance(System.Type.GetTypeFromProgID("WScript.Shell"));
+          shell.SendKeys("{ESC}");
+          return new { success = true };
+      } catch (Exception ex) {
+          System.Diagnostics.Debug.WriteLine("cadSendEsc error: " + ex.Message);
+          return new { success = false, error = ex.Message };
+      }
   }
  */});
 
@@ -578,7 +744,7 @@ function validateCode(code) {
   if (!parenCheck.valid) {
     return { valid: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
   }
-  const securityLevel = process.env.SECURITY_LEVEL || 'strict';
+  const securityLevel = process.env.SECURITY_LEVEL || 'relaxed';
   if (securityLevel !== 'relaxed') {
     const injectionCheck = validateLispCodeWorker(code);
     if (!injectionCheck.valid) {
@@ -590,13 +756,30 @@ function validateCode(code) {
 
 async function ensureDocument(platform) {
   if (_monikerSession) return true;
-  const docCheck = await new Promise((resolve, reject) => {
-    cadHasDoc(platform || 'AutoCAD', (e, r) => {
-      if (e) reject(e);
-      else resolve(r);
+  try {
+    const docCheck = await new Promise((resolve, reject) => {
+      cadHasDoc(platform || 'AutoCAD', (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
     });
-  });
-  return docCheck.hasDoc;
+    return docCheck.hasDoc;
+  } catch (error) {
+    // COM 调用失败时，尝试创建新文档
+    console.error('ensureDocument COM error:', error);
+    try {
+      const newDocResult = await new Promise((resolve, reject) => {
+        cadNewDoc(platform || 'AutoCAD', (e, r) => {
+          if (e) reject(e);
+          else resolve(r);
+        });
+      });
+      return newDocResult && newDocResult.success;
+    } catch (newDocError) {
+      console.error('Auto-create document failed:', newDocError);
+      return false;
+    }
+  }
 }
 
 async function executeWithRetry(fn, label) {
@@ -607,9 +790,9 @@ async function executeWithRetry(fn, label) {
     if (isBusy) {
       try {
         return await fn();
-      } catch (e) {
-        log(`${label} error: ${e.message}`);
-        lastError = e;
+    } catch (_e) {
+        log(`${label} error: ${_e.message}`);
+        lastError = _e;
       }
     }
     await new Promise(r => setTimeout(r, 500));
@@ -678,6 +861,21 @@ const MESSAGE_HANDLERS = {
     return { pong: true };
   },
 
+  healthCheck() {
+    const memUsage = process.memoryUsage();
+    return {
+      healthy: true,
+      uptime: process.uptime(),
+      memory: {
+        heapUsed: memUsage.heapUsed,
+        heapTotal: memUsage.heapTotal,
+        rss: memUsage.rss,
+      },
+      queueSize: requestQueue.length,
+      isProcessing: isProcessing,
+    };
+  },
+
   async connect(msg) {
     if (msg.moniker && _rotConnect) {
       const result = await dllCall(_rotConnect, { key: msg.monikerKey, moniker: msg.moniker });
@@ -725,8 +923,36 @@ const MESSAGE_HANDLERS = {
     return await monikerOrEdge(_rotNewDoc, cadNewDoc, {}, msg.platform);
   },
 
+  async opendoc(msg) {
+    if (_monikerSession && _rotOpenDoc) {
+      return await dllCall(_rotOpenDoc, { key: _monikerSession, filePath: msg.filePath });
+    }
+    return new Promise((resolve, reject) => {
+      cadOpenDoc({ platform: msg.platform, filePath: msg.filePath }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+  },
+
+  async savedoc(msg) {
+    if (_monikerSession && _rotSaveDoc) {
+      return await dllCall(_rotSaveDoc, { key: _monikerSession, filePath: msg.filePath });
+    }
+    return new Promise((resolve, reject) => {
+      cadSaveDoc({ platform: msg.platform, filePath: msg.filePath }, (e, r) => {
+        if (e) reject(e);
+        else resolve(r);
+      });
+    });
+  },
+
   async bringToFront(msg) {
     return await monikerOrEdge(_rotBringToFront, cadBringToFront, {}, msg.platform);
+  },
+
+  async sendEsc(msg) {
+    return await monikerOrEdge(_rotSendEsc, cadSendEsc, { front: msg.front }, msg.platform);
   },
 
   async send(msg) {

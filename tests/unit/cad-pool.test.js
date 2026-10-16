@@ -104,6 +104,29 @@ describe('CadConnectionPool', () => {
     // Now try to connect a new key (would exceed limit)
     await expect(pool.connect('overflow', null, { makeActive: false })).rejects.toThrow('连接池已满');
   });
+
+  it('连接失败时复用同一连接对象并回收 worker，不泄漏连接', async () => {
+    const conn = createCadConnection();
+    vi.spyOn(conn, 'connect').mockResolvedValue(false);
+    const release = vi.spyOn(conn, 'releaseResources').mockImplementation(() => {});
+
+    pool['_instances'].set('retry', {
+      key: 'retry',
+      connection: conn,
+      connected: false,
+      lastPing: Date.now(),
+      createdAt: Date.now(),
+      label: 'retry',
+      autoReconnect: true,
+    });
+
+    await pool.connect('retry', 'AutoCAD', { makeActive: false });
+    await pool.connect('retry', 'AutoCAD', { makeActive: false });
+
+    // 两次重试仍是同一个连接对象（否则每次重试都留下一个带 worker + 心跳的连接）
+    expect(pool['_instances'].get('retry').connection).toBe(conn);
+    expect(release).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('cad delegation wrapper', () => {

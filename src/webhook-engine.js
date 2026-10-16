@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { log, error as logError } from './logger.js';
+import {  error as logError } from './logger.js';
 import { ensureDir } from './handler-utils.js';
 
 const WEBHOOKS_FILE = path.join(os.homedir(), '.atlisp', 'webhooks.json');
@@ -40,7 +40,7 @@ export function registerWebhook({ url, events, name, secret }) {
     }
   } catch (e) {
     if (e.message.includes('不支持的协议')) throw e;
-    throw new Error(`无效的 URL: ${e.message}`);
+    throw new Error(`无效的 URL: ${e.message}`, { cause: e });
   }
   const wh = {
     id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,

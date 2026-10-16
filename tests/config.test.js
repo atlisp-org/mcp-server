@@ -1,8 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 
+// default 也要 mock：src/config.js 是 `import fs from 'fs'`，
+// 只替换命名导出时 config.js 拿到的仍是真实 fs，
+// 于是 existsSync 命中用户真实的 ~/.atlisp/atlisp.config.json，
+// 导致「reloadConfig returns false when no file」在有配置文件的机器上失败。
 vi.mock('fs', async () => {
   const actual = await vi.importActual('fs');
-  return { ...actual, existsSync: vi.fn(() => false), watch: vi.fn() };
+  const mocked = { ...actual, existsSync: vi.fn(() => false), watch: vi.fn() };
+  return { ...mocked, default: mocked };
 });
 
 const { getConfig, getAllConfig, reloadConfig, onConfigChange } = await import('../src/config.js');
