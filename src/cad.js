@@ -709,6 +709,8 @@ class CadConnection {
   }
 
   _rotateWorker(oldWorker) {
+    // 清除轮换标记：旧 worker 上可能仍有在途请求，避免它们再次触发轮换
+    oldWorker._needsRotation = false;
     // 优雅地关闭旧 worker
     try {
       oldWorker.connected = false;
@@ -881,14 +883,18 @@ class CadConnection {
     const requestId = randomUUID();
     const self = this;
 
-    // 增加请求计数
-    w._requestCount = (w._requestCount || 0) + 1;
+    // 增加请求计数：仅统计外部（经命令队列）请求，排除心跳/ping、getActiveDocInfo
+    // 等内部请求（内部请求以 noCircuitBreaker=true 调用）。否则心跳会持续抬高计数，
+    // 使轮换日志里的「已处理 N 个请求」远大于 MAX_REQUESTS_PER_WORKER。
+    if (!noCircuitBreaker) {
+      w._requestCount = (w._requestCount || 0) + 1;
 
-    // 检查是否需要轮换 worker
-    if (w._requestCount >= MAX_REQUESTS_PER_WORKER && !noCircuitBreaker) {
-      logError(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
-      // 标记需要轮换，但在当前请求完成后执行
-      w._needsRotation = true;
+      // 检查是否需要轮换 worker（只在跨越阈值时标记一次，避免重复刷日志）
+      if (w._requestCount >= MAX_REQUESTS_PER_WORKER && !w._needsRotation) {
+        logError(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
+        // 标记需要轮换，但在当前请求完成后执行
+        w._needsRotation = true;
+      }
     }
 
     const effectiveTimeout = timeoutMs ?? (msg.type === 'ping' ? MESSAGE_TIMEOUT : CAD_COMMAND_TIMEOUT);
