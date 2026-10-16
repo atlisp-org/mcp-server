@@ -52,7 +52,16 @@ export const tools = [
 {
         name: 'list_groups',
         description: '列出当前 DWG 中所有已命名的组名称。用户问"有哪些编组"时调用。返回组名数组如 ["墙体组","标注组","门窗组"]。配合 create_group 新建组，或 get_group_entities 查看组内实体',
-        inputSchema: { type: 'object', properties: {} }
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                count: { type: 'number', description: '组数量' },
+                groups: { type: 'array', items: { type: 'string' }, description: '组名数组' },
+                raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' }
+            },
+            required: ['count', 'groups']
+        }
     },
 {
         name: 'get_group_entities',
@@ -63,6 +72,16 @@ export const tools = [
                 groupName: { type: 'string', description: '组名称，如 "墙体组"。用 list_groups 查看所有可用组' }
             },
             required: ['groupName']
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                groupName: { type: 'string', description: '查询的组名' },
+                count: { type: 'number', description: '组内实体数量' },
+                handles: { type: 'array', items: { type: 'string' }, description: '组内实体句柄数组' },
+                raw: { type: 'string', description: '原始文本（仅当无实体或无法解析时出现）' }
+            },
+            required: ['groupName', 'count', 'handles']
         }
     },
 {
@@ -75,6 +94,16 @@ export const tools = [
                 p2: { type: 'string', description: '终点坐标，如 "100,50,0"（支持2D或3D）' }
             },
             required: ['p1', 'p2']
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                distance: { type: 'number', description: '两点间距离（图形单位）' },
+                angleDeg: { type: 'number', description: '连线方向角（度）' },
+                dx: { type: 'number', description: 'X 方向差值' },
+                dy: { type: 'number', description: 'Y 方向差值' },
+                raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' }
+            }
         }
     },
 {
@@ -84,6 +113,14 @@ export const tools = [
             type: 'object',
             properties: {
                 points: { type: 'string', description: '多边形顶点坐标序列（空格分隔），如 "0,0 100,0 100,100 0,100"。至少3个点，自动闭合' }
+            }
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                area: { type: 'number', description: '面积（平方图形单位）' },
+                perimeter: { type: 'number', description: '周长（图形单位）' },
+                raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' }
             }
         }
     },
@@ -96,10 +133,25 @@ export const tools = [
                 handle: { type: 'string', description: '实体句柄，如 "ABC"' }
             },
             required: ['handle']
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: '实体 DXF 类型' },
+                handle: { type: 'string', description: '实体句柄' },
+                layer: { type: 'string', description: '所在图层名' },
+                color: { type: 'number', description: '颜色号（256=ByLayer）' },
+                linetype: { type: 'string', description: '线型名' },
+                elevation: { type: 'number', description: '标高（Z 值）' },
+                layerFrozen: { type: 'boolean', description: '所在图层是否被冻结' },
+                layerLocked: { type: 'boolean', description: '所在图层是否被锁定' },
+                raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' }
+            },
+            required: ['type', 'handle', 'layer']
         }
     },
 { name: 'create_page_setup', description: '创建页面设置（打印配置模板）。用户说"设置页面/打印设置"时调用。创建后可用 set_page_setup 应用到布局，或用 list_page_setups 管理。示例: name="我的模板", printer="DWG To PDF.pc3", paperSize="A3", orientation="Landscape", scale="1:100"', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '页面设置名称，如 "我的模板"、"A3打印设置"' }, printer: { type: 'string', description: '打印机名称，默认"DWG To PDF.pc3"。可用 plot_device_management 查看' }, paperSize: { type: 'string', description: '纸张大小，默认"A4"。可选: A0, A1, A2, A3, A4, A5, Letter, Legal, Tabloid' }, orientation: { type: 'string', description: '方向: Portrait(纵向)/Landscape(横向)。默认 Landscape' }, scale: { type: 'string', description: '打印比例，默认"1:1"。如 "1:50"、"1:100"、"2:1"' } }, required: ['name'] } },
-{ name: 'list_page_setups', description: '列出所有已保存的页面设置（打印配置模板）。用户说"有哪些打印模板"时调用。返回名称数组如 ["我的模板","A3打印","PDF输出"]。配合 set_page_setup 应用到布局或 create_page_setup 新建', inputSchema: { type: 'object', properties: {} } },
+{ name: 'list_page_setups', description: '列出所有已保存的页面设置（打印配置模板）。用户说"有哪些打印模板"时调用。返回名称数组如 ["我的模板","A3打印","PDF输出"]。配合 set_page_setup 应用到布局或 create_page_setup 新建', inputSchema: { type: 'object', properties: {} }, outputSchema: { type: 'object', properties: { count: { type: 'number', description: '页面设置数量' }, pageSetups: { type: 'array', items: { type: 'string' }, description: '页面设置名称数组' }, raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' } }, required: ['count', 'pageSetups'] } },
 { name: 'set_page_setup', description: '将页面设置应用到指定布局。用户说"用XX设置打印此布局"时调用。示例: layout="A1-平面图", pageSetupName="我的模板"。应用后可用 plot_to_pdf 按此设置打印。创建页面设置请先调用 create_page_setup', inputSchema: { type: 'object', properties: { layout: { type: 'string', description: '要应用设置的布局名称，如 "A1-平面图"' }, pageSetupName: { type: 'string', description: '页面设置名称（先用 create_page_setup 创建或用 list_page_setups 查看）' } }, required: ['layout', 'pageSetupName'] } },
 { name: 'import_page_setup', description: '从其他 DWG 文件中导入页面设置到当前图形。用户说"导入打印设置"时调用。示例: dwgPath="C:/模板/标准模板.dwg", pageSetupName="A3模板"（可选，不传则导入全部）。可用于统一团队打印标准', inputSchema: { type: 'object', properties: { dwgPath: { type: 'string', description: '源 DWG 文件路径，如 "C:/模板/标准模板.dwg"' }, pageSetupName: { type: 'string', description: '要导入的页面设置名称（可选，不传则导入全部）。如 "A3模板"' } }, required: ['dwgPath'] } },
 ];

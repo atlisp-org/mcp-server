@@ -1,5 +1,6 @@
 import { cad } from '../cad.js';
 import { escapeLispString } from '../handler-utils.js';
+import { stringListStructured } from './structured-output.js';
 
 function toSafePoint(pt) {
   const parts = (Array.isArray(pt) ? pt : String(pt).split(/[,\s]+/)).map(Number);
@@ -77,9 +78,9 @@ export async function listUcs() {
     try {
         const result = await cad.sendCommandWithResult(code);
         if (!result || result === 'nil') {
-            return { content: [{ type: 'text', text: '当前没有 UCS' }] };
+            return { content: [{ type: 'text', text: '当前没有 UCS' }], structuredContent: stringListStructured(null, 'ucs') };
         }
-        return { content: [{ type: 'text', text: result }] };
+        return { content: [{ type: 'text', text: result }], structuredContent: stringListStructured(result, 'ucs') };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -195,9 +196,9 @@ export async function listLayouts() {
     try {
         const result = await cad.sendCommandWithResult(code);
         if (!result || result === 'nil') {
-            return { content: [{ type: 'text', text: '当前没有布局' }] };
+            return { content: [{ type: 'text', text: '当前没有布局' }], structuredContent: stringListStructured(null, 'layouts') };
         }
-        return { content: [{ type: 'text', text: result }] };
+        return { content: [{ type: 'text', text: result }], structuredContent: stringListStructured(result, 'layouts') };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }

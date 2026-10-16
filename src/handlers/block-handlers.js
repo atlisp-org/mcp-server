@@ -1,5 +1,6 @@
 import { cad } from '../cad.js';
 import { mcpSuccess, mcpError, escapeLispString, getNotifyProgress } from '../handler-utils.js';
+import { stringListStructured } from './structured-output.js';
 
 export async function createBlock(name, entities) {
     if (!cad.connected) { await cad.connect(); }
@@ -84,9 +85,9 @@ export async function getBlocks() {
     try {
         const result = await cad.sendCommandWithResult(code);
         if (!result || result === 'nil') {
-            return { content: [{ type: 'text', text: '当前图形中没有块定义' }] };
+            return { content: [{ type: 'text', text: '当前图形中没有块定义' }], structuredContent: stringListStructured(null, 'blocks') };
         }
-        return { content: [{ type: 'text', text: result }] };
+        return { content: [{ type: 'text', text: result }], structuredContent: stringListStructured(result, 'blocks') };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }

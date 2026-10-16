@@ -28,7 +28,16 @@ export const tools = [
 {
         name: 'get_blocks',
         description: '列出当前 DWG 中所有块定义的名称列表(string[])。当用户问"有哪些块/有什么图块"时调用。只读。用于在 insert_block 前查找可用块名，或在 purge_blocks 前确认要清理的块。',
-        inputSchema: { type: 'object', properties: {} }
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                count: { type: 'number', description: '块定义数量' },
+                blocks: { type: 'array', items: { type: 'string' }, description: '块定义名称数组' },
+                raw: { type: 'string', description: '原始文本（仅当无法解析时出现）' }
+            },
+            required: ['count', 'blocks']
+        }
     },
     {
         name: 'explode_block',

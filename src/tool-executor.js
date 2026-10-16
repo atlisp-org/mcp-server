@@ -19,6 +19,28 @@ function resolveConn(instance) {
   return cad;
 }
 
+/**
+ * 规范化工具调用结果中的结构化输出（MCP 2025-06-18 structuredContent）：
+ * - handler 返回合法对象时原样透传到 CallToolResult；
+ * - 结构化对象非法（非对象/数组）时丢弃，避免破坏协议 schema；
+ * - 只有 structuredContent 而无 content 时，回填一个 JSON 文本块（向后兼容）。
+ * @param {any} result
+ * @returns {any}
+ */
+function normalizeStructuredResult(result) {
+  if (!result || typeof result !== 'object' || !('structuredContent' in result)) return result;
+  const sc = result.structuredContent;
+  if (sc === null || typeof sc !== 'object' || Array.isArray(sc)) {
+    const rest = { ...result };
+    delete rest.structuredContent;
+    return rest;
+  }
+  if (!Array.isArray(result.content) || result.content.length === 0) {
+    return { ...result, content: [{ type: 'text', text: JSON.stringify(sc, null, 2) }] };
+  }
+  return result;
+}
+
 async function writeAuditSuccess(name, args, options, target) {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
@@ -128,12 +150,13 @@ async function runToolCall(name, args, options) {
 }
 
 /**
- * 工具调用入口：包一层 OTel span（未启用 tracing 时零开销透传）
+ * 工具调用入口：包一层 OTel span（未启用 tracing 时零开销透传），
+ * 并统一规范化 structuredContent（透传/回填 content）。
  */
 export function handleToolCall(name, args, options = {}) {
   return withSpan(`tool.${name}`, {
     'tool.name': name,
     'session.id': options.sessionId || '',
     'tool.readOnly': READ_ONLY_TOOLS.has(name),
-  }, () => runToolCall(name, args, options));
+  }, async () => normalizeStructuredResult(await runToolCall(name, args, options)));
 }

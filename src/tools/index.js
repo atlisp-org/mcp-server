@@ -179,6 +179,26 @@ function buildUsageFooter(tool, flags) {
   return `\n【类别】${flags.category}｜【操作】${access}｜【幂等】${flags.idempotent ? '是' : '否'}${scope}`;
 }
 
+/**
+ * 由工具描述生成人类友好的 title（MCP 2025-06-18 起工具可带 title 字段）。
+ * 取描述首段（第一个句号前），过长截断，解析失败回退为工具名。
+ * @param {{name: string, description?: string}} tool
+ * @returns {string}
+ */
+function deriveTitle(tool) {
+  const desc = String(tool.description || '').split(/\r?\n/)[0].trim();
+  if (!desc) return tool.name;
+  let title = desc.split('。')[0].trim();
+  if (title === desc) {
+    const dotIdx = desc.indexOf('. ');
+    if (dotIdx > 0) title = desc.slice(0, dotIdx).trim();
+  }
+  title = title.replace(/[,，;；:：、]+$/u, '').trim();
+  if (!title) return tool.name;
+  if (title.length > 64) title = `${title.slice(0, 63).trimEnd()}…`;
+  return title;
+}
+
 function addAnnotations(tool) {
   const isDeprecated = DEPRECATED_TOOLS.has(tool.name);
   const isPoolTool = tool.name.startsWith('cad_pool_') || tool.name === 'session_pin_instance' || tool.name === 'session_unpin_instance';
@@ -202,6 +222,7 @@ function addAnnotations(tool) {
     ...tool,
     description: `${tool.description || ''}${buildUsageFooter(tool, flags)}`,
     inputSchema: schema,
+    title: tool.title || deriveTitle(tool),
     ...(isDeprecated ? { deprecated: true, title: `${tool.name} (deprecated)` } : {}),
     annotations: {
       readOnlyHint: flags.readOnly,

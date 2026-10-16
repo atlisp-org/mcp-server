@@ -53,3 +53,4 @@ __pycache__/
 nul
 nohup.out
 *.log
+/graphify-out/

@@ -8,6 +8,19 @@ export const tools = [
                 handle: { type: 'string', description: '目标实体句柄（16进制字符串，如 "1A2B"）。先通过 select_entities 或 find_* 工具获取' }
             },
             required: ['handle']
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: '实体 DXF 类型，如 LINE/CIRCLE/TEXT/INSERT' },
+                handle: { type: 'string', description: '实体句柄（16进制）' },
+                layer: { type: 'string', description: '所在图层名' },
+                color: { type: 'number', description: '颜色号（256=ByLayer，256 以下为索引色）' },
+                linetype: { type: 'string', description: '线型名（ByLayer=随层）' },
+                elevation: { type: 'number', description: '标高（Z 值，图形单位）' },
+                raw: { type: 'string', description: '原始文本（仅当返回值无法解析为键值对时出现）' }
+            },
+            required: ['type', 'handle', 'layer']
         }
     },
 {
@@ -42,6 +55,15 @@ export const tools = [
             properties: {
                 filter: { type: 'object', description: '过滤条件对象: { type: "LINE", layer: "0" }。type 可选 LINE/CIRCLE/TEXT/ARC/MTEXT/LWPOLYLINE/SPLINE/ELLIPSE/INSERT(块参照)/HATCH/DIMENSION/RAY/XLINE 等。未指定 type 返回所有类型。未指定 layer 返回所有图层。留空 {} 选择全部实体。' }
             }
+        },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                count: { type: 'number', description: '匹配的实体数量' },
+                handles: { type: 'array', items: { type: 'string' }, description: '匹配实体的句柄数组' },
+                raw: { type: 'string', description: '原始文本（仅当无匹配或无法解析时出现）' }
+            },
+            required: ['count', 'handles']
         }
     },
 { name: 'bring_to_front_entity', description: '将指定实体移到显示顺序最前（覆盖在其他所有实体之上）。当用户说"把这个置前/移到最前"时调用。影响显示顺序，不改变图层。destructive（视觉上）。对比 send_to_back_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '要置前的实体句柄' } }, required: ['handle'] } },

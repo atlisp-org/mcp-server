@@ -1,5 +1,6 @@
 import { cad } from '../cad.js';
 import { escapeLispString } from '../handler-utils.js';
+import { entityDetailStructured, stringListStructured, measureStructured } from './structured-output.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -143,7 +144,8 @@ export async function listGroups() {
     )`;
     try {
         const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result || '无组' }] };
+        const text = result || '无组';
+        return { content: [{ type: 'text', text }], structuredContent: stringListStructured(text, 'groups') };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -182,7 +184,11 @@ export async function getGroupEntities(groupName) {
     )`;
     try {
         const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result || '无实体' }] };
+        const text = result || '无实体';
+        return {
+            content: [{ type: 'text', text }],
+            structuredContent: stringListStructured(text, 'handles', { groupName: String(groupName || '') }),
+        };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -206,7 +212,13 @@ export async function measureDistance(p1, p2) {
     )`;
     try {
         const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result || '测量失败' }] };
+        const text = result || '测量失败';
+        return {
+            content: [{ type: 'text', text }],
+            structuredContent: measureStructured(text, {
+                distance: 'distance', angle: 'angleDeg', dx: 'dx', dy: 'dy',
+            }),
+        };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -247,7 +259,11 @@ export async function measureArea(points) {
     )`;
     try {
         const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result || '测量失败' }] };
+        const text = result || '测量失败';
+        return {
+            content: [{ type: 'text', text }],
+            structuredContent: measureStructured(text, { area: 'area', perimeter: 'perimeter' }),
+        };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -620,7 +636,7 @@ export async function getEntityInfo(handle) {
         if (!result || result === 'nil') {
             return { content: [{ type: 'text', text: `未找到实体: ${handle}` }], isError: true };
         }
-        return { content: [{ type: 'text', text: result }] };
+        return { content: [{ type: 'text', text: result }], structuredContent: entityDetailStructured(result) };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -639,7 +655,8 @@ export async function listPageSetups() {
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
     try {
         const result = await cad.sendCommandWithResult('(progn (setq setups nil) (vlax-for ps (vla-get-plotconfigurations (vla-get-activedocument (vlax-get-acad-object))) (setq setups (cons (vla-get-name ps) setups))) (reverse setups))');
-        return { content: [{ type: 'text', text: result || '[]' }] };
+        const text = result || '[]';
+        return { content: [{ type: 'text', text }], structuredContent: stringListStructured(text, 'pageSetups') };
     } catch (e) { return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true }; }
 }
 export async function setPageSetup(layout, pageSetupName) {

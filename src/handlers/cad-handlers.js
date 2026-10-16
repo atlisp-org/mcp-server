@@ -3,6 +3,7 @@ import { cad } from '../cad.js';
 import { log } from '../logger.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 import { analyzeLispCode } from '../lint-analyzer.js';
+import { jsonStructured } from './structured-output.js';
 
 export async function openCad(platform = null) {
     log(`open_cad called${platform ? ` (target: ${platform})` : ''}`);
@@ -175,7 +176,8 @@ export async function getSystemStatus() {
     } catch (e) { log(`cad-handlers: getSystemStatus package-list error: ${e.message}`); }
   }
 
-  return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+  const text = JSON.stringify(status, null, 2);
+  return { content: [{ type: 'text', text }], structuredContent: jsonStructured(text) };
 }
 
 export const initAtlisp = withCadConnection(async () => {

@@ -27,7 +27,16 @@ export const tools = [
 {
         name: 'list_ucs',
         description: '列出当前图形中所有已定义的 UCS 名称。用户问"有哪些坐标系"时调用。返回UCS名称数组如 ["世界","立面UCS","剖切UCS"]。配合 set_ucs 切换坐标系或 delete_ucs 删除不需要的',
-        inputSchema: { type: 'object', properties: {} }
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                count: { type: 'number', description: 'UCS 数量' },
+                ucs: { type: 'array', items: { type: 'string' }, description: 'UCS 名称数组' },
+                raw: { type: 'string', description: '原始文本（仅当无 UCS 或无法解析时出现）' }
+            },
+            required: ['count', 'ucs']
+        }
     },
 {
         name: 'delete_ucs',
@@ -70,7 +79,16 @@ export const tools = [
 {
         name: 'list_layouts',
         description: '列出当前 DWG 中所有布局名称（含 Model）。用户问"有哪些布局"时调用。返回布局名数组如 ["Model","A1-平面图","剖面图"]。配合 set_layout 切换或 delete_layout 删除不需要的布局',
-        inputSchema: { type: 'object', properties: {} }
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                count: { type: 'number', description: '布局数量' },
+                layouts: { type: 'array', items: { type: 'string' }, description: '布局名称数组' },
+                raw: { type: 'string', description: '原始文本（仅当无布局或无法解析时出现）' }
+            },
+            required: ['count', 'layouts']
+        }
     },
 {
         name: 'delete_layout',

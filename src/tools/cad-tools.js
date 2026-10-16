@@ -87,7 +87,18 @@ export const tools = [
 {
         name: 'get_system_status',
         description: '获取完整诊断信息：MCP版本、Worker状态、CAD连接状态(Lisp可执行性)、已安装包。用户说"工具不工作/CAD没反应/查一下状态"时优先调用。先于 get_cad_info 用于深度排查',
-        inputSchema: { type: 'object', properties: {} }
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: {
+            type: 'object',
+            properties: {
+                mcp: { type: 'object', description: 'MCP Server 版本信息' },
+                worker: { type: 'object', description: 'CAD Worker 存活状态' },
+                cad: { type: 'object', description: 'CAD 连接状态（platform/version/busy/hasDoc）' },
+                lisp: { type: 'object', description: 'Lisp 可执行性探测结果' },
+                packages: { description: 'CAD 内已安装包列表（未探测到时为 null）' },
+                raw: { type: 'string', description: '原始文本（仅当 JSON 解析失败时出现）' }
+            }
+        }
     },
 { name: 'get_system_variable', description: '读取 CAD 系统变量值。用户问"当前图层/捕捉状态/单位设置/当前颜色"时调用。传 * 列出所有变量及当前值。如查当前图层传 name="clayer"', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '系统变量名，如 clayer(当前图层)、osmode(捕捉位码)、lunits(单位格式)、dimscale(标注比例)。传 * 列出所有系统变量' } }, required: ['name'] } },
 { name: 'set_system_variable', description: '设置 CAD 系统变量值。用户说"改图层/设捕捉/改单位/改颜色"时调用。需知道变量名和合法值，先用 get_system_variable 查询当前值。如切到0图层传 name="clayer" value="0"', inputSchema: { type: 'object', properties: { name: { type: 'string', description: '系统变量名，如 clayer(当前图层)、osmode(捕捉位码)、lunits(单位制式)、dimscale(标注比例)' }, value: { type: 'string', description: '变量值（数值或字符串，不需引号）。如 "0"(图层名)、"1"(开)、"0"(关)、"4133"(osmode位码)' } }, required: ['name', 'value'] } }

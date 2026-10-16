@@ -1,5 +1,6 @@
 import { cad } from '../cad.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
+import { entityBasicStructured, stringListStructured } from './structured-output.js';
 
 export const getEntity = withCadConnection(async (handle) => {
     const code = `(progn
@@ -23,7 +24,7 @@ export const getEntity = withCadConnection(async (handle) => {
     if (!result || result === 'nil') {
         return mcpError(`未找到实体: ${handle}`);
     }
-    return mcpSuccess(result);
+    return { ...mcpSuccess(result), structuredContent: entityBasicStructured(result) };
 });
 
 export const setEntityProperty = withCadConnection(async (handle, property, value) => {
@@ -105,9 +106,9 @@ export const selectEntities = withCadConnection(async (filter) => {
     )`;
     const result = await cad.sendCommandWithResult(code);
     if (!result || result === 'nil') {
-        return mcpSuccess('未找到符合条件的实体');
+        return { ...mcpSuccess('未找到符合条件的实体'), structuredContent: stringListStructured('未找到符合条件的实体', 'handles') };
     }
-    return mcpSuccess(result);
+    return { ...mcpSuccess(result), structuredContent: stringListStructured(result, 'handles') };
 });
 
 export const bringToFrontEntity = withCadConnection(async (handle) => {

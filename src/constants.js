@@ -9,12 +9,18 @@ export const FILE_EXTENSIONS = {
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { version } = require(path.join(__dirname, '..', 'package.json'));
 
-export const PROTOCOL_VERSION = '2024-11-05';
+/**
+ * 协议版本不再写死，直接取 SDK 内置的最新版本（当前 2025-11-25）。
+ * Server 端握手时会按 SDK 的 SUPPORTED_PROTOCOL_VERSIONS 与客户端协商，
+ * 旧客户端（如 2024-11-05）仍可正常回退连接；此常量用于 mcp-scanner 探测与展示。
+ */
+export const PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION;
 export const SERVER_NAME = 'atlisp-mcp-server';
 export const SERVER_VERSION = version;
 
