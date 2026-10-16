@@ -102,25 +102,58 @@ class PeerManager {
 
   /**
    * 处理新发现的 peer
+   *
+   * 发现用的 id 是 peer 进程的实例 ID（randomUUID，每次重启都变），
+   * 同一地址每重启一次就会以新 id 再注册一条，而旧条目可能尚未被清理
+   * （健康探测按地址进行，只要地址存活就一直成功），getPeers() 会为同一
+   * 地址堆积多条重复条目——get_cad_info 就会把同一 peer 列出 N 行。
+   * 这里按「地址」归一：同一地址任一时刻至多一条，重复广播就地更新既有条目。
    */
   _onPeerDiscovered(peer) {
     const url = `http://${peer.host}:${peer.port}`;
-    const managedPeer = {
-      id: peer.id,
-      host: peer.host,
-      port: peer.port,
-      version: peer.version,
-      hostname: peer.hostname,
-      url,
-      connected: false,
-      healthy: true,
-      lastSeen: Date.now(),
-      lastHealthCheck: 0,
-      apikey: peer.apikey,
-    };
+    const sameUrl = this.getPeers().filter(p => p.url === url);
 
-    this._peers.set(peer.id, managedPeer);
-    this._probePeer(managedPeer);
+    if (sameUrl.length === 0) {
+      const managedPeer = {
+        id: peer.id,
+        host: peer.host,
+        port: peer.port,
+        version: peer.version,
+        hostname: peer.hostname,
+        url,
+        connected: false,
+        healthy: true,
+        lastSeen: Date.now(),
+        lastHealthCheck: 0,
+        apikey: peer.apikey,
+      };
+      this._peers.set(peer.id, managedPeer);
+      this._probePeer(managedPeer);
+      this._notifyPeersChanged();
+      return;
+    }
+
+    // 同一地址已有多个条目（历史堆积）：只保留一条。优先级：
+    // 当前正在广播的 id → remote-* 配置 id（getRemotePeer() 依赖按该 id 查找）
+    // → 静态条目（id 稳定）→ 首条
+    const keep = sameUrl.find(p => p.id === peer.id) ||
+      sameUrl.find(p => p.id === `remote-${peer.host}-${peer.port}`) ||
+      sameUrl.find(p => p.static) || sameUrl[0];
+    for (const p of sameUrl) {
+      if (p !== keep) this._peers.delete(p.id);
+    }
+
+    if (!keep.static && keep.id !== peer.id) {
+      // 非静态条目：id 跟随当前正在广播的实例 ID，
+      // 使健康检查的「不在 discovery」清理能正确跟踪该地址的进程
+      this._peers.delete(keep.id);
+      keep.id = peer.id;
+      this._peers.set(peer.id, keep);
+    }
+    keep.version = peer.version;
+    keep.hostname = peer.hostname;
+    keep.lastSeen = Date.now();
+    if (peer.apikey) keep.apikey = peer.apikey;
     this._notifyPeersChanged();
   }
 
@@ -262,6 +295,27 @@ class PeerManager {
 
     if (this._peers.has(id)) {
       return this._peers.get(id);
+    }
+
+    // 同一地址可能已以其他 id 存在（发现/手动/lan/静态来源不同），
+    // 合并进既有条目，避免 getPeers() 对同一地址列出多行
+    const existing = this.getPeerByUrl(url);
+    if (existing) {
+      const remoteId = `remote-${host}-${port}`;
+      if ((options.static && !existing.static) || id === remoteId) {
+        // 稳定配置 id 优先于发现的随机实例 id
+        // （getRemotePeer() 按 remote-* id 查找，必须保住该键）
+        this._peers.delete(existing.id);
+        existing.id = id;
+        existing.static = true;
+        this._peers.set(id, existing);
+      }
+      if (options.hostname) existing.hostname = options.hostname;
+      if (options.version) existing.version = options.version;
+      if (options.apikey) existing.apikey = options.apikey;
+      existing.lastSeen = Date.now();
+      this._notifyPeersChanged();
+      return existing;
     }
 
     const peer = {
