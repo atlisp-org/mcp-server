@@ -84,6 +84,33 @@ AI Agent → (MCP) → Linux mcp-server → (HTTP/JSON-RPC) → Windows mcp-serv
 - **健康检查**：静态 peer（`static: true`）不会被 `_healthCheck` 误删；`peer_connect` 手动添加的 peer 也标记为静态
 - **限制**：UDP 广播发现仅限同子网（跨网段需 `peer_connect` 手动添加）；转发的调用在远端走完整 `runToolCall` 流程（校验/限速/Undo/审计），但本地会话状态（如 REPL 变量）不跨机同步
 
+## 后台中继（daemon relay）
+
+`/agent/chat` 页面里的中继会随页面卸载消失，所以「关掉页面后服务端 Agent 继续操作 CAD」
+由本机常驻的 atlisp-mcp 承担（`src/relay-client.js`）：
+
+```
+atlisp-mcp ──WSS + 用户 token──▶ atlisp.cn /agent/relay/ws
+           ◀── {type:"rpc", method, params} ──
+           ── {type:"rpc-result", id, json: "<JSON 文本>"} ──▶
+```
+
+- **配对**：页面登录后 `POST /api/relay/pair {token, uri}`（本机，官方 CORS 白名单内）。
+  服务端用该 token 调一次 `/api/user/info` 校验，通过后写 `~/.atlisp/relay.json`（0600）；
+  `GET /api/relay/status` 查状态，`POST /api/relay/unpair` 撤销。
+- **鉴权**：WS 握手带 `Cookie: atlisp_token=…`；服务端 `register` 帧 `kind:"daemon"`
+  必须解析到用户，否则拒绝（页面保留宽松）。token 失效时页面下次加载会重新配对。
+- **CAD 门槛**：只有 `cad.connected` 为真才 `register`，否则每 5s 重试；已登记后
+  CAD 断开则主动关 WS 让服务端注销，避免抢占真正连着 CAD 的页面。
+- **服务端优先级**（`api/agent-relay.lisp`）：已连 CAD 的 daemon > 页面 > 未连 CAD 的 daemon。
+  页面与 daemon 同时在线是正常的；daemon 用独立 peerId（`daemon-<host>-<hash>`）。
+- **帧格式**：`rpc-result` 的结果放在 `json` 且必须是**字符串**（服务端原样嵌回
+  JSON-RPC 响应；对象会被 cl-json 压小写键）。`tools/list` / `resources/list` /
+  `resources/read`（含 `atlisp://dwg/context-bundle`）本地实现，`tools/call` 走
+  `handleToolCall` + `validateLispCode` 预校验。
+- **部署**：需要把新版 atlisp-mcp 装到**用户 CAD 所在机器**；旧版没有这个模块，
+  页面仍会用自身中继（但关页即停）。
+
 ## 测试
 
 ```bash
@@ -151,6 +178,7 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 | 文件 | 职责 |
 |------|------|
 | `src/atlisp-mcp.js` | 入口：CLI 解析、Express 服务器、MCP 初始化 |
+| `src/relay-client.js` | 后台中继：连接服务端 relay WS、配对/状态、执行 rpc |
 | `src/mcp-tools.js` | 工具调度：TOOL_HANDLERS 映射、参数校验、审计、资源变更通知 |
 | `src/mcp-handlers.js` | MCP 协议处理器（initialize/tools/list/call） |
 | `src/tool-executor.js` | 工具执行引擎：参数校验/限速检查/Undo 包装/审计写入/错误统一处理 |

@@ -30,6 +30,7 @@ import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromp
 // startHealthReporter 暂时停用（健康上报到 atlisp.cn），需要时恢复导入和下方调用
 import { stopHealthReporter } from './health-reporter.js';
 import { startLocalMemWatcher } from './mem-monitor.js';
+import { startRelayClient, stopRelayClient } from './relay-client.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
@@ -389,10 +390,19 @@ export async function startServer() {
 
             // 内存变化监控：每 heartbeatInterval（默认 15s）采样，RSS/堆变化 ≥1MB 时打印一行
             stopMemWatcher = startLocalMemWatcher({ intervalMs: config.heartbeatInterval, thresholdMB: 1 });
+
+            /* 后台中继：配置过（页面配对过 / RELAY_TOKEN）就连服务端。
+               没有配置时是 no-op，不影响纯本地使用。 */
+            try {
+                startRelayClient();
+            } catch (e) {
+                logError(`[relay] 启动失败: ${e.message}`);
+            }
         });
 
         async function shutdown(signal) {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
+            stopRelayClient();
             stopHealthReporter();
             if (stopMemWatcher) { stopMemWatcher(); stopMemWatcher = null; }
             stopPluginWatcher();

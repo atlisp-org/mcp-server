@@ -21,6 +21,7 @@ import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from '.
 import { getVisibleTools } from './tools/index.js';
 import { getApiKeyRole, canAccess, resolveApiKeyRole } from './auth.js';
 import { SERVER_VERSION } from './constants.js';
+import { pairRelay, unpairRelay, getRelayStatus } from './relay-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const htmlDir = path.join(__dirname, 'html');
@@ -102,7 +103,8 @@ function extractBearerKey(req) {
 export function createAuthMiddleware() {
     // 公开端点：仅保留监控与静态文档。管理/调试类端点（/debug、/health/full 等）
     // 必须经过鉴权，避免泄露会话/内存/环境等运行态信息。
-    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/playground', '/go'];
+    const PUBLIC_PATHS = ['/health', '/metrics', '/api/docs', '/playground', '/go',
+                          '/api/relay/pair', '/api/relay/status', '/api/relay/unpair'];
     return (req, res, next) => {
         // Public GET endpoints are unrestricted
         if (req.method === 'OPTIONS' || PUBLIC_PATHS.includes(req.path)) return next();
@@ -414,6 +416,27 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
         });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
+    });
+
+    /* 后台中继配对：/agent/chat 页面登录后把 token 交给本机常驻的
+       atlisp-mcp，由它连接服务端中继。页面关闭后 CAD 仍可被操作。
+       安全边界：CORS 白名单（atlisp.cn/localhost）+ token 必须能取到
+       用户资料；配置文件 0600。 */
+    app.post('/api/relay/pair', async (req, res) => {
+        try {
+            const status = await pairRelay(req.body || {});
+            res.json({ ok: true, ...status });
+        } catch (e) {
+            res.status(400).json({ ok: false, error: e.message });
+        }
+    });
+
+    app.get('/api/relay/status', (req, res) => {
+        res.json({ ok: true, ...getRelayStatus() });
+    });
+
+    app.post('/api/relay/unpair', (req, res) => {
+        res.json({ ok: true, ...unpairRelay() });
     });
 
     if (registerMcpRoutes) {
