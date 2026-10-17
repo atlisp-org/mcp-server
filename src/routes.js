@@ -25,6 +25,9 @@ import { SERVER_VERSION } from './constants.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const htmlDir = path.join(__dirname, 'html');
 
+/* /health 主动探测 CAD 的超时上限：worker 卡住时不能把健康检查一起拖死 */
+const HEALTH_PROBE_TIMEOUT_MS = 3000;
+
 function loadHtml(name, replacements = {}) {
     if (!htmlCache[name]) {
         htmlCache[name] = fs.readFileSync(path.join(htmlDir, `${name}.html`), 'utf-8');
@@ -219,12 +222,36 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
     });
 
     app.get('/health', async (req, res) => {
+        /* 探测策略：
+           - 已连接（缓存 connected=true）→ 每次都 ping，维持原有的"活性探测"语义；
+           - 未连接时**默认不探测**（保持快速返回），但支持 `?probe=1` 主动探测。
+           为什么需要后者：新进程在第一次 CAD 命令之前，`connected` 还是初始值 false，
+           于是 /health 会一直说"未连接"，而同一时刻 dwg/name、frames、block-refs 都能
+           正常返回（实测踩过：重启后监控/编排据此误判 CAD 掉线）。
+           同时把语义拆清楚：`connected` 仍是**缓存状态**，新增 `status`（ready/down/unknown）
+           与 `probed`，消费者不必再拿 connected 当"现在能不能用"。 */
+        const wantProbe = req.query.probe === '1' || req.query.probe === 'true';
         let cadResponseTime = 0;
-        if (cad.connected) {
+        let probed = false;
+        let probeOk = null;
+
+        if (cad.connected || wantProbe) {
             const t0 = Date.now();
-            try { await cad.ping(); } catch (e) { logError('health ping 失败:', e.message); }
+            try {
+                /* ping 内部已吞异常（失败返回 false），但 worker 卡住时可能长时间不回 →
+                   加超时，避免"CAD 卡死"把健康检查一起拖死 */
+                probeOk = await Promise.race([
+                    Promise.resolve(cad.ping()).then(v => Boolean(v)),
+                    new Promise(resolve => setTimeout(() => resolve(false), HEALTH_PROBE_TIMEOUT_MS)),
+                ]);
+            } catch (e) {
+                logError('health ping 失败:', e.message);
+                probeOk = false;
+            }
+            probed = true;
             cadResponseTime = Date.now() - t0;
         }
+        const cadStatus = probeOk === true ? 'ready' : probeOk === false ? 'down' : 'unknown';
 
         const memUsage = process.memoryUsage();
         const cpuUsage = process.cpuUsage();
@@ -235,6 +262,9 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
             status: 'ok',
             cad: {
                 connected: cad.connected,
+                /* 缓存状态（向后兼容）与真实探测结果分开表达 */
+                status: cadStatus,
+                probed,
                 platform: cad.getPlatform ? cad.getPlatform() : null,
                 version: cad.getVersion ? cad.getVersion() : null,
                 responseTime: cadResponseTime,

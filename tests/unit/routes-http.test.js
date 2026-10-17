@@ -195,9 +195,29 @@ describe('健康与文档路由', () => {
     expect(r.status).toBe(200);
     expect(r.json.status).toBe('ok');
     expect(r.json.cad.connected).toBe(false);
+    /* 未连接且未要求探测：语义应为 unknown，而不是让消费者把 connected=false 当成「CAD 掉线」 */
+    expect(r.json.cad.status).toBe('unknown');
+    expect(r.json.cad.probed).toBe(false);
     expect(r.json.mcp.tools).toBe(getVisibleTools().length);
     expect(r.json.system.memory.rss).toBeGreaterThan(0);
     expect(Array.isArray(r.json.pool.instances)).toBe(true);
+  });
+
+  it('GET /health?probe=1 未连接时也主动探测：成功 → ready', async () => {
+    cadMock.ping.mockResolvedValueOnce(true);
+    const r = await req('/health?probe=1');
+    expect(r.status).toBe(200);
+    expect(r.json.cad.probed).toBe(true);
+    expect(r.json.cad.status).toBe('ready');
+    expect(cadMock.ping).toHaveBeenCalled();
+  });
+
+  it('GET /health?probe=1 探测失败 → status=down（connected 缓存不受影响）', async () => {
+    cadMock.ping.mockResolvedValueOnce(false);
+    const r = await req('/health?probe=1');
+    expect(r.status).toBe(200);
+    expect(r.json.cad.status).toBe('down');
+    expect(cadMock.ping).toHaveBeenCalled();
   });
 
   it('CAD 已连接时 /health 执行 ping，ping 失败不影响响应', async () => {
