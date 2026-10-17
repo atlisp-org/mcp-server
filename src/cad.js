@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import config from './config.js';
 import { setCadConnected } from './metrics.js';
 import { CircuitBreaker } from './cad-circuit-breaker.js';
-import {  error as logError } from './logger.js';
+import {  error as logError, warn as logWarn } from './logger.js';
 import {  ERROR_CODES, MCPError } from './errors.js';
 import { withSpan } from './tracing.js';
 import { t } from './i18n.js';
@@ -24,6 +24,14 @@ const CAD_COMMAND_TIMEOUT = config.cadCommandTimeout;
 const STALL_COOLDOWN = config.stallCooldown;
 const HEARTBEAT_PING_TIMEOUT = config.heartbeatPingTimeout;
 const HEARTBEAT_INTERVAL = config.heartbeatInterval;
+// worker 刚 spawn 时，edge-js 要先加载 CLR、初始化十几个 edge.func 再连上 CAD。
+// 冷启动实测可超过 HEARTBEAT_PING_TIMEOUT(5s)，这段预热期内的 ping 超时不能当作
+// 「worker 死亡」，否则会出现「spawn → 判死 → 重启 → 再判死」的重启风暴。
+const HEARTBEAT_WARMUP = config.heartbeatWarmupMs ?? 15000;
+// 连续失败触发自动重启后的最小间隔。CAD 停在模态对话框/长命令里时，杀 worker
+// 并不能让 CAD 恢复，只会把在途请求一起打断；限频给人工处理留出时间。
+const HEARTBEAT_RESET_COOLDOWN = config.heartbeatResetCooldown ?? 60000;
+const DOC_POLL_COOLDOWN = Math.max(HEARTBEAT_INTERVAL * 2, 30000);
 const MAX_RESTART_ATTEMPTS = 10; // 增加重启次数
 const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
 const MAX_REQUESTS_PER_WORKER = 100; // 每个worker最大处理请求数，超过后轮换
@@ -278,6 +286,11 @@ class CadConnection {
   _restartTimer = null;
   _activeDocName = null;
   _monitorStarted = false;
+  /** 文档轮询是否在途（worker 串行，避免轮询排到命令后面叠加超时） */
+  _docPollInFlight = false;
+  _docPollCooldownUntil = 0;
+  /** 上一次心跳触发的自动重启时间（限频用） */
+  _lastHeartbeatResetAt = 0;
   /** @type {string|null} */
   _connectionId = null;
   /** @type {NodeJS.Timeout[]} */
@@ -332,11 +345,9 @@ class CadConnection {
         this._clearStall();
         setCadConnected(true);
         this._activeDocName = null;
+        this._lastHeartbeatResetAt = 0;
         this._commandQueue.enableBatcher();
-        if (!this._monitorStarted) {
-          this._monitorStarted = true;
-          this._sendMessage({ type: 'startMonitor', platform: this._platform }).catch(() => { this._monitorStarted = false; });
-        }
+        this._startMonitor();
         return true;
       }
     } catch (e) {
@@ -561,6 +572,21 @@ class CadConnection {
   _getQueueSize() { return this._commandQueue.size(); }
   _getRestartCount() { return this._restartCount; }
 
+  /**
+   * 启动 CAD 侧的文档变更监控（.NET Timer → stdout event）。
+   * 监控可用时心跳里的文档轮询就是多余的；moniker 连接不支持监控，
+   * 此时保持 _monitorStarted=false，由心跳轮询兜底。
+   */
+  _startMonitor() {
+    if (this._monitorStarted || !this._platform) return;
+    this._monitorStarted = true;
+    this._sendMessage({ type: 'startMonitor', platform: this._platform })
+      .then((r) => {
+        if (!r || r.success === false) this._monitorStarted = false;
+      })
+      .catch(() => { this._monitorStarted = false; });
+  }
+
   _spawnWorker(type) {
     const w = spawn('node', [workerPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -573,18 +599,26 @@ class CadConnection {
     w.connected = true;
     w._workerType = type;
     w._spawnTime = Date.now();
+    w._warmupUntil = Date.now() + HEARTBEAT_WARMUP;
     w._requestCount = 0;
 
     this._setupStdoutHandler(w);
 
     w.on('exit', (code) => {
-      logError(`[${this._connectionId}] ${type} worker exited with code:`, code);
       w.connected = false;
 
       if (type === 'primary') {
         if (w !== this._primaryWorker) return;
+        // 主动轮换（_rotateWorker）和心跳重置（_resetWorker）不是故障：
+        // 前者已经打过轮换日志，后者本身就是恢复动作，别再刷 ERROR。
+        if (!w._intentionalExit) {
+          logError(`[${this._connectionId}] ${type} worker exited with code:`, code);
+        } else {
+          logWarn(`[${this._connectionId}] ${type} worker 已按预期退出`, code);
+        }
         this._cb.recordFailure();
         this._clearStall();
+        this._monitorStarted = false;
         const exitError = new Error(`Primary worker exited with code ${code}`);
         for (const entry of this._pendingRequests.values()) {
           clearTimeout(entry.timeout);
@@ -598,6 +632,9 @@ class CadConnection {
         }
         this._scheduleRestart();
       } else {
+        if (!w._intentionalExit) {
+          logError(`[${this._connectionId}] ${type} worker exited with code:`, code);
+        }
         const idx = this._readWorkers.indexOf(w);
         if (idx >= 0) this._readWorkers.splice(idx, 1);
         // 主动轮换/重置导致的退出由调用方负责补位，避免重复 spawn
@@ -626,6 +663,8 @@ class CadConnection {
       this._cb.recordSuccess();
       if (!this._heartbeatTimer) this._startHeartbeat();
       this._restartCount = 0;
+      // 新 worker 没有 .NET 监控：连接还在的话补上，否则心跳轮询兜底
+      if (this.connected) this._startMonitor();
     }
 
     if (isReadOnly && poolSize > 1) {
@@ -693,6 +732,9 @@ class CadConnection {
     this._readWorkers = [];
     this._readWorkerIndex = 0;
     this._readRestartAttempts = 0;
+    this._monitorStarted = false;
+    this._docPollInFlight = false;
+    this._docPollCooldownUntil = 0;
 
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer);
@@ -726,6 +768,9 @@ class CadConnection {
       this._cb.recordSuccess();
       if (!this._heartbeatTimer) this._startHeartbeat();
       this._restartCount = 0;
+      // 新 worker 需要重新挂 .NET 文档监控
+      this._monitorStarted = false;
+      if (this.connected) this._startMonitor();
     } else {
       // 如果是 read worker，从列表中移除并补齐
       const idx = this._readWorkers.indexOf(oldWorker);
@@ -799,49 +844,106 @@ class CadConnection {
     w.stderr.on('data', (d) => logError(`[${self._connectionId}] ${w._workerType || 'worker'} stderr:`, d.toString()));
   }
 
+  /**
+   * 心跳只回答一个问题：worker 进程还能不能及时回话。
+   * 判断时必须排除两种「假死」：
+   *   1. 新 worker 的预热期（edge-js 加载 CLR + 连 CAD 可能超过 ping 超时）；
+   *   2. worker 正在串行执行真实命令（ping 只是排在命令后面，超时≠死亡）。
+   * 另外，文档轮询已由 CAD 侧 .NET 监控推送事件，监控可用时不再轮询；
+   * 监控不可用（moniker 连接）时轮询失败会进入冷却，避免把串行队列越堆越长。
+   */
   _startHeartbeat() {
     if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
     const self = this;
     let consecutiveFailures = 0;
-    
+    let busyLogged = false;
+
+    const onFailure = (reason) => {
+      consecutiveFailures++;
+      logError(`[${self._connectionId}] heartbeat failed (consecutive: ${consecutiveFailures}): ${reason}`);
+      if (consecutiveFailures < 3) return;
+
+      const now = Date.now();
+      const sinceLastReset = now - self._lastHeartbeatResetAt;
+      if (self._lastHeartbeatResetAt && sinceLastReset < HEARTBEAT_RESET_COOLDOWN) {
+        const waitSec = Math.ceil((HEARTBEAT_RESET_COOLDOWN - sinceLastReset) / 1000);
+        logWarn(`[${self._connectionId}] worker 连续 ${consecutiveFailures} 次无响应，但 ${waitSec}s 内已重启过，暂不重启（CAD 可能停在模态对话框或长命令中）`);
+        return;
+      }
+
+      logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
+      self._lastHeartbeatResetAt = now;
+      self._resetWorker();
+      consecutiveFailures = 0;
+    };
+
     this._heartbeatTimer = setInterval(async () => {
       if (self._stalledUntil > Date.now()) return;
-      
+
+      const w = self._primaryWorker;
+      // 没有 worker 就不探测：心跳不应该负责拉起 worker。否则「重置 → 心跳拉起 →
+      // 仍然无响应 → 再重置」会自己形成循环；下一次真实请求会触发 spawn。
+      if (!w || !w.connected) return;
+
+      // 预热期：刚 spawn 的 worker 还在初始化，此期间的超时不算失败
+      if (w._warmupUntil && Date.now() < w._warmupUntil) return;
+
+      // 正在执行真实命令：worker 是串行的，ping 只会排在命令后面。
+      // 命令自身有 CAD_COMMAND_TIMEOUT 兜底，这里直接跳过本轮。
+      if (self._hasCommandInFlight()) {
+        if (!busyLogged) {
+          logWarn(`[${self._connectionId}] heartbeat 跳过：worker 正在执行命令（串行队列）`);
+          busyLogged = true;
+        }
+        return;
+      }
+      busyLogged = false;
+
       try {
         const result = await self._sendMessageInternal({ type: 'ping' }, true, HEARTBEAT_PING_TIMEOUT);
         if (!result?.pong) {
-          consecutiveFailures++;
-          logError(`[${self._connectionId}] heartbeat failed (consecutive: ${consecutiveFailures})`);
-          if (consecutiveFailures >= 3) {
-            logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
-            self._resetWorker();
-            consecutiveFailures = 0;
-          }
+          onFailure('no pong');
           return;
         }
-        
-        consecutiveFailures = 0; // 重置连续失败计数
-        
-        if (self._platform) {
+
+        consecutiveFailures = 0;
+
+        if (self._shouldPollDoc()) {
+          self._docPollInFlight = true;
           try {
             const docResult = await self._sendMessageInternal({ type: 'getActiveDocInfo', platform: self._platform }, true, HEARTBEAT_PING_TIMEOUT);
             if (docResult?.docName) {
               emitDocumentChanged({ docName: docResult.docName, docPath: docResult.docPath || '' });
             }
           } catch (e) {
-            logError(`[${self._connectionId}] heartbeat doc poll error:`, e.message);
+            self._docPollCooldownUntil = Date.now() + DOC_POLL_COOLDOWN;
+            logWarn(`[${self._connectionId}] heartbeat doc poll error:`, e.message);
+          } finally {
+            self._docPollInFlight = false;
           }
         }
       } catch (e) {
-        consecutiveFailures++;
-        logError(`[${self._connectionId}] heartbeat error (consecutive: ${consecutiveFailures}):`, e.message);
-        if (consecutiveFailures >= 3) {
-          logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
-          self._resetWorker();
-          consecutiveFailures = 0;
-        }
+        onFailure(e.message);
       }
     }, HEARTBEAT_INTERVAL);
+  }
+
+  /** worker 是否正在执行真实 LISP 命令（send/sendResult），而非内部探测请求。 */
+  _hasCommandInFlight() {
+    for (const entry of this._pendingRequests.values()) {
+      if (entry._isCommand) return true;
+    }
+    return false;
+  }
+
+  /** 文档轮询的准入条件：已有监控/轮询在途/冷却中/有其它在途请求时都不轮询。 */
+  _shouldPollDoc() {
+    if (!this._platform) return false;
+    if (this._monitorStarted) return false;
+    if (this._docPollInFlight) return false;
+    if (this._docPollCooldownUntil > Date.now()) return false;
+    if (this._pendingRequests.size > 0) return false;
+    return true;
   }
 
   _scheduleRestart() {
@@ -937,6 +1039,9 @@ class CadConnection {
           reject(e); 
         },
         timeout,
+        // 心跳据此区分「worker 正在跑真实命令」与「worker 无响应」
+        _isCommand: msg.type === 'send' || msg.type === 'sendResult',
+        _startedAt: Date.now(),
       };
       self._pendingRequests.set(requestId, entry);
       try {

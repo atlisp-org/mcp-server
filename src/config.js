@@ -14,6 +14,11 @@ const envSchema = z.object({
     STALL_COOLDOWN: z.coerce.number().optional().default(15000),       // 15秒，减少冷却时间
     HEARTBEAT_PING_TIMEOUT: z.coerce.number().optional().default(5000), // 5秒，减少心跳超时
     HEARTBEAT_INTERVAL: z.coerce.number().optional().default(15000),   // 15秒，增加心跳频率
+    // worker 冷启动（edge-js 加载 CLR + 连 CAD）常超过 HEARTBEAT_PING_TIMEOUT，
+    // 预热期内不做存活判定，否则新 worker 会被立刻判死并反复重启。
+    HEARTBEAT_WARMUP_MS: z.coerce.number().optional().default(15000),
+    // 心跳自动重启 worker 的最小间隔：CAD 停在模态对话框时重启无济于事，限频避免刷屏。
+    HEARTBEAT_RESET_COOLDOWN: z.coerce.number().optional().default(60000),
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
     ENABLE_CORS: z.coerce.boolean().optional().default(true),
@@ -93,6 +98,8 @@ const configSchema = z.object({
     stallCooldown: z.number().optional(),
     heartbeatPingTimeout: z.number().optional(),
     heartbeatInterval: z.number().optional(),
+    heartbeatWarmupMs: z.number().optional(),
+    heartbeatResetCooldown: z.number().optional(),
     busyRetries: z.number().optional(),
     busyDelay: z.number().optional(),
     enableCors: z.boolean().optional(),
@@ -268,6 +275,8 @@ const config = {
     stallCooldown: fileConfig?.stallCooldown ?? env.STALL_COOLDOWN,
     heartbeatPingTimeout: fileConfig?.heartbeatPingTimeout ?? env.HEARTBEAT_PING_TIMEOUT,
     heartbeatInterval: fileConfig?.heartbeatInterval ?? env.HEARTBEAT_INTERVAL,
+    heartbeatWarmupMs: fileConfig?.heartbeatWarmupMs ?? env.HEARTBEAT_WARMUP_MS,
+    heartbeatResetCooldown: fileConfig?.heartbeatResetCooldown ?? env.HEARTBEAT_RESET_COOLDOWN,
     busyRetries: fileConfig?.busyRetries ?? env.BUSY_RETRIES,
     busyDelay: fileConfig?.busyDelay ?? env.BUSY_DELAY,
     enableCors: fileConfig?.enableCors ?? env.ENABLE_CORS,
