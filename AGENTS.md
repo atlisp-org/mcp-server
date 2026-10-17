@@ -59,8 +59,12 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 
 ### CAD 侧生成 LISP 的硬约束（踩过的坑）
 
-mcp-server 生成的 LISP 在**未加载 @lisp lib** 的 CAD 会话里执行（`(member 'require (atoms-family 1))` → nil）：
-- **必须自包含**：只用 AutoLISP 内建 + 代码内 `defun` 的 `@xx:` 辅助函数，**不得调用 lib/包函数**（`require`、`string:parse-by-lst`、`block:get-attributes` 等都不存在，调用会被 `vl-catch-all` 吞成静默 nil）
+mcp-server 生成的 LISP **不能假设执行它的 CAD 会话加载了 @lisp lib**——是否加载取决于会话启动方式。
+（踩过的坑：曾用 `(member 'require (atoms-family 1))` 判断"未加载"，其实 **`atoms-family` 的 format=1
+返回字符串**，用引号符号比对永远为 nil；正确写法 `(member "STRING:PARSE-BY-LST" (atoms-family 1))`
+或 `(print <fn>)`。实测 `.50` 的会话里 lib 是加载的。）
+因此生成代码仍按"可能没有 lib"来写：
+- **必须自包含**：只用 AutoLISP 内建 + 代码内 `defun` 的 `@xx:` 辅助函数，**不得调用 lib/包函数**（`require`、`string:parse-by-lst`、`block:get-attributes` 等），调用失败会被 `vl-catch-all` 吞成静默 nil
 - **不要把 `T` 当值用**：实测某会话 `T` 被绑成 `nil`、另一会话被绑成字符串。`(setq hit T)` / `(and cond T)` / `(while ... T)` 会静默失效。用字面量 `1`（永不失效）
 - **ActiveX 属性读取**：`vla-get-Attributes` 报「函数错误」，必须用方法形式 `(vl-catch-all-apply 'vlax-invoke (list obj 'GetAttributes))`；`vlax-invoke` 直接返回 VLA-OBJECT 列表，**不要再套 `vlax-variant-value`**；读取前用 `vla-get-HasAttributes` 判定，勿用 `entnext`（无属性 INSERT 会返回数据库下一个实体 → 假阳性）
 - **输出格式**：worker 用 `(princ r f)` 写结果，直接返回 list 会丢字符串引号（空串值 `("A" "")` 变成 `("A")`、块名带空格会被拆开）。统一 `(vl-prin1-to-string (list ...))` 收尾，且条目用 `(list "k" v)` 而非 `(cons "k" v)`（后者 value 为 nil 时退化成 `("k")`，服务端按二元对消费会丢字段）
