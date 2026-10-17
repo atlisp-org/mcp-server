@@ -25,8 +25,11 @@ import { SERVER_VERSION } from './constants.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const htmlDir = path.join(__dirname, 'html');
 
-/* /health 主动探测 CAD 的超时上限：worker 卡住时不能把健康检查一起拖死 */
-const HEALTH_PROBE_TIMEOUT_MS = 3000;
+/* /health 主动探测 CAD 的默认超时上限。
+   为什么是 8s：实测「冷启动首次 ping」与「CAD 刚忙完」都能到 3.5s 以上，
+   3s 会把**正常**的 CAD 判成 down（真机踩过：probe=1 报 down，紧接着
+   list_frames / block-refs 全部正常）。可用 HEALTH_PROBE_TIMEOUT_MS 覆盖。 */
+const HEALTH_PROBE_TIMEOUT_MS = 8000;
 
 function loadHtml(name, replacements = {}) {
     if (!htmlCache[name]) {
@@ -235,15 +238,24 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
         let probed = false;
         let probeOk = null;
 
+        let probeTimedOut = false;
+
         if (cad.connected || wantProbe) {
             const t0 = Date.now();
+            const timeoutMs = Number(process.env.HEALTH_PROBE_TIMEOUT_MS) > 0
+                ? Number(process.env.HEALTH_PROBE_TIMEOUT_MS)
+                : HEALTH_PROBE_TIMEOUT_MS;
+            /* 超时用哨兵区分「探测失败」与「探测超时」：worker 卡住时 ping 可能很久不回，
+               但把超时当成 down 是**误报**（CAD 可能只是慢），语义必须是 timeout/unknown。 */
+            const TIMEOUT = Symbol('probe-timeout');
             try {
-                /* ping 内部已吞异常（失败返回 false），但 worker 卡住时可能长时间不回 →
-                   加超时，避免"CAD 卡死"把健康检查一起拖死 */
-                probeOk = await Promise.race([
-                    Promise.resolve(cad.ping()).then(v => Boolean(v)),
-                    new Promise(resolve => setTimeout(() => resolve(false), HEALTH_PROBE_TIMEOUT_MS)),
+                /* ping 内部已吞异常（失败返回 false） */
+                const r = await Promise.race([
+                    Promise.resolve(cad.ping()).then(v => Boolean(v)).catch(() => false),
+                    new Promise(resolve => setTimeout(() => resolve(TIMEOUT), timeoutMs)),
                 ]);
+                if (r === TIMEOUT) probeTimedOut = true;
+                else probeOk = r;
             } catch (e) {
                 logError('health ping 失败:', e.message);
                 probeOk = false;
@@ -251,7 +263,7 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
             probed = true;
             cadResponseTime = Date.now() - t0;
         }
-        const cadStatus = probeOk === true ? 'ready' : probeOk === false ? 'down' : 'unknown';
+        const cadStatus = probeOk === true ? 'ready' : probeOk === false ? 'down' : probeTimedOut ? 'timeout' : 'unknown';
 
         const memUsage = process.memoryUsage();
         const cpuUsage = process.cpuUsage();

@@ -212,6 +212,21 @@ describe('健康与文档路由', () => {
     expect(cadMock.ping).toHaveBeenCalled();
   });
 
+  it('GET /health?probe=1 探测超时 → status=timeout（不是 down，避免误报 CAD 掉线）', async () => {
+    cadMock.ping.mockImplementationOnce(() => new Promise(() => {})); // 永不 resolve
+    process.env.HEALTH_PROBE_TIMEOUT_MS = '20';
+
+    try {
+      const r = await req('/health?probe=1');
+      expect(r.status).toBe(200);
+      expect(r.json.cad.probed).toBe(true);
+      expect(r.json.cad.status).toBe('timeout');
+      expect(r.json.cad.responseTime).toBeGreaterThan(0);
+    } finally {
+      delete process.env.HEALTH_PROBE_TIMEOUT_MS;
+    }
+  });
+
   it('GET /health?probe=1 探测失败 → status=down（connected 缓存不受影响）', async () => {
     cadMock.ping.mockResolvedValueOnce(false);
     const r = await req('/health?probe=1');
