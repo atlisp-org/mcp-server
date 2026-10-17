@@ -146,6 +146,12 @@ export const TOOL_HANDLERS = {
     list_visibility_states:lazy('list_visibility_states', (a) => a),
     set_visibility_state:  lazy('set_visibility_state', (a) => a),
 
+    // === 图纸结构查询（图框识别）===
+    // 注意：工具定义（src/tools/frame-tools.js）与这里的分派登记是**两份清单**，
+    // 只加定义不加登记 → 工具出现在 tools/list 里，调用却报 HANDLER_NOT_FOUND
+    // （实测踩过一次）。tests/unit/toolhandlers-coverage.test.js 会拦住这类漏登记。
+    list_frames:          lazy('list_frames', (a) => a),
+
     // === DWG File Operations ===
     open_dwg:             lazy('open_dwg', (a) => a?.filePath),
     save_dwg:             lazy('save_dwg', (a) => a?.filePath),
