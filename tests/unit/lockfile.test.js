@@ -10,11 +10,29 @@ vi.mock('os', async (importOriginal) => {
   return { ...actual, default: { ...actual.default, homedir: () => tmpDir } };
 });
 
+vi.mock('../../src/logger.js', () => ({
+  error: vi.fn(),
+}));
+
 const importLockfile = () => import('../../src/lockfile.js');
+
+// 按 isAlive 的判定标准找一个确定不存活的 pid（process.kill 抛出非 EPERM 错误即视为不存在）
+function findDeadPid() {
+  for (let i = 0; i < 2000; i++) {
+    const pid = 4000000 + i * 7919 + (process.pid % 500);
+    try {
+      process.kill(pid, 0); // 成功 → 进程存活，换一个
+    } catch (e) {
+      if (e.code !== 'EPERM') return pid; // ESRCH 等 → 确定不存在
+    }
+  }
+  throw new Error('未找到确定不存活的测试 pid');
+}
 
 describe('lockfile', () => {
   beforeEach(() => {
     fs.rmSync(path.join(tmpDir, '.atlisp', 'locks'), { recursive: true, force: true });
+    vi.clearAllMocks();
     vi.resetModules();
   });
 
@@ -44,9 +62,7 @@ describe('lockfile', () => {
     const { acquirePortLock } = await importLockfile();
     const lockPath = path.join(tmpDir, '.atlisp', 'locks', 'atlisp-mcp-19996.lock');
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    // 使用一个几乎不可能存活的 pid
-    const deadPid = 4000000 + (process.pid % 100000);
-    try { process.kill(deadPid, 0); } catch { /* 预期不可达 */ }
+    const deadPid = findDeadPid();
     fs.writeFileSync(lockPath, JSON.stringify({ pid: deadPid, port: 19996 }), 'utf-8');
 
     const result = acquirePortLock(19996, '127.0.0.1');
@@ -78,8 +94,28 @@ describe('lockfile', () => {
     expect(fs.existsSync(lockPath)).toBe(true);
   });
 
-  it('释放不存在的锁不抛错', async () => {
+  it('释放不存在的锁不抛错也不产生错误日志', async () => {
     const { releasePortLock } = await importLockfile();
+    const { error } = await import('../../src/logger.js');
     expect(() => releasePortLock(19992)).not.toThrow();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('重复释放（shutdown + exit 双路径）不产生错误日志', async () => {
+    const { acquirePortLock, releasePortLock } = await importLockfile();
+    const { error } = await import('../../src/logger.js');
+    expect(acquirePortLock(19991, '127.0.0.1').ok).toBe(true);
+    releasePortLock(19991); // shutdown() 路径：删除锁文件
+    releasePortLock(19991); // exit 事件路径：锁已不存在，应为静默 no-op
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('锁目录被整体删除后释放不产生错误日志', async () => {
+    const { acquirePortLock, releasePortLock } = await importLockfile();
+    const { error } = await import('../../src/logger.js');
+    acquirePortLock(19990, '127.0.0.1');
+    fs.rmSync(path.join(tmpDir, '.atlisp', 'locks'), { recursive: true, force: true });
+    expect(() => releasePortLock(19990)).not.toThrow();
+    expect(error).not.toHaveBeenCalled();
   });
 });
