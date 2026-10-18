@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
         writeAuditEntry: vi.fn(),
         callCustomTool: vi.fn(() => null),
         notifyResourceChanges: vi.fn(),
+        callPluginHook: vi.fn(),
     };
 });
 
@@ -52,6 +53,9 @@ vi.mock('../../src/tool-registry.js', () => ({
 }));
 vi.mock('../../src/tool-dispatch.js', () => ({
     notifyResourceChanges: mocks.notifyResourceChanges,
+}));
+vi.mock('../../src/plugin-loader.js', () => ({
+    callPluginHook: mocks.callPluginHook,
 }));
 
 import { handleToolCall } from '../../src/tool-executor.js';
@@ -158,5 +162,36 @@ describe('tool-executor handleToolCall', () => {
         const result = await handleToolCall('test_write_tool', {});
         expect(result.isError).toBeFalsy();
         expect(result.content[0].text).toBe('ok');
+    });
+
+    it('分发插件钩子：成功时 onToolCall + onToolExecuted(success)', async () => {
+        await handleToolCall('test_write_tool', { arg: 1 });
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onToolCall', 'test_write_tool', { arg: 1 });
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onToolExecuted', expect.objectContaining({
+            name: 'test_write_tool',
+            success: true,
+            duration: expect.any(Number),
+        }));
+        expect(mocks.callPluginHook).not.toHaveBeenCalledWith('onError', expect.anything());
+    });
+
+    it('分发插件钩子：失败时 onToolExecuted(success=false) + onError', async () => {
+        mocks.handler.mockRejectedValue(new Error('CAD timeout'));
+        await handleToolCall('test_write_tool', {});
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onToolExecuted', expect.objectContaining({
+            name: 'test_write_tool',
+            success: false,
+        }));
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onError', expect.objectContaining({
+            message: expect.stringContaining('CAD timeout'),
+            source: 'tool:test_write_tool',
+        }));
+    });
+
+    it('处理器返回 isError 时也触发 onError', async () => {
+        mocks.handler.mockResolvedValue({ isError: true, content: [{ type: 'text', text: '业务失败' }] });
+        await handleToolCall('test_write_tool', {});
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onToolExecuted', expect.objectContaining({ success: false }));
+        expect(mocks.callPluginHook).toHaveBeenCalledWith('onError', expect.objectContaining({ message: '业务失败' }));
     });
 });

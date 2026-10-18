@@ -25,6 +25,8 @@ vi.mock('../../src/logger.js', () => ({
 
 const loader = await import('../../src/plugin-loader.js');
 const { log, error: logError } = await import('../../src/logger.js');
+const { tools } = await import('../../src/tools/index.js');
+const { registerTool, callCustomTool } = await import('../../src/tool-registry.js');
 
 const PLUGIN_DIR = loader.getPluginDir();
 
@@ -233,6 +235,61 @@ describe('插件目录监听（fs.watch 被 mock，手动驱动回调）', () =>
       delete globalThis.__lifeInit;
       delete globalThis.__lifeUnload;
       delete globalThis.__lifeCtx;
+    }
+  });
+
+  it('插件注册的工具在热重载/删除时被回收并重新注册', async () => {
+    fs.mkdirSync(PLUGIN_DIR, { recursive: true });
+    let watcherCb = null;
+    vi.spyOn(fs, 'watch').mockImplementation((dir, cb) => {
+      watcherCb = cb;
+      return { close: vi.fn() };
+    });
+
+    const registered = [];
+    const ctx = {
+      log: vi.fn(),
+      tools,
+      registerTool: (def, handler) => {
+        registered.push(def.name);
+        return registerTool(def, handler);
+      },
+    };
+    loader.initPlugins(ctx);
+    const body = (value) => `export default {
+      name: 'toolplug', setup() {},
+      onInit(c) {
+        c.registerTool(
+          { name: 'plugin_echo', description: 'echo', inputSchema: { type: 'object', properties: {} } },
+          async () => ({ content: [{ type: 'text', text: '${value}' }] }),
+        );
+      },
+    };`;
+    try {
+      writePlugin('toolplug.js', body('v1'));
+      loader.startPluginWatcher();
+      await watcherCb('rename', 'toolplug.js');
+      expect(registered).toEqual(['plugin_echo']);
+      expect(tools.filter(t => t.name === 'plugin_echo')).toHaveLength(1);
+      expect((await callCustomTool('plugin_echo', {})).content[0].text).toBe('v1');
+
+      await new Promise(r => setTimeout(r, 5));
+      writePlugin('toolplug.js', body('v2'));
+      await watcherCb('change', 'toolplug.js');
+      // vitest 下同路径模块可能复用 import 缓存（真实 Node 有 ?t= 破缓存），
+      // 因此这里只验证「先注销再注册」发生了：注册回调被调用两次且工具不重复
+      expect(registered).toEqual(['plugin_echo', 'plugin_echo']);
+      expect(tools.filter(t => t.name === 'plugin_echo')).toHaveLength(1);
+
+      fs.unlinkSync(path.join(PLUGIN_DIR, 'toolplug.js'));
+      await watcherCb('rename', 'toolplug.js');
+      expect(tools.some(t => t.name === 'plugin_echo')).toBe(false);
+      expect(await callCustomTool('plugin_echo', {})).toBeNull();
+    } finally {
+      loader.stopPluginWatcher();
+      // 清理：若断言失败导致文件仍在，避免污染其他测试
+      const { unregisterTool } = await import('../../src/tool-registry.js');
+      unregisterTool('plugin_echo');
     }
   });
 });

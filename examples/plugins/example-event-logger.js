@@ -16,18 +16,16 @@
  *      本仓库中的 examples/plugins/ 只是示例源码，不在插件目录内，不会被自动加载。
  *   2. 事件钩子按 docs/plugins.md「可用钩子」的 payload 约定实现：
  *      onCadConnected { platform, version } / onCadDisconnected { reason } /
- *      onDocumentChanged { name, action } / onError { message, source, code }。
- *      分发入口是 plugin-loader 的 callPluginHook(hookName, ...payload)——
- *      核心当前只自动调用 onInit(context)，CAD/文档事件需由调用方执行
- *      callPluginHook('onDocumentChanged', info) 分发（核心尚未接入该分发，
- *      也可由其他插件/扩展代码手动触发；插件间的调用错误会被隔离记录）。
+ *      onDocumentChanged { name, action, path } / onError { message, source, code }。
+ *      核心会在 CAD 连接/断开、文档变更与工具调用失败时自动分发这些钩子，
+ *      插件无需手动调用 callPluginHook；钩子异常会被隔离记录，不影响主流程。
  *   3. MCP resources/list 的「资源变更」目前没有对应的插件钩子（onPluginChange 是
  *      插件文件监听，属核心内部 API）；热重载插件文件时核心会自动广播
  *      resources/tools/prompts 的 list changed。观察图纸（DWG 文档）变更请用
  *      onDocumentChanged。
- *   4. 不要在此类事件插件里起 setInterval 轮询：插件没有卸载/销毁钩子，热重载后
- *      旧实例的定时器无法清理，会造成泄漏。需要周期性任务请评估后自行保证只注册一次。
- *   5. 热重载会整体替换插件对象（已留存的事件随之清空），且不会重新执行 onInit。
+ *   4. 如需周期性任务，请在 onUnload() 中清理 setInterval/setTimeout：热重载会
+ *      替换插件实例，未清理的定时器会继续持有旧实例。
+ *   5. 热重载会整体替换插件对象（已留存的事件随之清空），并重新执行 onInit。
  *
  * 验证：
  *   - 启动日志：[1/6] 加载插件... ✓ 已加载 N 个插件

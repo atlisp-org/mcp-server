@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { log, error as logError } from './logger.js';
+// 注意：不要在模块顶层 import tool-registry —— 它会拉起 tools/index（含全部工具 schema），
+// 而 plugin-loader 被 cad.js 引用，顶层引入会拖慢 CAD 模块加载与测试。
+// 工具回收只在热重载/卸载时按需动态 import。
 
 const PLUGIN_DIR = path.join(os.homedir(), '.atlisp', 'mcp-plugins');
 
@@ -10,6 +13,8 @@ const watchCallbacks = [];
 let watcher = null;
 /** 正在重载的文件，避免 fs.watch 对同一次保存连发 rename/change 时重复 import */
 const reloadingFiles = new Set();
+/** 每个插件通过 context.registerTool 注册的工具名，卸载时用于回收 */
+const pluginTools = new WeakMap();
 
 export function getPluginDir() {
     return PLUGIN_DIR;
@@ -45,6 +50,8 @@ export async function loadSinglePlugin(file) {
 }
 
 export async function loadPlugins() {
+    // 重新扫描前先卸载旧实例，回收它们动态注册的工具
+    for (const plugin of loadedPlugins) await callOnUnload(plugin);
     loadedPlugins = [];
     try {
         if (!fs.existsSync(PLUGIN_DIR)) {
@@ -71,16 +78,50 @@ let lastInitContext = null;
 
 function callOnInit(plugin) {
     if (!lastInitContext || typeof plugin.onInit !== 'function') return;
+    // 为每个插件包一层 registerTool，记录它注册了哪些工具，
+    // 这样热重载/卸载时能精确回收，不会误删别的插件或内置工具。
+    const base = lastInitContext;
+    const context = typeof base.registerTool === 'function'
+        ? {
+            ...base,
+            registerTool: (toolDef, handler) => {
+                const ok = base.registerTool(toolDef, handler);
+                if (ok !== false && toolDef?.name) {
+                    const names = pluginTools.get(plugin) || new Set();
+                    names.add(toolDef.name);
+                    pluginTools.set(plugin, names);
+                }
+                return ok;
+            },
+        }
+        : base;
     try {
-        plugin.onInit(lastInitContext);
+        plugin.onInit(context);
     } catch (e) {
         logError(`Plugin init error [${plugin.name}]: ${e.message}`);
     }
 }
 
-/** 卸载前清理（可选钩子），插件可在此释放定时器/文件句柄 */
-function callOnUnload(plugin) {
-    if (!plugin || typeof plugin.onUnload !== 'function') return;
+/** 卸载前清理（可选钩子），并回收该插件注册的工具 */
+async function callOnUnload(plugin) {
+    if (!plugin) return;
+    const names = pluginTools.get(plugin);
+    if (names && names.size > 0) {
+        try {
+            const { unregisterTool } = await import('./tool-registry.js');
+            for (const name of names) {
+                try {
+                    unregisterTool(name);
+                } catch (e) {
+                    logError(`Plugin tool cleanup error [${plugin.name}/${name}]: ${e.message}`);
+                }
+            }
+        } catch (e) {
+            logError(`Plugin tool cleanup error [${plugin.name}]: ${e.message}`);
+        }
+        pluginTools.delete(plugin);
+    }
+    if (typeof plugin.onUnload !== 'function') return;
     try {
         plugin.onUnload();
     } catch (e) {
@@ -97,10 +138,15 @@ export function initPlugins(context) {
 
 export function callPluginHook(hook, ...args) {
     const results = [];
+    if (loadedPlugins.length === 0) return results;
     for (const plugin of loadedPlugins) {
         if (typeof plugin[hook] === 'function') {
             try {
                 const r = plugin[hook](...args);
+                // 钩子可以是 async：吞掉 rejection，避免未处理拒绝杀死进程
+                if (r && typeof r.then === 'function') {
+                    r.catch((e) => logError(`Plugin hook error [${plugin.name}.${hook}]: ${e.message}`));
+                }
                 results.push({ plugin: plugin.name || 'unknown', result: r });
             } catch (e) {
                 logError(`Plugin hook error [${plugin.name}.${hook}]: ${e.message}`);
@@ -137,7 +183,7 @@ export function startPluginWatcher() {
                 if (!fs.existsSync(filePath)) {
                     if (existingIndex !== -1) {
                         const [removed] = loadedPlugins.splice(existingIndex, 1);
-                        callOnUnload(removed);
+                        await callOnUnload(removed);
                         log(`Plugin removed: ${filename}`);
                         notifyChange('remove', filename);
                     }
@@ -147,7 +193,7 @@ export function startPluginWatcher() {
                 const plugin = await loadSinglePlugin(filename);
                 if (!plugin) return;
                 if (existingIndex !== -1) {
-                    callOnUnload(loadedPlugins[existingIndex]);
+                    await callOnUnload(loadedPlugins[existingIndex]);
                     loadedPlugins[existingIndex] = plugin;
                     // 热重载后重新执行 onInit，否则新实例不会注册工具/恢复事件订阅
                     callOnInit(plugin);

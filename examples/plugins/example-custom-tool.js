@@ -22,8 +22,8 @@
  *   4. 插件注册的工具不会经过内置 addAnnotations()，请自行提供 annotations
  *      （只读标记/分类）；若配置了 toolCategories 档位过滤，缺少 annotations.category
  *      的工具不会出现在 tools/list（仍可直接调用）。
- *   5. 热重载只替换插件对象，不会重新执行 onInit：已注册的工具会保留旧 handler，
- *      修改本文件后建议重启 MCP Server 使新定义生效。
+ *   5. 热重载会重新执行 onInit：旧实例注册的工具先被注销，新实例会重新注册，
+ *      因此修改工具定义/handler 后保存即可生效，无需重启 MCP Server。
  *
  * 验证：
  *   - 启动日志：[1/6] 加载插件... ✓ 已加载 N 个插件

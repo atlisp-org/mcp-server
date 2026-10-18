@@ -11,6 +11,7 @@ import {  ERROR_CODES, MCPError } from './errors.js';
 import { withSpan } from './tracing.js';
 import { t } from './i18n.js';
 import { CommandQueue, PRIORITY_NORMAL, ReadBatcher, isReadCommand } from './command-queue.js';
+import { callPluginHook } from './plugin-loader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
@@ -49,6 +50,12 @@ function emitDocumentChanged(info) {
   for (const cb of _docChangeCallbacks) {
     try { cb(info); } catch (e) { logError('doc change callback error:', e.message); }
   }
+  // 插件钩子按 docs/plugins.md 的 payload 约定分发（name/action/path）
+  callPluginHook('onDocumentChanged', {
+    name: info?.docName || '',
+    action: 'changed',
+    path: info?.docPath || '',
+  });
 }
 
 /**
@@ -154,6 +161,7 @@ class CadConnection {
         this._lastHeartbeatResetAt = 0;
         this._commandQueue.enableBatcher();
         this._startMonitor();
+        callPluginHook('onCadConnected', { platform: result.platform, version: result.version });
         return true;
       }
     } catch (e) {
@@ -331,7 +339,7 @@ class CadConnection {
   }
 
   async disconnect() {
-    this._reset();
+    this._reset('disconnect');
     this._cb.reset();
   }
 
@@ -362,7 +370,8 @@ class CadConnection {
     }
   }
 
-  _reset() {
+  _reset(reason = 'reset') {
+    const wasConnected = this.connected;
     this.connected = false;
     setCadConnected(false);
     this._version = null;
@@ -373,6 +382,7 @@ class CadConnection {
     this._clearStall();
     this._commandQueue.clear();
     this._resetWorker();
+    if (wasConnected) callPluginHook('onCadDisconnected', { reason });
   }
 
   _getQueueSize() { return this._commandQueue.size(); }
@@ -965,7 +975,7 @@ export const cad = {
   async getInfo() { return _resolveConn().getInfo(); },
   async disconnect() { return _resolveConn().disconnect(); },
   async ping() { return _resolveConn().ping(); },
-  _reset() { return _resolveConn()._reset(); },
+  _reset(reason) { return _resolveConn()._reset(reason); },
   _getQueueSize() { return _resolveConn()._getQueueSize(); },
   _getRestartCount() { return _resolveConn()._getRestartCount(); },
 };

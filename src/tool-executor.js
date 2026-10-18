@@ -13,6 +13,7 @@ import { mcpErrorResponse, ERROR_CODES, MCPError } from './errors.js';
 import { callCustomTool } from './tool-registry.js';
 import { withSpan } from './tracing.js';
 import { isForwardableTool, forwardToolCall as peerForwardToolCall, getAutoForwardPeer } from './peer-forward.js';
+import { callPluginHook } from './plugin-loader.js';
 
 function resolveConn(instance) {
   if (instance) return pool.getConnection(instance) || resolveCadConnection();
@@ -152,11 +153,37 @@ async function runToolCall(name, args, options) {
 /**
  * 工具调用入口：包一层 OTel span（未启用 tracing 时零开销透传），
  * 并统一规范化 structuredContent（透传/回填 content）。
+ *
+ * 同时在真实调用边界分发插件钩子（docs/plugins.md）：
+ *   onToolCall(name, args) → onToolExecuted({ name, args, result, duration, success })
+ *   失败时额外触发 onError({ message, source, code })。
  */
 export function handleToolCall(name, args, options = {}) {
   return withSpan(`tool.${name}`, {
     'tool.name': name,
     'session.id': options.sessionId || '',
     'tool.readOnly': READ_ONLY_TOOLS.has(name),
-  }, async () => normalizeStructuredResult(await runToolCall(name, args, options)));
+  }, async () => {
+    const startedAt = Date.now();
+    const safeArgs = args || {};
+    callPluginHook('onToolCall', name, safeArgs);
+    try {
+      const result = normalizeStructuredResult(await runToolCall(name, args, options));
+      const success = !result?.isError;
+      callPluginHook('onToolExecuted', {
+        name, args: safeArgs, result, duration: Date.now() - startedAt, success,
+      });
+      if (!success) {
+        const message = result?.content?.[0]?.text || `工具 ${name} 执行失败`;
+        callPluginHook('onError', { message, source: `tool:${name}`, code: 'TOOL_ERROR' });
+      }
+      return result;
+    } catch (e) {
+      callPluginHook('onToolExecuted', {
+        name, args: safeArgs, duration: Date.now() - startedAt, success: false, error: e.message,
+      });
+      callPluginHook('onError', { message: e.message, source: `tool:${name}`, code: e.code || 'UNKNOWN' });
+      throw e;
+    }
+  });
 }

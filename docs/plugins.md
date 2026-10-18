@@ -54,13 +54,14 @@ export default {
 |--------|---------|------|
 | `onInit` | MCP 服务器就绪（及热加载/热重载后） | `{ cad, config, log, registerTool, tools }` |
 | `onUnload` | 热重载替换或删除插件前 | 无 |
-| `onToolExecuted` | 工具调用完成后 | `{ name, args, result, duration, success }` |
+| `onToolCall` | 工具调用开始前 | `(name, args)` |
+| `onToolExecuted` | 工具调用完成后 | `{ name, args, result, duration, success, error? }` |
 | `onCadConnected` | CAD 连接成功 | `{ platform, version }` |
-| `onCadDisconnected` | CAD 断开连接 | `{ reason }` |
-| `onDocumentChanged` | CAD 文档变更 | `{ name, action }` |
-| `onError` | 错误发生 | `{ message, source, code }` |
+| `onCadDisconnected` | CAD 断开连接 | `{ reason }`（`disconnect` / `reset`） |
+| `onDocumentChanged` | CAD 文档变更 | `{ name, action, path }` |
+| `onError` | 工具调用失败或处理器返回 `isError` | `{ message, source, code }` |
 
-> 除 `onInit` / `onUnload` 外，其余钩子由 `callPluginHook(hook, ...args)` 分发；核心当前未在内部事件上自动调用它们，可由其他插件或扩展代码触发。`setup()` 不会被自动调用，仅作为 loader 的加载校验条件（必须是函数）。
+> 以上钩子都会被核心自动分发（`onToolCall`/`onToolExecuted`/`onError` 在 `handleToolCall`，CAD 事件在 `cad.js`）。分发通过 `callPluginHook(hook, ...args)` 完成：同步异常与 async 拒绝都会按插件隔离记录。`setup()` 不会被自动调用，仅作为 loader 的加载校验条件（必须是函数）。
 
 ## 上下文对象说明
 
@@ -114,12 +115,12 @@ context.config.tracingEnabled          // boolean
 
 插件目录通过 `fs.watch` 监听文件变化：
 - **新增** `.js` 文件：自动加载，并用最近一次 `initPlugins` 的上下文调用 `onInit()`
-- **修改** 已加载的插件文件（`change` 或 `rename` 事件，覆盖大多数编辑器的保存方式）：先调用旧实例的 `onUnload()`，再加载新实例并调用 `onInit()`
-- **删除** 插件文件：调用 `onUnload()` 后从已加载列表移除
+- **修改** 已加载的插件文件（`change` 或 `rename` 事件，覆盖大多数编辑器的保存方式）：先调用旧实例的 `onUnload()` 并注销它注册的工具，再加载新实例并调用 `onInit()`
+- **删除** 插件文件：调用 `onUnload()`、注销已注册工具后从列表移除
 
 热重载由 `startPluginWatcher()` 在服务器启动时自动启用。
 
-> 已通过 `registerTool` 注册的工具在热重载后仍指向旧 handler（工具名不能重复注册）。修改插件注册的工具定义时需要重启 MCP Server。
+> 插件通过 `context.registerTool` 注册的工具会自动归属到该插件；热重载/删除时先注销再重新注册，因此工具定义与 handler 都会更新，不会残留旧实现。
 
 ## 官方示例
 

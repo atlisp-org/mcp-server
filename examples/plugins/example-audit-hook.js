@@ -17,13 +17,13 @@
  *   2. 真实分发 API 是 plugin-loader 的 callPluginHook(hookName, ...args)：
  *      它对每个已加载插件查找「与 hookName 同名的方法」并调用，收集
  *      { plugin, result }；插件抛错会被隔离为 { plugin, error }，不影响其他插件。
- *   3. 核心当前只自动调用 onInit(context)（由 initPlugins 触发）；onToolCall /
- *      onToolExecuted 等生命周期钩子按 docs/plugins.md「可用钩子」的 payload 约定
- *      实现，需由调用方执行 callPluginHook('onToolCall', name, args) 分发
- *      （核心的工具执行路径尚未接入分发，也可由其他插件/扩展代码手动触发）。
- *   4. 钩子的返回值只进入 callPluginHook 的结果数组，当前核心不消费它，
- *      所以实际效果是「观察」而非改写工具结果。
- *   5. 热重载会整体替换插件对象（已记录的审计数据随之清空），且不会重新执行 onInit。
+ *   3. 核心在 handleToolCall 中自动分发 onToolCall(name, args) 与
+ *      onToolExecuted({ name, args, result, duration, success })；失败时还会触发
+ *      onError。插件只需实现同名方法即可，无需手动调用 callPluginHook。
+ *   4. 钩子的返回值只进入 callPluginHook 的结果数组，核心不消费它，
+ *      所以实际效果是「观察」而非改写工具结果（如需拦截/改写请用 onToolCall
+ *      抛错，异常会被隔离记录但不会中断调用）。
+ *   5. 热重载会整体替换插件对象（已记录的审计数据随之清空），并重新执行 onInit。
  *
  * 验证：
  *   - 启动日志：[1/6] 加载插件... ✓ 已加载 N 个插件
