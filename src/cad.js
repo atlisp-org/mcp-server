@@ -10,6 +10,7 @@ import {  error as logError, warn as logWarn } from './logger.js';
 import {  ERROR_CODES, MCPError } from './errors.js';
 import { withSpan } from './tracing.js';
 import { t } from './i18n.js';
+import { CommandQueue, PRIORITY_NORMAL, ReadBatcher, isReadCommand } from './command-queue.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workerPath = path.join(__dirname, 'cad-worker.js');
@@ -38,24 +39,6 @@ const MAX_REQUESTS_PER_WORKER = 100; // 每个worker最大处理请求数，超�
 
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
-const PRIORITY_HIGH = 0;
-const PRIORITY_NORMAL = 1;
-const _PRIORITY_LOW = 2;
-const MAX_QUEUE_SIZE = 1000; // 增加队列大小，减少拒绝请求
-
-const READ_PREFIXES = new Set([
-  '(tblnext', '(ssget', '(entget', '(entsel', '(tblsearch',
-  '(layoutlist', '(layoutname', '(getvar', '(getcfg',
-]);
-
-function isReadCommand(code) {
-  const trimmed = code.trim();
-  for (const prefix of READ_PREFIXES) {
-    if (trimmed.startsWith(prefix)) return true;
-  }
-  return false;
-}
-
 const _docChangeCallbacks = [];
 
 export function onDocumentChanged(callback) {
@@ -73,188 +56,11 @@ function emitDocumentChanged(info) {
  * @typedef {{ success: boolean, result?: string, error?: string, rawBase64?: string }} CommandResult
  */
 
-class ReadBatcher {
-  /** @param {object} connection @param {number} maxDelayMs @param {number} maxBatchSize */
-  constructor(connection, maxDelayMs = 50, maxBatchSize = 10) {
-    this._conn = connection;
-    this._batch = [];
-    this._timer = null;
-    this._maxDelayMs = maxDelayMs;
-    this._maxBatchSize = maxBatchSize;
-  }
-
-  add(command, dedupKey) {
-    if (!isReadCommand(command.code)) return false;
-    this._batch.push({ command, dedupKey });
-    if (this._batch.length >= this._maxBatchSize) {
-      this._flush();
-    } else if (!this._timer) {
-      this._timer = setTimeout(() => this._flush(), this._maxDelayMs);
-    }
-    return true;
-  }
-
-  _flush() {
-    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-    const items = this._batch.splice(0);
-    if (items.length === 0) return;
-    if (items.length === 1) {
-      const { command } = items[0];
-      this._conn._commandQueue.enqueueHighPriority(command);
-      return;
-    }
-    const combinedCode = items.map((item, idx) =>
-      `(setq _br${idx} (${item.command.code.replace(/^\(/, '')}))`
-    ).join(' ') + ` (list${items.map((_, idx) => ` _br${idx}`).join('')})`;
-    const combinedCommand = {
-      type: 'sendResult', code: combinedCode, platform: this._conn._platform, encoding: '',
-      _dedupKeys: items.map(item => item.dedupKey).filter(Boolean),
-      resolve: (result) => {
-        if (!result.success || !result.result) {
-          items.forEach(item => item.command.reject(new Error(result.error || 'Batch failed')));
-          return;
-        }
-        try {
-          const parts = typeof result.result === 'string' ? JSON.parse(result.result) : result.result;
-          if (Array.isArray(parts)) {
-            items.forEach((item, idx) => {
-              if (idx < parts.length) {
-                const partStr = typeof parts[idx] === 'string' ? parts[idx] : JSON.stringify(parts[idx]);
-                item.command.resolve({ success: true, result: partStr });
-              } else {
-                item.command.resolve({ success: true, result: 'nil' });
-              }
-            });
-          } else {
-            items.forEach(item => item.command.reject(new Error('Batch result is not an array')));
-          }
-        } catch {
-          items.forEach(item => item.command.reject(new Error('Failed to parse batch result')));
-        }
-      },
-      reject: (err) => {
-        items.forEach(item => item.command.reject(err));
-      }
-    };
-    this._conn._commandQueue.enqueueHighPriority(combinedCommand);
-  }
-}
-
 /**
  * @template T
  * @typedef {{ resolve: (v: T) => void, reject: (e: Error) => void, timeout: NodeJS.Timeout, _skipCb?: boolean }} PendingEntry
  */
 
-class CommandQueue {
-  /** @param {object} connection */
-  constructor(connection) {
-    this._conn = connection;
-    this._queues = [[], [], []];
-    this._processing = false;
-    this._dedupMap = new Map();
-    this._batcher = null;
-  }
-
-  enableBatcher() {
-    if (this._batcher) return;
-    this._batcher = new ReadBatcher(this._conn, config.readBatchWindow, config.readBatchSize);
-  }
-
-  enqueue(command, priority = PRIORITY_NORMAL) {
-    const total = this._queues.reduce((s, q) => s + q.length, 0);
-    if (total >= MAX_QUEUE_SIZE) {
-      command.reject(new Error('Command queue full, try again later'));
-      return;
-    }
-    const dedupKey = this._dedupKey(command);
-    if (dedupKey) {
-      const existing = this._dedupMap.get(dedupKey);
-      if (existing) {
-        if (existing.resolve) {
-          existing.reject(new Error('Deduplicated: replaced by newer command'));
-        }
-        existing.resolve = command.resolve;
-        existing.reject = command.reject;
-        return;
-      }
-    }
-    if (this._batcher && command.type === 'sendResult') {
-      if (this._batcher.add(command, dedupKey)) {
-        if (dedupKey) this._dedupMap.set(dedupKey, command);
-        return;
-      }
-    }
-    this._queues[priority].push(command);
-    if (dedupKey) {
-      this._dedupMap.set(dedupKey, command);
-    }
-    this._process();
-  }
-
-  _dedupKey(command) {
-    if (command.type === 'send' || command.type === 'sendResult') {
-      return command.type + ':' + command.code;
-    }
-    return null;
-  }
-
-  async _process() {
-    if (this._processing) return;
-    this._processing = true;
-    while (this._hasPending()) {
-      const cmd = this._dequeue();
-      if (!cmd) continue;
-      if (cmd._dedupKeys) {
-        for (const k of cmd._dedupKeys) this._dedupMap.delete(k);
-      } else {
-        const dedupKey = this._dedupKey(cmd);
-        if (dedupKey) this._dedupMap.delete(dedupKey);
-      }
-      try {
-        const result = await this._conn._sendMessageInternal(cmd);
-        cmd.resolve(result);
-      } catch (e) {
-        cmd.reject(e);
-      }
-    }
-    this._processing = false;
-  }
-
-  _hasPending() {
-    return this._queues.some(q => q.length > 0);
-  }
-
-  _dequeue() {
-    for (const q of this._queues) {
-      if (q.length > 0) return q.shift();
-    }
-    return null;
-  }
-
-  clear(error) {
-    for (const q of this._queues) {
-      while (q.length) {
-        const cmd = q.shift();
-        cmd.reject(error || new Error('Queue cleared'));
-      }
-    }
-    this._dedupMap.clear();
-  }
-
-  size() {
-    return this._queues.reduce((s, q) => s + q.length, 0);
-  }
-
-  enqueueHighPriority(command) {
-    const total = this._queues.reduce((s, q) => s + q.length, 0);
-    if (total >= MAX_QUEUE_SIZE) {
-      command.reject(new Error('Command queue full, try again later'));
-      return;
-    }
-    this._queues[PRIORITY_HIGH].push(command);
-    this._process();
-  }
-}
 
 /**
  * @typedef {import('child_process').ChildProcess} ChildProcess

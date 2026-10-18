@@ -178,4 +178,27 @@ describe('ReadBatcher', () => {
         expect(c1.resolve).toHaveBeenCalled();
         expect(c2.resolve).toHaveBeenCalled();
     });
+
+  it('批处理同步 flush 后不会残留去重键（后续同码请求不能被吞）', async () => {
+    const conn = {
+      _platform: 'AutoCAD',
+      _sendMessageInternal: vi.fn().mockResolvedValue({ success: true, result: '["nil"]' }),
+    };
+    const q = new CommandQueue(conn);
+    conn._commandQueue = q;
+    // maxBatchSize=1：add() 内同步 flush，暴露「flush 后再写回 dedupMap」的竞态
+    q._batcher = new ReadBatcher(conn, 1000, 1);
+    const make = () => ({
+      type: 'sendResult', code: '(getvar "CLAYER")', platform: 'AutoCAD', encoding: '',
+      resolve: vi.fn(), reject: vi.fn(),
+    });
+    const c1 = make();
+    const c2 = make();
+    q.enqueue(c1);
+    q.enqueue(c2);
+    await new Promise(r => setTimeout(r, 20));
+    expect(conn._sendMessageInternal).toHaveBeenCalledTimes(2);
+    expect(c1.resolve).toHaveBeenCalled();
+    expect(c2.resolve).toHaveBeenCalled();
+  });
 });
