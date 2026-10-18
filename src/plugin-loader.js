@@ -8,6 +8,8 @@ const PLUGIN_DIR = path.join(os.homedir(), '.atlisp', 'mcp-plugins');
 let loadedPlugins = [];
 const watchCallbacks = [];
 let watcher = null;
+/** 正在重载的文件，避免 fs.watch 对同一次保存连发 rename/change 时重复 import */
+const reloadingFiles = new Set();
 
 export function getPluginDir() {
     return PLUGIN_DIR;
@@ -23,22 +25,15 @@ function notifyChange(type, name) {
     }
 }
 
-function clearModuleCache(pluginPath) {
-    const resolved = require?.resolve?.(pluginPath);
-    if (resolved && delete require.cache[resolved]) {
-        delete require.cache[resolved];
-    }
-    // Also clear from import cache
-    const key = Object.keys(import.meta).find(k => import.meta[k] === pluginPath);
-    if (key) delete import.meta[key];
-}
+// ESM 没有 require.cache；热重载靠 import 的 `?t=` 查询串绕过模块缓存。
+// （旧实现用 require.cache，在纯 ESM 运行时会抛 ReferenceError，导致所有插件加载失败。）
 
 export async function loadSinglePlugin(file) {
     const pluginPath = path.join(PLUGIN_DIR, file);
-    clearModuleCache(pluginPath);
     try {
         const plugin = await import(`${pluginPath}?t=${Date.now()}`);
         if (plugin.default && typeof plugin.default.setup === 'function') {
+            plugin.default._file = file;
             return plugin.default;
         }
         logError(`Plugin ${file} has no default.setup() export`);
@@ -71,13 +66,32 @@ export function getPlugins() {
     return loadedPlugins;
 }
 
+/** 最近一次 initPlugins(context) 的上下文：热重载的新插件也需要它才能完成 onInit 注册 */
+let lastInitContext = null;
+
+function callOnInit(plugin) {
+    if (!lastInitContext || typeof plugin.onInit !== 'function') return;
+    try {
+        plugin.onInit(lastInitContext);
+    } catch (e) {
+        logError(`Plugin init error [${plugin.name}]: ${e.message}`);
+    }
+}
+
+/** 卸载前清理（可选钩子），插件可在此释放定时器/文件句柄 */
+function callOnUnload(plugin) {
+    if (!plugin || typeof plugin.onUnload !== 'function') return;
+    try {
+        plugin.onUnload();
+    } catch (e) {
+        logError(`Plugin unload error [${plugin.name}]: ${e.message}`);
+    }
+}
+
 export function initPlugins(context) {
+    lastInitContext = context;
     for (const plugin of loadedPlugins) {
-        try {
-            if (typeof plugin.onInit === 'function') plugin.onInit(context);
-        } catch (e) {
-            logError(`Plugin init error [${plugin.name}]: ${e.message}`);
-        }
+        callOnInit(plugin);
     }
 }
 
@@ -109,34 +123,46 @@ export function startPluginWatcher() {
         }
         watcher = fs.watch(PLUGIN_DIR, async (eventType, filename) => {
             if (!filename || !filename.endsWith('.js') || filename.startsWith('_')) return;
+            // rename = 新增/删除，change = 原地保存（多数编辑器的默认保存方式）
+            if (eventType !== 'rename' && eventType !== 'change') return;
+            if (reloadingFiles.has(filename)) return;
+            reloadingFiles.add(filename);
 
-            const existingIndex = loadedPlugins.findIndex(p => p.name === filename.replace('.js', '') || p._file === filename);
-
-            if (eventType === 'rename') {
-                // Check if file was deleted or added
+            try {
                 const filePath = path.join(PLUGIN_DIR, filename);
+                const existingIndex = loadedPlugins.findIndex(
+                    (p) => p._file === filename || p.name === filename.replace(/\.js$/, '')
+                );
+
                 if (!fs.existsSync(filePath)) {
-                    // Deleted
                     if (existingIndex !== -1) {
-                        loadedPlugins.splice(existingIndex, 1);
+                        const [removed] = loadedPlugins.splice(existingIndex, 1);
+                        callOnUnload(removed);
                         log(`Plugin removed: ${filename}`);
                         notifyChange('remove', filename);
                     }
-                } else {
-                    // Added or updated
-                    const plugin = await loadSinglePlugin(filename);
-                    if (plugin) {
-                        plugin._file = filename;
-                        if (existingIndex !== -1) {
-                            loadedPlugins[existingIndex] = plugin;
-                            log(`Plugin reloaded: ${plugin.name || filename}`);
-                        } else {
-                            loadedPlugins.push(plugin);
-                            log(`Plugin loaded: ${plugin.name || filename}`);
-                        }
-                        notifyChange('add', filename);
-                    }
+                    return;
                 }
+
+                const plugin = await loadSinglePlugin(filename);
+                if (!plugin) return;
+                if (existingIndex !== -1) {
+                    callOnUnload(loadedPlugins[existingIndex]);
+                    loadedPlugins[existingIndex] = plugin;
+                    // 热重载后重新执行 onInit，否则新实例不会注册工具/恢复事件订阅
+                    callOnInit(plugin);
+                    log(`Plugin reloaded: ${plugin.name || filename}`);
+                    notifyChange('update', filename);
+                } else {
+                    loadedPlugins.push(plugin);
+                    callOnInit(plugin);
+                    log(`Plugin loaded: ${plugin.name || filename}`);
+                    notifyChange('add', filename);
+                }
+            } catch (e) {
+                logError(`Plugin watcher reload error [${filename}]: ${e.message}`);
+            } finally {
+                reloadingFiles.delete(filename);
             }
         });
         log(`Plugin watcher started on ${PLUGIN_DIR}`);

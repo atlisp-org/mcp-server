@@ -21,7 +21,13 @@ export default {
   name: 'example-plugin',
 
   /**
-   * 插件初始化函数，在服务器启动时调用一次。
+   * 可选：插件首次加载时不会由核心自动调用（loader 只校验它是函数）。
+   * 初始化逻辑请放在 onInit 里，或在 onInit 中转发调用 setup。
+   */
+  setup() {},
+
+  /**
+   * 服务器就绪后调用（启动时一次；热加载/热重载后也会调用）。
    * @param {object} context - 上下文对象
    * @param {object} context.cad - CAD 连接对象（CadConnection 实例）
    * @param {object} context.config - 当前配置对象
@@ -29,21 +35,16 @@ export default {
    * @param {function} context.registerTool - 动态注册新工具的函数
    * @param {Array} context.tools - 当前所有工具定义数组
    */
-  setup() {
-    this.log('Example plugin loaded');
+  onInit(context) {
+    context.log('Server ready, CAD connected:', context.cad.connected);
   },
 
-  /**
-   * 服务器完全就绪后调用（MCP 连接建立后）。
-   * @param {object} context - 与 setup 相同的上下文对象
-   */
-  onInit(context) {
-    this.log('Server ready, CAD connected:', context.cad.connected);
-  },
+  /** 可选：插件被热重载替换或删除前调用，用于清理定时器/文件句柄 */
+  onUnload() {},
 };
 ```
 
-> `setup()` 在插件首次加载时调用；`onInit()` 在 MCP 服务器完全就绪后调用。
+> `onInit()` 由 `initPlugins(context)` 在服务器就绪后调用；插件热加载/热重载后，loader 会用最近一次 `initPlugins` 的上下文再调用一次 `onInit()`，因此注册工具的逻辑应写成幂等的（先检查 `context.tools` 是否已有同名工具）。
 
 ## 可用钩子
 
@@ -51,12 +52,15 @@ export default {
 
 | 钩子名 | 调用时机 | 参数 |
 |--------|---------|------|
-| `onInit` | MCP 服务器就绪 | `{ cad, config, log, registerTool, tools }` |
+| `onInit` | MCP 服务器就绪（及热加载/热重载后） | `{ cad, config, log, registerTool, tools }` |
+| `onUnload` | 热重载替换或删除插件前 | 无 |
 | `onToolExecuted` | 工具调用完成后 | `{ name, args, result, duration, success }` |
 | `onCadConnected` | CAD 连接成功 | `{ platform, version }` |
 | `onCadDisconnected` | CAD 断开连接 | `{ reason }` |
 | `onDocumentChanged` | CAD 文档变更 | `{ name, action }` |
 | `onError` | 错误发生 | `{ message, source, code }` |
+
+> 除 `onInit` / `onUnload` 外，其余钩子由 `callPluginHook(hook, ...args)` 分发；核心当前未在内部事件上自动调用它们，可由其他插件或扩展代码触发。`setup()` 不会被自动调用，仅作为 loader 的加载校验条件（必须是函数）。
 
 ## 上下文对象说明
 
@@ -75,23 +79,24 @@ context.cad.getStallInfo()     // { stalled, reason, remainingMs }
 ### registerTool（动态注册工具）
 
 ```js
-// 注册一个自定义工具
-context.registerTool({
-  name: 'my_custom_tool',
-  description: '自定义工具描述',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      input: { type: 'string', description: '输入参数' },
+// 注册一个自定义工具：registerTool(toolDef, handler)
+context.registerTool(
+  {
+    name: 'my_custom_tool',
+    description: '自定义工具描述',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        input: { type: 'string', description: '输入参数' },
+      },
+      required: ['input'],
     },
-    required: ['input'],
   },
-  // handler 函数（可选，定义后该工具会出现在 tools/list 中）
-  handler: async (args, { notifyProgress }) => {
+  async (args, { notifyProgress } = {}) => {
     const result = await context.cad.sendCommandWithResult(`(princ "${args.input}")`);
     return { content: [{ type: 'text', text: result }] };
   },
-});
+);
 ```
 
 ### config（配置对象）
@@ -108,20 +113,40 @@ context.config.tracingEnabled          // boolean
 ## 热重载
 
 插件目录通过 `fs.watch` 监听文件变化：
-- **新增** `.js` 文件：自动加载并调用 `setup()`
-- **修改** 已加载的插件文件：重新加载（先卸载旧实例，再加载新实例）
-- **删除** 插件文件：自动从已加载列表移除
+- **新增** `.js` 文件：自动加载，并用最近一次 `initPlugins` 的上下文调用 `onInit()`
+- **修改** 已加载的插件文件（`change` 或 `rename` 事件，覆盖大多数编辑器的保存方式）：先调用旧实例的 `onUnload()`，再加载新实例并调用 `onInit()`
+- **删除** 插件文件：调用 `onUnload()` 后从已加载列表移除
 
 热重载由 `startPluginWatcher()` 在服务器启动时自动启用。
+
+> 已通过 `registerTool` 注册的工具在热重载后仍指向旧 handler（工具名不能重复注册）。修改插件注册的工具定义时需要重启 MCP Server。
+
+## 官方示例
+
+`examples/plugins/` 下有三个可直接拷入插件目录的示例：
+
+| 文件 | 演示内容 |
+|------|---------|
+| `example-custom-tool.js` | 通过 `registerTool` 注册只读工具 `echo_debug` |
+| `example-audit-hook.js` | `onToolCall` / `onToolExecuted` 生命周期观察与审计 |
+| `example-event-logger.js` | CAD 连接/断开、图纸变更、错误事件记录 |
+
+```bash
+cp examples/plugins/*.js ~/.atlisp/mcp-plugins/
+```
 
 ## 插件示例：审计日志
 
 ```js
 // ~/.atlisp/mcp-plugins/audit-log.js
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
 export default {
   name: 'audit-log',
 
-  setup() {
+  onInit() {
     this._calls = [];
   },
 
@@ -136,16 +161,14 @@ export default {
 
     // 每 10 次调用写入文件
     if (this._calls.length >= 10) {
-      const fs = require('fs');
-      const path = require('path');
-      const logPath = path.join(
-        require('os').homedir(),
-        '.atlisp',
-        'tool-audit.json'
-      );
+      const logPath = path.join(os.homedir(), '.atlisp', 'tool-audit.json');
       fs.appendFileSync(logPath, this._calls.map(c => JSON.stringify(c)).join('\n') + '\n');
       this._calls = [];
     }
+  },
+
+  onUnload() {
+    this._calls = [];
   },
 };
 ```
@@ -175,5 +198,6 @@ export default {
 
 1. **安全**：插件可访问 `cad` 对象，可发送任意 LISP 代码到 CAD。确保插件来源可信。
 2. **错误隔离**：单个插件的错误不会影响其他插件或 MCP 服务器主进程。
-3. **生命周期**：`setup()` 只调用一次（首次加载或热重载时），`onInit()` 在每次 MCP 就绪后调用。
-4. **CommonJS 兼容**：插件以 ES Module 动态 `import()` 加载。如果需要使用 CommonJS 模块，请通过 `createRequire` 转换。
+3. **生命周期**：`onInit()` 在启动时调用一次；热加载/热重载后针对新实例再次调用。`onUnload()` 在替换/删除前调用，请在此清理定时器与句柄。`setup()` 不会被核心自动调用。
+4. **ESM**：插件以 ES Module 动态 `import()` 加载，不能使用 `require`。需要 CommonJS 能力时用 `import { createRequire } from 'module'` 转换。
+5. **热重载与定时器**：`onUnload()` 中务必清理 `setInterval`/`setTimeout`，否则旧实例会在后台持续运行。

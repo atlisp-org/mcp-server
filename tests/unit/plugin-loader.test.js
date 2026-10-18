@@ -66,6 +66,7 @@ describe('loadPlugins', () => {
     const result = await loader.loadPlugins();
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('good');
+    expect(result[0]._file).toBe('good.js');
     expect(typeof result[0].setup).toBe('function');
     expect(loader.getPlugins()).toBe(result);
   });
@@ -150,6 +151,19 @@ describe('插件目录监听（fs.watch 被 mock，手动驱动回调）', () =>
     await watcherCb('rename', 'hot.js');
     expect(loader.getPlugins().some(p => p._file === 'hot.js')).toBe(true);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Plugin reloaded'));
+    expect(changes).toContainEqual(['update', 'hot.js']);
+
+    // 原地保存（change）也要热重载——多数编辑器保存时只发 change 事件
+    await new Promise(r => setTimeout(r, 5));
+    writePlugin('inplace.js', `export default { name: 'inplace', setup() {} };`);
+    await watcherCb('change', 'inplace.js');
+    expect(loader.getPlugins().map(p => p.name)).toContain('inplace');
+    expect(changes).toContainEqual(['add', 'inplace.js']);
+
+    await new Promise(r => setTimeout(r, 5));
+    writePlugin('inplace.js', `export default { name: 'inplace2', setup() {} };`);
+    await watcherCb('change', 'inplace.js');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Plugin reloaded'));
 
     // 删除
     fs.unlinkSync(path.join(PLUGIN_DIR, 'hot.js'));
@@ -157,11 +171,15 @@ describe('插件目录监听（fs.watch 被 mock，手动驱动回调）', () =>
     expect(loader.getPlugins().some(p => p._file === 'hot.js')).toBe(false);
     expect(changes).toContainEqual(['remove', 'hot.js']);
 
+    // 删除同样是 change 事件时也能移除
+    fs.unlinkSync(path.join(PLUGIN_DIR, 'inplace.js'));
+    await watcherCb('change', 'inplace.js');
+    expect(loader.getPlugins().some(p => p._file === 'inplace.js')).toBe(false);
+
     // 下划线文件与非 .js 被忽略
     writePlugin('_ignored.js', `export default { name: 'ignored', setup() {} };`);
     await watcherCb('rename', '_ignored.js');
-    await watcherCb('rename', null);
-    await watcherCb('change', 'hot.js'); // 非 rename 事件不处理
+    await watcherCb(null, null);
     expect(loader.getPlugins().some(p => p.name === 'ignored')).toBe(false);
     expect(changes).not.toContainEqual(['add', '_ignored.js']);
 
@@ -173,5 +191,48 @@ describe('插件目录监听（fs.watch 被 mock，手动驱动回调）', () =>
     loader.startPluginWatcher();
     expect(watchSpy).toHaveBeenCalledTimes(2);
     loader.stopPluginWatcher();
+  });
+
+  it('热加载的新插件收到 onInit；重载/删除前调用 onUnload', async () => {
+    fs.mkdirSync(PLUGIN_DIR, { recursive: true });
+    let watcherCb = null;
+    vi.spyOn(fs, 'watch').mockImplementation((dir, cb) => {
+      watcherCb = cb;
+      return { close: vi.fn() };
+    });
+
+    const ctx = { log: vi.fn() };
+    loader.initPlugins(ctx);
+    globalThis.__lifeInit = 0;
+    globalThis.__lifeUnload = 0;
+    try {
+      const body = (extra = '') => `export default {
+        name: 'life', setup() {},
+        onInit(c) { globalThis.__lifeInit += 1; globalThis.__lifeCtx = c; },
+        onUnload() { globalThis.__lifeUnload += 1; }${extra}
+      };`;
+      writePlugin('life.js', body());
+      loader.startPluginWatcher();
+      await watcherCb('rename', 'life.js');
+
+      // 热加载的新插件也要拿到 init 上下文并执行 onInit（否则不会注册工具）
+      expect(globalThis.__lifeInit).toBe(1);
+      expect(globalThis.__lifeCtx).toBe(ctx);
+
+      await new Promise(r => setTimeout(r, 5));
+      writePlugin('life.js', body());
+      await watcherCb('change', 'life.js');
+      expect(globalThis.__lifeUnload).toBe(1);
+      expect(globalThis.__lifeInit).toBe(2);
+
+      fs.unlinkSync(path.join(PLUGIN_DIR, 'life.js'));
+      await watcherCb('rename', 'life.js');
+      expect(globalThis.__lifeUnload).toBe(2);
+    } finally {
+      loader.stopPluginWatcher();
+      delete globalThis.__lifeInit;
+      delete globalThis.__lifeUnload;
+      delete globalThis.__lifeCtx;
+    }
   });
 });
