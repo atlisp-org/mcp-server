@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.4] - 2026-10-18
+
+### 更新内容
+
+- feat(tray): add Windows tray manager and publish exe via npm (d35fdc4)
+
 ## [1.11.3] - 2026-10-18
 
 ### 更新内容
