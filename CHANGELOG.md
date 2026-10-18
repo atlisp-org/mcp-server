@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.3] - 2026-10-18
+
+### 更新内容
+
+- feat(report): ERROR 日志上报到 atlisp.cn 用于聚类改进 (db80816)
+
 ## [1.11.2] - 2026-10-18
 
 ### 更新内容
