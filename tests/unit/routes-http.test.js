@@ -47,7 +47,11 @@ const eventBusMock = vi.hoisted(() => ({
 
 vi.mock('../../src/cad.js', () => ({ cad: cadMock }));
 vi.mock('../../src/cad-pool.js', () => ({
-  pool: { getStats: () => ({ total: 0, active: null, instances: [] }), getConnection: () => null },
+  pool: {
+    getStats: () => ({ total: 0, active: null, instances: [] }),
+    getConnection: () => null,
+    onInstanceSwitch: vi.fn(),
+  },
 }));
 vi.mock('../../src/peer-manager.js', () => ({ default: peerMock }));
 vi.mock('../../src/cad-event-bus.js', () => eventBusMock);

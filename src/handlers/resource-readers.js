@@ -12,6 +12,7 @@ import { log } from '../logger.js';
 import config from '../config.js';
 import { getCached, setCache } from './resource-cache.js';
 import { parseLispList, parseLispRecursive, escapeLispString } from '../handler-utils.js';
+import { cleanCadText } from '../text-clean.js';
 import { ensureCad, propertyPairsToObject } from './resource-utils.js';
 import {
   buildEntityPropertiesCode,
@@ -230,13 +231,17 @@ async function getTextContent(params = {}) {
         const key = item[i];
         const val = item[i + 1];
         if (key === 'text') obj.text = String(val || '');
+        else if (key === 'type') obj.type = String(val || '');
+        else if (key === 'layer') obj.layer = String(val || '');
         else if (key === 'position') {
           obj.position = Array.isArray(val) ? val.map(v => typeof v === 'number' ? v : 0) : [];
         }
         else if (key === 'height') obj.height = typeof val === 'number' ? val : 2.5;
         else if (key === 'handle') obj.handle = String(val || '');
       }
-      return obj.text ? obj : null;
+      /* plainText 是 MCP 侧清洗结果；text 保留原始组码 1，兼容老客户端。 */
+      obj.plainText = cleanCadText(obj.text);
+      return (obj.text || obj.plainText) ? obj : null;
     }).filter(Boolean);
 
     setCache(cacheKey, data);
@@ -277,16 +282,17 @@ async function combineText(params = {}) {
 
   const rows = [];
   for (const item of texts) {
-    if (!item.text) continue;
+    const itemText = item.plainText || item.text;
+    if (!itemText) continue;
     const [x, y] = item.position || [0, 0];
     let matched = null;
     for (const row of rows) {
       if (Math.abs(row.y - y) <= yTolerance) { matched = row; break; }
     }
     if (matched) {
-      matched.items.push({ x, text: item.text, height: item.height || mh });
+      matched.items.push({ x, text: itemText, height: item.height || mh });
     } else {
-      rows.push({ y, items: [{ x, text: item.text, height: item.height || mh }] });
+      rows.push({ y, items: [{ x, text: itemText, height: item.height || mh }] });
     }
   }
 

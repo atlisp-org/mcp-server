@@ -152,7 +152,13 @@ export function parseLispRecursive(str) {
         else if (str[pos] === 'n') r += '\n';
         else if (str[pos] === 't') r += '\t';
         else if (str[pos] === '\\') r += '\\';
-        else r += str[pos];
+        else {
+          /* 未知转义必须保留反斜杠：AutoCAD 的 `\U+0084`、MTEXT 的 `\P`/`\H2.5x;`
+             都是**内容控制码**，不是 Lisp 字符串转义。丢掉反斜杠会让 agent 收到
+             字面量 `U+0084`，既洗不掉也认不出（线上天正钢筋符号就是这么消失的）。 */
+          r += '\\';
+          r += str[pos];
+        }
       } else { r += str[pos]; }
       pos++;
     }

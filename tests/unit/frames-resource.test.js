@@ -347,6 +347,44 @@ describe('归一化（normalizeFramesPayload / normalizeFrameRecord）', () => {
     expect(res.unmatched).toEqual([]);
   });
 
+  it('全量响应按 bbox 去重：属性块优先，deduped 计数', () => {
+    const parsed = [
+      ['total', 2],
+      [
+        'frames',
+        [
+          [
+            ['handle', 'G1'],
+            ['bbox', [0, 0, 100, 100]],
+            ['source', 'polyline'],
+            ['paperSize', 'A2'],
+            ['scale', 100],
+            ['width', 100],
+            ['height', 100],
+          ],
+          [
+            ['handle', 'A1'],
+            ['bbox', [0, 0, 100, 100]],
+            ['source', 'attr-block'],
+            ['paperSize', 'A2'],
+            ['scale', 100],
+            ['width', 100],
+            ['height', 100],
+          ],
+        ],
+      ],
+      ['unmatched', []],
+    ];
+    const res = normalizeFramesPayload(parsed, { offset: 0, limit: 500 });
+
+    expect(res.frameCount).toBe(1);
+    expect(res.deduped).toBe(1);
+    expect(res.total).toBe(1);
+    expect(res.totalRaw).toBe(2);
+    expect(res.frames[0].source).toBe('attr-block');
+    expect(res.sources).toEqual({ 'attr-block': 1, polyline: 0 });
+  });
+
   it('空结果/缺字段不炸：frames=null → 空数组，计数为 0', () => {
     const res = normalizeFramesPayload([['total', 0], ['frames', null], ['unmatched', null]], { offset: 0, limit: 500 });
     expect(res).toMatchObject({

@@ -494,6 +494,9 @@ export function buildTextContentCode({ layer, bbox, offset, limit }) {
     `'(0 . "TEXT")`,
     `'(0 . "MTEXT")`,
     `'(0 . "ATTRIB")`,
+    /* 天正自定义文字对象：不查它们，天正图纸的图名/说明会整段缺失。 */
+    `'(0 . "TCH_TEXT")`,
+    `'(0 . "TCH_MTEXT")`,
     `'(-4 . "OR>")`,
   ];
   if (layer) items.push(`(cons 8 "${escapeLispString(layer)}")`);
@@ -520,10 +523,14 @@ export function buildTextContentCode({ layer, bbox, offset, limit }) {
     (setq total (sslength ss) i ${offset} texts nil)
     (while (and (< i total) (< (length texts) ${limit}))
       (setq ent (ssname ss i) ed (entget ent) ins (cdr (assoc 10 ed)))
-      (setq typ (cdr (assoc 0 ed)) h (cdr (assoc 40 ed)))
+      (setq typ (cdr (assoc 0 ed)) lay (cdr (assoc 8 ed))
+            h (cdr (assoc 40 ed)) txt (cdr (assoc 1 ed)))
       (if (null h) (setq h 2.5))
+      (if (null ins) (setq ins (list 0.0 0.0 0.0)))
       (setq texts (append texts (list (list
-        "text" (vl-prin1-to-string (cdr (assoc 1 ed)))
+        "text" (if (null txt) "" (vl-prin1-to-string txt))
+        "type" (if (null typ) "" typ)
+        "layer" (if (null lay) "" lay)
         "position" (list (car ins) (cadr ins) (caddr ins))
         "height" h
         "handle" (cdr (assoc 5 ed))
@@ -647,13 +654,16 @@ export function buildBlockRefsCode(filterBlockName, offset = 0, limit = 0) {
  *   detailed 追加图层明细、块定义明细与全量 blockUsage。
  */
 export function buildDrawingAnalysisCode(type = 'summary') {
-  const wantDetailed = String(type).toLowerCase() === 'detailed';
-  // blockUsage 条数上限：summary 50 条，detailed 不截断
+  const normalized = String(type).toLowerCase();
+  const wantDetailed = normalized === 'detailed';
+  /* facts = summary 的统计 + 图层明细（不含 blockDefs）；给浏览器/agent 一次取齐。 */
+  const wantFacts = normalized === 'facts' || wantDetailed;
+  // blockUsage 条数上限：summary/facts 50 条，detailed 不截断
   const cap = wantDetailed ? 0 : 50;
-  const layersDetail = wantDetailed
+  const layersDetail = wantFacts
     ? '(setq layers (cons (list (list "name" ln) (list "color" (if (< lc 0) (- lc) lc)) (list "off" (< lc 0)) (list "frozen" (= 1 (logand 1 lf))) (list "locked" (= 4 (logand 4 lf))) (list "linetype" ll)) layers))'
     : '';
-  const layersOut = wantDetailed ? '(setq r (cons (list "layers" layers) r))' : '';
+  const layersOut = wantFacts ? '(setq r (cons (list "layers" layers) r))' : '';
   const capBlocks = cap > 0
     ? `(if (> (length blocks) ${cap})
   (progn
@@ -739,19 +749,27 @@ ${capBlocks}
 (setq r (cons (list "layerCount" lcount) r))
 (setq r (cons (list "layerState" (list (list "off" loff) (list "frozen" lfrozen) (list "locked" llocked))) r))
 ${layersOut}
-;; 4) 文字数量与字高区间
-(if (setq ts (ssget "_X" '((0 . "TEXT,MTEXT"))))
+;; 4) 文字数量 / 字高 / 类型分布 / 图层分布（单次遍历）
+(setq tcnt nil tlays nil)
+(if (setq ts (ssget "_X" '((0 . "TEXT,MTEXT,ATTRIB,TCH_TEXT,TCH_MTEXT"))))
   (progn
     (setq tc (sslength ts) th nil ti 0)
     (while (< ti tc)
-      (setq h (cdr (assoc 40 (entget (ssname ts ti)))))
+      (setq ed (entget (ssname ts ti)))
+      (setq typ (cdr (assoc 0 ed)) lay (cdr (assoc 8 ed)) h (cdr (assoc 40 ed)))
       (if h (setq th (cons h th)))
+      (if typ (setq tcnt (if (assoc typ tcnt) (subst (cons typ (1+ (cdr (assoc typ tcnt)))) (assoc typ tcnt) tcnt) (cons (cons typ 1) tcnt))))
+      (if lay (setq tlays (if (assoc lay tlays) (subst (cons lay (1+ (cdr (assoc lay tlays)))) (assoc lay tlays) tlays) (cons (cons lay 1) tlays))))
       (setq ti (1+ ti)))
     (setq th (vl-sort th '<))
     (setq r (cons (list "textCount" tc) r))
+    (setq r (cons (list "textTypes" tcnt) r))
+    (setq r (cons (list "textLayers" tlays) r))
     (setq r (cons (list "textHeights" (list (list "min" (car th)) (list "max" (last th)) (list "median" (nth (fix (/ (length th) 2)) th)))) r)))
   (progn
     (setq r (cons (list "textCount" 0) r))
+    (setq r (cons (list "textTypes" nil) r))
+    (setq r (cons (list "textLayers" nil) r))
     (setq r (cons (list "textHeights" nil) r))))
 ;; 5) 关键系统变量
 (setq r (cons (list "sysvars" (list

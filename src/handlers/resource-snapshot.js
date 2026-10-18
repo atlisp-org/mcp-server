@@ -160,7 +160,8 @@ export async function getDrawingAnalysis(params = {}) {
   }
 
   // 未知取值一律回落 summary，避免调用方拼错参数时拿到 543 KB 级的大响应
-  const type = String(params?.type || 'summary').toLowerCase() === 'detailed' ? 'detailed' : 'summary';
+  const requested = String(params?.type || 'summary').toLowerCase();
+  const type = requested === 'detailed' || requested === 'facts' ? requested : 'summary';
 
   try {
     const resultStr = await cad.sendCommandWithResult(buildDrawingAnalysisCode(type));
@@ -189,14 +190,19 @@ export async function getDrawingAnalysis(params = {}) {
       layerState: normalizeRecord(raw.layerState),
       textCount: toCount(raw.textCount),
       textHeights: normalizeRecord(raw.textHeights),
+      /* TEXT/MTEXT/ATTRIB/TCH_* 类型与图层分布：页面/agent 不用再从控制码猜。 */
+      textTypes: normalizeRecord(raw.textTypes) || {},
+      textLayers: normalizeRecord(raw.textLayers) || {},
       blockRefCount: toCount(raw.blockRefCount),
       blockCount: toCount(raw.blockCount),
       blockUsage: normalizeBlockUsage(raw.blockUsage),
       sysvars: normalizeRecord(raw.sysvars) || {},
     };
 
-    if (type === 'detailed') {
+    if (type === 'detailed' || type === 'facts') {
       analysis.layers = normalizeRecords(raw.layers);
+    }
+    if (type === 'detailed') {
       analysis.blockDefCount = toCount(raw.blockDefCount);
       analysis.blockDefs = normalizeBlockDefs(raw.blockDefs);
     }
@@ -356,25 +362,51 @@ function payloadToObject(parsed) {
  * @param {unknown} parsed parseLispRecursive 的结果
  * @param {{offset:number, limit:number}} options 生效的 offset/limit（LISP 已切片，这里只回填）
  */
+/** 属性块通道与几何通道可能对同一图框各报一次；全量响应按 bbox 去重，属性块优先。 */
+function dedupeFrameRecords(frames) {
+  const out = [];
+  const index = new Map();
+
+  for (const f of frames) {
+    const key = Array.isArray(f.bbox) ? f.bbox.map((n) => Math.round(Number(n) || 0)).join(',') : `h:${f.handle || ''}`;
+    const at = index.get(key);
+
+    if (at === undefined) {
+      index.set(key, out.length);
+      out.push(f);
+    } else if (f.source === 'attr-block' && out[at].source !== 'attr-block') {
+      out[at] = f;
+    }
+  }
+  return out;
+}
+
 export function normalizeFramesPayload(parsed, options = {}) {
   const offset = toCount(options.offset);
   const limit = toCount(options.limit);
   const raw = Array.isArray(parsed) ? payloadToObject(parsed) : {};
-  const frames = normalizeRecords(raw.frames).map(normalizeFrameRecord).filter(Boolean);
+  const framesRaw = normalizeRecords(raw.frames).map(normalizeFrameRecord).filter(Boolean);
   const unmatched = normalizeRecords(raw.unmatched).map(normalizeUnmatchedRecord).filter(Boolean);
   // total 是**全量** frame 数（不受 offset/limit 影响，LISP 侧切片前统计），
   // 便于调用方断言分页收敛；LISP 缺字段时退回本页条数。
-  const total = raw.total === undefined ? frames.length : toCount(raw.total);
+  const totalRaw = raw.total === undefined ? framesRaw.length : toCount(raw.total);
+  /* 分页请求不能跨页去重（下一页可能还有同一个图框的另一通道）；只有拿全量时
+     才合并。默认 limit=500、图框通常几十个，实际都走全量。 */
+  const full = limit === 0 || (totalRaw > 0 && limit >= totalRaw);
+  const frames = full ? dedupeFrameRecords(framesRaw) : framesRaw;
+  const total = full ? frames.length : totalRaw;
   // sources 统计**本页** frames 的来源分布（与 frameCount 同口径）；
   // 属性块通道优先，二者之和恒等于 frames.length。
   const sources = { 'attr-block': 0, polyline: 0 };
   for (const f of frames) sources[f.source] += 1;
   return {
     total,
+    totalRaw,
+    deduped: framesRaw.length - frames.length,
     offset,
     limit,
     // nextOffset 是下一页的绝对下标（= offset + 本页条数）；>= total 表示没有下一页
-    nextOffset: raw.nextOffset === undefined ? offset + frames.length : toCount(raw.nextOffset),
+    nextOffset: raw.nextOffset === undefined ? offset + framesRaw.length : toCount(raw.nextOffset),
     frameCount: frames.length,
     unmatchedCount: unmatched.length,
     sources,
@@ -385,6 +417,8 @@ export function normalizeFramesPayload(parsed, options = {}) {
 
 const EMPTY_FRAMES = {
   total: 0,
+  totalRaw: 0,
+  deduped: 0,
   frameCount: 0,
   unmatchedCount: 0,
   sources: { 'attr-block': 0, polyline: 0 },

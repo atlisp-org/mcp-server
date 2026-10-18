@@ -207,14 +207,28 @@ describe('getTextContent', () => {
     const res = await er.getTextContent();
     expect(res.total).toBe(4);
     expect(res.texts).toEqual([
-      { text: 'Hello', position: [1, 2], height: 3.5, handle: 'A1' },
-      { text: 'X', position: [0, 0], height: 2.5, handle: '' }, // height 非数字→2.5
-      { text: 'Y', position: [], height: 2, handle: 'H9' }, // position 非数组→[]
+      { text: 'Hello', plainText: 'Hello', position: [1, 2], height: 3.5, handle: 'A1' },
+      { text: 'X', plainText: 'X', position: [0, 0], height: 2.5, handle: '' }, // height 非数字→2.5
+      { text: 'Y', plainText: 'Y', position: [], height: 2, handle: 'H9' }, // position 非数组→[]
     ]);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[DEBUG text-content]'));
     // 缓存
     expect(await er.getTextContent()).toBe(res);
     expect(cadMock.sendCommandWithResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('返回 type/layer/plainText：天正钢筋符号在 MCP 侧就清洗', async () => {
+    cadMock.sendCommandWithResult.mockResolvedValueOnce(
+      '("total" 1 "texts" (("text" "2%%13220" "type" "MTEXT" "layer" "WALL" "position" (0 0) "height" 2.5 "handle" "H1")))',
+    );
+    const res = await er.getTextContent();
+
+    expect(res.texts[0]).toMatchObject({
+      text: '2%%13220',
+      plainText: '2Φ20',
+      type: 'MTEXT',
+      layer: 'WALL',
+    });
   });
 
   it('offset/limit 参数被钳制进查询代码', async () => {

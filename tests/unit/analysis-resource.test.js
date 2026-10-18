@@ -140,6 +140,40 @@ describe('getDrawingAnalysis', () => {
     ]);
   });
 
+  it('facts 模式：summary 统计 + 图层明细 + 文字类型/图层分布，不带 blockDefs', async () => {
+    const FACTS = '(("entityCount" 10)'
+      + ' ("entityByType" (("TEXT" . 10)))'
+      + ' ("blockRefCount" 0) ("blockCount" 0) ("blockUsage" nil)'
+      + ' ("layerCount" 2) ("layerState" (("off" . 0) ("frozen" . 0) ("locked" . 0)))'
+      + ' ("textCount" 7) ("textHeights" (("min" . 2) ("max" . 8) ("median" . 3)))'
+      + ' ("textTypes" (("TEXT" . 5) ("MTEXT" . 2)))'
+      + ' ("textLayers" (("0" . 4) ("WALL" . 3)))'
+      + ' ("layers" ((("name" . "0") ("color" . 7) ("off" . nil) ("frozen" . nil) ("locked" . nil) ("linetype" . "Continuous"))))'
+      + ' ("sysvars" (("ltscale" . 1))))';
+
+    cadMock.sendCommandWithResult.mockImplementation(async (code) => {
+      capturedCodes.push(code);
+      if (code.includes('layerNames')) return SNAPSHOT;
+      return FACTS;
+    });
+    const res = await getDrawingAnalysis({ type: 'facts' });
+
+    expect(res.type).toBe('facts');
+    expect(res.textTypes).toEqual({ TEXT: 5, MTEXT: 2 });
+    expect(res.textLayers).toEqual({ 0: 4, WALL: 3 });
+    expect(res.layers).toHaveLength(1);
+    expect(res.blockDefs).toBeUndefined();
+  });
+
+  it('facts 的 LISP 代码包含文字类型/图层直方图与图层明细', () => {
+    const code = buildDrawingAnalysisCode('facts');
+
+    expect(code).toContain('"textTypes"');
+    expect(code).toContain('"textLayers"');
+    expect(code).toContain('(list "layers" layers)');
+    expect(code).not.toContain('blockDefs');
+  });
+
   it('未知 type 回落 summary（避免误取大响应）', async () => {
     const res = await getDrawingAnalysis({ type: 'ALL' });
     expect(res.type).toBe('summary');
