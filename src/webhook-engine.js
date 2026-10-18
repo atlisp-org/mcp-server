@@ -88,7 +88,11 @@ async function fireWebhook(wh, event, payload) {
       const headers = { 'Content-Type': 'application/json' };
       if (wh.secret) headers['X-Webhook-Secret'] = wh.secret;
       
-      const response = await fetch(wh.url, { method: 'POST', headers, body });
+      const response = await fetch(wh.url, {
+        method: 'POST', headers, body,
+        // 单次投递超时，避免慢端点把重试链拖成无限挂起
+        signal: AbortSignal.timeout(10000),
+      });
       if (response.ok) {
         wh.lastTriggered = new Date().toISOString();
         wh.failCount = 0;

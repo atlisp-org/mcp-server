@@ -418,11 +418,13 @@ export async function pairRelay({ token, uri, email } = {}) {
                 Authorization: `Bearer ${token}`,
                 'User-Agent': 'Mozilla/5.0 (atlisp-mcp relay pairing)',
             },
+            // 配对不能无限挂起：服务端不可达时尽快失败并给出可读错误
+            signal: AbortSignal.timeout(10000),
         });
         const d = await r.json().catch(() => null);
         if (r.ok && d && d.result === 'ok') info = d;
     } catch (e) {
-        throw new Error(`连不上 ${httpBase}：${e.message}`);
+        throw new Error(`连不上 ${httpBase}：${e.message}`, { cause: e });
     }
     if (!info) throw new Error('登录已失效，请重新登录后再试');
 

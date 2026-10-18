@@ -131,7 +131,9 @@ async function callRemoteTool(ip, port, toolName, args = {}) {
             id: Date.now(),
             method: 'tools/call',
             params: { name: toolName, arguments: args }
-        })
+        }),
+        // 远端工具可能较慢，但不能无限等待
+        signal: AbortSignal.timeout(120000),
     });
     const data = await res.json();
     return data.result || data.error;

@@ -20,7 +20,10 @@ async function fetchIndex() {
     let index = readCache();
     if (index && (Date.now() - index.fetchedAt < 3600000)) return index;
     try {
-        const resp = await fetch(REGISTRY_URL, { headers: { 'User-Agent': 'atlisp-mcp' } });
+        const resp = await fetch(REGISTRY_URL, {
+            headers: { 'User-Agent': 'atlisp-mcp' },
+            signal: AbortSignal.timeout(15000),
+        });
         if (resp.ok) {
             index = await resp.json();
             index.fetchedAt = Date.now();
@@ -61,7 +64,10 @@ export async function skill_install(a) {
     if (!downloadUrl) return { content: [{ type: 'text', text: `Skill "${a.name}" 没有下载地址` }], isError: true };
     let content;
     try {
-        const resp = await fetch(downloadUrl, { headers: { 'User-Agent': 'atlisp-mcp' } });
+        const resp = await fetch(downloadUrl, {
+            headers: { 'User-Agent': 'atlisp-mcp' },
+            signal: AbortSignal.timeout(30000),
+        });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         content = await resp.text();
     } catch (e) {
