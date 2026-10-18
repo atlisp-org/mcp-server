@@ -186,6 +186,7 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 | `src/cad.js` | CAD 连接：命令队列、读批处理、心跳、Worker 管理、连接代理 |
 | `src/command-queue.js` | 命令队列：三级优先级、去重、读命令批处理（`ReadBatcher`） |
 | `src/plugin-loader.js` | 插件加载与热重载：目录扫描、`onInit`/`onUnload`、文件监听 |
+| `src/error-reporter.js` | ERROR 日志上报：指纹去重、批量 flush、失败兜底（`ERROR_REPORT_ENABLED`） |
 | `src/cad-worker.js` | Worker 进程：edge-js COM 调用、LISP 代码缓存（SHA256）、安全检查、长代码降级 |
 | `src/cad-circuit-breaker.js` | 熔断器独立模块（从 cad.js 提取） |
 | `src/cad-pool.js` | 连接池管理：多 CAD 实例连接/切换/健康检查/自动重连 |

@@ -155,6 +155,30 @@ describe('日志通知与关闭', () => {
     logger.setLoggingNotify(null);
   });
 
+  it('setErrorNotify 只在 error() 触发（错误上报接线）', async () => {
+    const fn = vi.fn();
+    logger.setErrorNotify(fn);
+    try {
+      logger.log('info');
+      logger.warn('warn');
+      logger.error('boom', { code: 500 });
+      await flush();
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn).toHaveBeenCalledWith('boom', { code: 500 });
+    } finally {
+      logger.setErrorNotify(null);
+    }
+  });
+
+  it('error notify 抛错被兜底，不递归 logger', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    logger.setErrorNotify(() => { throw new Error('reporter-fail'); });
+    expect(() => logger.error('x')).not.toThrow();
+    expect(spy).toHaveBeenCalledWith('[logger] error notify 回调失败:', 'reporter-fail');
+    await flush();
+    logger.setErrorNotify(null);
+  });
+
   it('closeLog 结束流并可重新打开', async () => {
     logger.log('first');
     await flush();

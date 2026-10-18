@@ -31,6 +31,7 @@ import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromp
 import { stopHealthReporter } from './health-reporter.js';
 import { startLocalMemWatcher } from './mem-monitor.js';
 import { startRelayClient, stopRelayClient } from './relay-client.js';
+import { startErrorReporter, stopErrorReporter } from './error-reporter.js';
 
 import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
 import { acquirePortLock, releasePortLock } from './lockfile.js';
@@ -127,6 +128,8 @@ Environment Variables:
   LINT_LEVEL            Lint level (error/warn/off)
   NO_LINT               Disable lint (true/false)
   REQUEST_LOG_ENABLED   Enable request logging (true/false, default: true)
+  ERROR_REPORT_ENABLED  Report ERROR logs to atlisp.cn (true/false, default: true)
+  ERROR_REPORT_URL      Error report endpoint (default: https://atlisp.cn/api/error/report)
   CORS_ORIGIN           CORS origin (default: https://atlisp.cn)
   CLIENT_ID             Client identifier for remote health report
   RATE_LIMIT_WINDOW     Rate limit window in ms (default: 60000)
@@ -236,6 +239,9 @@ export async function startServer() {
     console.error(`PID: ${process.pid}`);
     console.error(`工作目录: ${process.cwd()}`);
     console.error('');
+
+    // ERROR 日志上报：尽早启用，覆盖后续插件/peer/CAD 初始化阶段的错误
+    startErrorReporter();
 
     // 加载插件
     console.error('[1/6] 加载插件...');
@@ -404,6 +410,7 @@ export async function startServer() {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
             stopRelayClient();
             stopHealthReporter();
+            await stopErrorReporter();
             if (stopMemWatcher) { stopMemWatcher(); stopMemWatcher = null; }
             stopPluginWatcher();
             peerManager.stop();

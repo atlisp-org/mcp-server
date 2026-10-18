@@ -58,6 +58,7 @@ export function log(message, meta = {}) {
 export function error(message, meta = {}) {
     getStream().write(formatMessage('ERROR', message, meta) + '\n');
     notify('error', message);
+    notifyError(message, meta);
     // ERROR 始终输出到终端（stderr），与 debug 开关无关；stdio 模式下 stderr 不污染协议通道
     console.error(`[ERROR] ${message}`, meta);
 }
@@ -83,6 +84,27 @@ export function setLoggingNotify(fn) {
 
 export function getLoggingNotify() {
   return _logNotify;
+}
+
+let _errorNotify = null;
+
+/**
+ * 注册 ERROR 监听（错误上报用）。与 setLoggingNotify 分开，
+ * 避免 MCP 客户端日志通知与上报逻辑互相覆盖。
+ * @param {((message: unknown, meta: unknown) => void)|null} fn
+ */
+export function setErrorNotify(fn) {
+  _errorNotify = fn;
+}
+
+function notifyError(message, meta) {
+  if (!_errorNotify) return;
+  try {
+    _errorNotify(message, meta);
+  } catch (e) {
+    // 上报回调自身异常不能影响日志写入，也不能再走 logger.error（会递归）
+    console.error('[logger] error notify 回调失败:', e.message);
+  }
 }
 
 function notify(level, message) {

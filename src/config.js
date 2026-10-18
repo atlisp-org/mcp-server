@@ -46,6 +46,9 @@ const envSchema = z.object({
     TOOL_PROFILE: z.enum(['full', 'standard', 'minimal']).optional().default('full'),
     LOCALE: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     REQUEST_LOG_ENABLED: z.coerce.boolean().optional().default(true),
+    // 错误上报：字符串形式统一解析，支持 false/0/off/no 关闭（z.coerce.boolean 无法正确处理 "false"）
+    ERROR_REPORT_ENABLED: z.string().optional(),
+    ERROR_REPORT_URL: z.string().optional(),
     SSL_KEY_PATH: z.string().optional().default(''),
     SSL_CERT_PATH: z.string().optional().default(''),
     LLM_API_KEY: z.string().optional().default(''),
@@ -140,6 +143,8 @@ const configSchema = z.object({
     locale: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
+    errorReportEnabled: z.boolean().optional(),
+    errorReportUrl: z.string().optional(),
     maxEntityLimit: z.number().optional(),
     readBatchWindow: z.number().optional(),
     readBatchSize: z.number().optional(),
@@ -260,6 +265,13 @@ const configFilePath = env.CONFIG_FILE || cliArgs.configFile ||
 
 const fileConfig = loadConfigFile(configFilePath);
 
+/** 宽松布尔解析：false/0/off/no/disabled 视为 false，其余非空值视为 true。 */
+function parseBool(value, def) {
+    if (value === undefined || value === null || value === '') return def;
+    if (typeof value === 'boolean') return value;
+    return !/^(0|false|no|off|disabled)$/i.test(String(value).trim());
+}
+
 const config = {
     // 优先级：CLI 参数 > 配置文件 > 环境变量。
     // cliArgs 必须排最前——envSchema 里 PORT/HOST/TRANSPORT 带 .default()，
@@ -304,6 +316,9 @@ const config = {
     toolProfile: cliArgs.toolProfile ?? fileConfig?.toolProfile ?? env.TOOL_PROFILE,
     locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
+    // ERROR 日志上报（默认开启，用于改进项目；不包含图纸/用户数据）
+    errorReportEnabled: fileConfig?.errorReportEnabled ?? parseBool(env.ERROR_REPORT_ENABLED, true),
+    errorReportUrl: fileConfig?.errorReportUrl ?? (env.ERROR_REPORT_URL || 'https://atlisp.cn/api/error/report'),
     sslKey: cliArgs.sslKey ?? fileConfig?.sslKey ?? env.SSL_KEY_PATH,
     sslCert: cliArgs.sslCert ?? fileConfig?.sslCert ?? env.SSL_CERT_PATH,
     llmApiKey: fileConfig?.llmApiKey ?? env.LLM_API_KEY,

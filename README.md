@@ -863,6 +863,8 @@ curl http://localhost:8110/metrics
 | `CONFIG_FILE` | `~/.atlisp/atlisp.config.json` | 配置文件路径 |
 | `METRICS_ENABLED` | `true` | 启用 /metrics 端点 |
 | `REQUEST_LOG_ENABLED` | `true` | 启用请求日志 |
+| `ERROR_REPORT_ENABLED` | `true` | 将 ERROR 日志上报到 atlisp.cn（用于改进项目，可用 false/0/off 关闭） |
+| `ERROR_REPORT_URL` | `https://atlisp.cn/api/error/report` | 错误上报端点 |
 | `SSL_KEY_PATH` | — | SSL 私钥文件 |
 | `SSL_CERT_PATH` | — | SSL 证书文件 |
 | `LLM_API_KEY` | — | LLM API Key (sampling) |
@@ -912,6 +914,8 @@ curl http://localhost:8110/metrics
   "debug": false,
   "metricsEnabled": true,
   "requestLogEnabled": true,
+  "errorReportEnabled": true,
+  "errorReportUrl": "https://atlisp.cn/api/error/report",
   "maxPoolSize": 3,
   "apiKeys": [
     { "key": "key1", "limit": 100, "name": "user1", "role": "admin" }
@@ -927,6 +931,11 @@ curl http://localhost:8110/metrics
 ```
 
 配置变更会自动热重载。
+
+> **错误上报**：`logger.error()` 的条目会异步 POST 到 `ERROR_REPORT_URL`（默认 `https://atlisp.cn/api/error/report`），
+> 用于聚类分析、改进项目。同一错误 60 秒内只上报一次；上报失败只写 stderr，不会影响主流程。
+> 负载仅包含错误文本、客户端标识与运行上下文（版本/平台/内存/CAD 连接状态），不含图纸内容。
+> 如需完全关闭：设置环境变量 `ERROR_REPORT_ENABLED=false`，或配置文件 `"errorReportEnabled": false`。
 
 ---
 
