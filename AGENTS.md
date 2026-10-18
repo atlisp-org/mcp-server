@@ -12,6 +12,7 @@ npm run build        # esbuild 打包 dist/atlisp-mcp.js + 复制 worker/handler
 npm test             # 运行全部测试 (vitest)
 npm run test:watch   # 监视模式测试
 npm start            # node src/atlisp-mcp.js 开发模式
+npm run build:tray   # 构建 Windows 托盘程序 → dist/AtlispTray.exe（跨平台，见 tray/README.md）
 ```
 
 - 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows only，需要 csc.exe）
@@ -216,3 +217,7 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
+| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/升级、从 npmmirror 安装 Node.js、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
+| `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
+| `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
+| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：Windows 上启动 `dist/AtlispTray.exe` |

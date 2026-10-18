@@ -28,6 +28,9 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run build
+      # 托盘程序：Windows 用系统 csc，Linux 用 dotnet + net48 参考程序集交叉编译
+      - run: npm run build:tray
+        if: runner.os == 'Windows' || matrix.node-version == 22
       - run: npm test
 
   lint:

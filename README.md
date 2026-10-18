@@ -216,6 +216,38 @@ atlisp-mcp --autostart-status
 
 **Windows 隐藏窗口**：Windows 10 1809+ 使用 `conhost.exe --headless` 承载 node，无任何控制台窗口，且为微软签名组件，不写脚本、不建计划任务；Windows 7/8/8.1（内核 6.x）无 `--headless`，回退到 `powershell -WindowStyle Hidden`（该平台无 Windows Terminal，可可靠隐藏）。两者均注册到 HKCU 启动项，登录后静默后台运行。
 
+### Windows 托盘管理工具
+
+`tray/` 下提供一个 WinForms 托盘程序（单文件 C#，无需额外运行时），用于图形化管理本机服务：
+
+- 启动 / 停止 / 重启服务，自动识别 `service.ps1` 安装的 Windows 服务
+- 检查更新、通过 npm 下载安装 / 升级 `@atlisp/mcp@latest`
+- 检测不到 Node.js 时，从 npmmirror 下载官方 MSI 并静默安装（UAC 授权）
+- 显示端口、CAD 连接状态、版本；异常退出气泡提醒
+- 一键打开调试面板、API 文档、Playground、服务器日志
+- 托盘随 Windows 启动、托盘启动时自动启动服务、npmmirror 镜像切换
+- 环境诊断（Node/npm/安装位置/健康检查）
+
+构建（跨平台，输出 `dist/AtlispTray.exe`）：
+
+```bash
+npm run build:tray
+```
+
+`npm publish` 时 `prepack` 会自动构建托盘，并把 `dist/AtlispTray.exe` 和 `atlisp-tray` 启动器一起发布到 npm。全局安装后运行：
+
+```bash
+atlisp-tray
+```
+
+Windows 本地构建/安装也可以使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tray\build.ps1 -Install
+```
+
+详细说明见 [`tray/README.md`](tray/README.md)。
+
 ### 健康检查
 
 ```bash
