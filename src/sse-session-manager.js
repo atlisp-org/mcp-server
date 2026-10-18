@@ -1,5 +1,5 @@
 import { SseSession, SSE_EVENTS } from './sse-session.js';
-import {  error as logError } from './logger.js';
+import {  error as logError, log } from './logger.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -271,7 +271,7 @@ export class SseSessionManager {
             if (!session.isActive) continue;
             const idle = now - (session.lastActivity || now);
             if (idle > IDLE_SESSION_TIMEOUT) {
-                logError(`Closing idle SSE session ${clientId} (idle ${Math.round(idle / 1000)}s)`);
+                log(`Closing idle SSE session ${clientId} (idle ${Math.round(idle / 1000)}s)`);
                 persistSessionData(clientId, session.sessionData);
                 session.close();
                 this.#sessions.delete(clientId);

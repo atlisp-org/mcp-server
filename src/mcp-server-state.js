@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { SessionTransport } from './session-transport.js';
 import { createMcpServer } from './mcp-handlers.js';
-import {  error as logError } from './logger.js';
+import {  error as logError, log } from './logger.js';
 import { tools, handleToolCall } from './mcp-tools.js';
 import { setActiveSessions } from './metrics.js';
 import config from './config.js';
@@ -35,7 +35,7 @@ function _ensureSweep() {
                 // 这里只清理纯 HTTP POST 会话（无关联 SSE 时才删）
                 const entry = sessionServers.get(sid);
                 if (entry) {
-                    logError(`Removing idle MCP session ${sid} (idle ${Math.round((now - lastAt) / 1000)}s)`);
+                    log(`Removing idle MCP session ${sid} (idle ${Math.round((now - lastAt) / 1000)}s)`);
                     removeSessionServer(sid);
                 } else {
                     _sessionLastActivity.delete(sid);
