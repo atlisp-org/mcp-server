@@ -13,7 +13,7 @@ const NON_FORWARDABLE = new Set([
 ]);
 
 const NON_FORWARDABLE_PREFIXES = [
-  'peer_', 'skill_', 'webhook_', 'sandbox_', 'audit_', 'debug_',
+  'peer_', 'skill_', 'plugin_', 'webhook_', 'sandbox_', 'audit_', 'debug_',
   'agent_', 'session_', 'watch_', 'lisp_repl',
 ];
 

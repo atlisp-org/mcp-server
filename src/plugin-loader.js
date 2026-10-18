@@ -73,6 +73,11 @@ export function getPlugins() {
     return loadedPlugins;
 }
 
+/** 某插件通过 context.registerTool 注册的工具名（用于诊断与热重载回收） */
+export function getPluginTools(plugin) {
+    return Array.from(pluginTools.get(plugin) || []);
+}
+
 /** 最近一次 initPlugins(context) 的上下文：热重载的新插件也需要它才能完成 onInit 注册 */
 let lastInitContext = null;
 
@@ -223,4 +228,15 @@ export function stopPluginWatcher() {
         watcher = null;
         log('Plugin watcher stopped');
     }
+}
+
+/**
+ * 重新扫描插件目录并重新初始化（先注销旧插件注册的工具）。
+ * 供 `plugin_reload` 工具与手动运维使用；返回加载到的插件数量。
+ * @returns {Promise<number>}
+ */
+export async function reloadPlugins() {
+    await loadPlugins();
+    if (lastInitContext) initPlugins(lastInitContext);
+    return loadedPlugins.length;
 }

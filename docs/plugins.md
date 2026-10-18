@@ -122,6 +122,17 @@ context.config.tracingEnabled          // boolean
 
 > 插件通过 `context.registerTool` 注册的工具会自动归属到该插件；热重载/删除时先注销再重新注册，因此工具定义与 handler 都会更新，不会残留旧实现。
 
+## 管理工具
+
+MCP 侧提供两个本地工具（永不转发到远程 peer）：
+
+| 工具 | 作用 |
+|------|------|
+| `plugin_list` | 列出已加载插件的名称、文件名、实现的钩子与注册的工具 |
+| `plugin_reload` | 重新扫描并加载插件目录（先注销旧工具再执行 `onInit`） |
+
+修改插件后若热重载未生效，或需要确认插件是否加载成功，可先调用 `plugin_list`，再调用 `plugin_reload`。
+
 ## 官方示例
 
 `examples/plugins/` 下有三个可直接拷入插件目录的示例：

@@ -19,6 +19,7 @@ import { clearCache } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 
 import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
+import { pluginList, pluginReload } from './handlers/plugin-handlers.js';
 import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
 import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_call_tool, peer_cad_info, peer_cad_pool, peer_stats, peer_summary, peer_broadcast } from './handlers/peer-handlers.js';
 
@@ -727,6 +728,10 @@ export const TOOL_HANDLERS = {
     skill_list_installed,
     skill_uninstall,
     skill_list_categories,
+
+    // === Plugin Management ===
+    plugin_list: pluginList,
+    plugin_reload: pluginReload,
 };
 
 export { tools };
