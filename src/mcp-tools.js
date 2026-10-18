@@ -8,10 +8,8 @@ import { mcpContext } from './mcp-server-state.js';
 
 import { registerWatch, removeWatch, listWatches, waitForWatch, createAndWait } from './trigger-engine.js';
 import { validateLispCode, addToAllowlist, clearSessionAllowlist } from './lisp-security.js';
-import { analyzeLispCode } from './lint-analyzer.js';
-import { formatCode } from '@atlisp/lint/dist/formatter.js';
-import { lintProject } from '@atlisp/lint/dist/project.js';
-import { RULES } from '@atlisp/lint/dist/rules.js';
+// @atlisp/lint（经 lint-analyzer）加载约 200ms，仅在 lint 工具真正调用时动态引入，
+// 避免拖慢每次 MCP Server 冷启动。
 
 import { executeInSession, getHistory, listSessions, closeSession } from './repl-engine.js';
 import { registerWebhook, removeWebhook, listWebhooks, getWebhookLog } from './webhook-engine.js';
@@ -559,20 +557,23 @@ export const TOOL_HANDLERS = {
     list_data_sources:   lazy('list_data_sources'),
 
     // === Lint & Analysis ===
-    analyze_lisp_code: (a) => {
+    analyze_lisp_code: async (a) => {
+        const { analyzeLispCode } = await import('./lint-analyzer.js');
         const result = analyzeLispCode(a.code, { lintConfig: a.config });
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
-    format_lisp_code: (a) => {
+    format_lisp_code: async (a) => {
         try {
+            const { formatCode } = await import('@atlisp/lint/dist/formatter.js');
             const formatted = formatCode(a.code, { tabWidth: a.tabWidth || 2 });
             return { content: [{ type: 'text', text: formatted }] };
         } catch (e) {
             return { content: [{ type: 'text', text: `格式化失败: ${e.message}` }], isError: true };
         }
     },
-    list_lint_rules: () => {
+    list_lint_rules: async () => {
         try {
+            const { RULES } = await import('@atlisp/lint/dist/rules.js');
             const list = RULES.map(r => ({ rule: r.name, severity: r.severity || 'warn', description: r.description || '', fixable: !!r.fix }));
             return { content: [{ type: 'text', text: JSON.stringify(list, null, 2) }] };
         } catch (e) {
@@ -582,6 +583,7 @@ export const TOOL_HANDLERS = {
     lint_project: async (a) => {
         if (!a.directory) return { content: [{ type: 'text', text: '需要 directory 参数' }], isError: true };
         try {
+            const { lintProject } = await import('@atlisp/lint/dist/project.js');
             const results = await lintProject(a.directory, a.config || {});
             return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
         } catch (e) {

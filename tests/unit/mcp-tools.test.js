@@ -708,8 +708,8 @@ describe('lint tools', () => {
     expect(result.content[0].text).toBe('格式化失败: bad code');
   });
 
-  it('lists lint rules with defaults', () => {
-    const result = TOOL_HANDLERS.list_lint_rules({});
+  it('lists lint rules with defaults', async () => {
+    const result = await TOOL_HANDLERS.list_lint_rules({});
     expect(JSON.parse(result.content[0].text)).toEqual([
       { rule: 'parens', severity: 'error', description: 'Balanced', fixable: true },
       { rule: 'other', severity: 'warn', description: '', fixable: false },

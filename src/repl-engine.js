@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import config from './config.js';
 import { cad } from './cad.js';
 import { log } from './logger.js';
-import { analyzeLispCode } from './lint-analyzer.js';
+// lint-analyzer 会拉起 @atlisp/lint（约 200ms），延迟到首次执行 REPL 代码时再加载。
 
 const sessions = new Map();
 const MAX_SESSIONS = 50;
@@ -54,6 +54,7 @@ export class ReplSession {
   }
 
   async execute(code) {
+    const { analyzeLispCode } = await import('./lint-analyzer.js');
     const analysis = analyzeLispCode(code);
     if (!analysis.valid) {
       throw new Error(`代码存在安全问题:\n${analysis.errors.map(e => `  L${e.line}: [${e.rule}] ${e.message}`).join('\n')}`);

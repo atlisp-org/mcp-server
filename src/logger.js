@@ -8,6 +8,8 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024;
 const MAX_LOG_FILES = 5;
 
 let stream = null;
+// hostname 不会变，缓存一次，避免每条日志都走一次系统调用
+const HOSTNAME = os.hostname();
 
 function rotateLog() {
     try {
@@ -40,7 +42,7 @@ function formatMessage(level, message, meta = {}) {
         message,
         ...meta,
         pid: process.pid,
-        hostname: os.hostname(),
+        hostname: HOSTNAME,
     };
     return JSON.stringify(entry);
 }
@@ -97,13 +99,16 @@ export function closeLog() {
 }
 
 let requestStream = null;
+let requestDirReady = false;
 const REQUEST_LOG_FILE = path.join(os.homedir(), '@lisp', 'logs', 'requests.log');
 
 function ensureRequestLogDir() {
+    if (requestDirReady) return;
     const dir = path.dirname(REQUEST_LOG_FILE);
     if (!fs.existsSync(dir)) {
-        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('request log mkdir error:', e.message); }
+        try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { console.error('request log mkdir error:', e.message); return; }
     }
+    requestDirReady = true;
 }
 
 function rotateRequestLog() {
