@@ -47,10 +47,12 @@ const {
   getSystemStatus, initAtlisp, getSystemVariable,
   setSystemVariable, atCommand,
 } = await import('../src/handlers/cad-handlers.js');
+const { resetAtlispReady } = await import('../src/atlisp-bootstrap.js');
 
 describe('cad-handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAtlispReady();
     mockCad.connected = true;
     mockGetPlatform.mockReturnValue('AutoCAD');
     mockGetVersion.mockReturnValue('2025');
@@ -168,10 +170,37 @@ describe('cad-handlers', () => {
   });
 
   describe('installAtlisp', () => {
-    it('sends install code', async () => {
+    it('installs @lisp core when missing', async () => {
+      let installed = false;
+      mockSendCommandWithResult.mockImplementation(async (code) => {
+        if (code.includes('@mcp-unsaved')) return 'ATLISP-SAVED';
+        if (code.includes('atoms-family') && code.includes('BASE:INIT')) {
+          return installed ? 'ATLISP-CORE' : 'ATLISP-NONE';
+        }
+        if (code.includes('/@')) {
+          installed = true;
+          return 'ok';
+        }
+        return 'ok';
+      });
+
       const result = await installAtlisp();
-      expect(mockSendCommand).toHaveBeenCalledWith(expect.stringContaining('vl-load-com'));
+      expect(mockSendCommandWithResult).toHaveBeenCalledWith(
+        expect.stringContaining('vl-load-com'), null, false, expect.any(Number), true);
       expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('核心安装完成');
+    });
+
+    it('blocks installation when drawings are unsaved', async () => {
+      mockSendCommandWithResult.mockImplementation(async (code) => {
+        if (code.includes('@mcp-unsaved')) return 'ATLISP-UNSAVED';
+        if (code.includes('atoms-family') && code.includes('BASE:INIT')) return 'ATLISP-NONE';
+        return 'ok';
+      });
+
+      const result = await installAtlisp();
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('未保存');
     });
   });
 
@@ -222,10 +251,25 @@ describe('cad-handlers', () => {
   });
 
   describe('initAtlisp', () => {
-    it('sends init code', async () => {
+    it('loads the function library when core is installed', async () => {
+      let initialized = false;
+      mockSendCommandWithResult.mockImplementation(async (code) => {
+        if (code.includes('@mcp-unsaved')) return 'ATLISP-SAVED';
+        if (code.includes('atoms-family') && code.includes('BASE:INIT')) {
+          return initialized ? 'ATLISP-READY' : 'ATLISP-CORE';
+        }
+        if (code.includes('/cloud')) {
+          initialized = true;
+          return 'ok';
+        }
+        return 'ok';
+      });
+
       const result = await initAtlisp();
-      expect(mockSendCommand).toHaveBeenCalled();
-      expect(result.content[0].text).toContain('@lisp 函数库加载');
+      expect(mockSendCommandWithResult).toHaveBeenCalledWith(
+        expect.stringContaining('atlisp'), null, false, expect.any(Number), true);
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('函数库');
     });
   });
 

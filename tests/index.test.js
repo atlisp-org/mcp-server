@@ -315,11 +315,24 @@ describe('handleToolCall', () => {
       expect(result.content[0].text).toContain('未连接');
     });
 
-    it('sends install code when connected', async () => {
+    it('installs @lisp core when connected', async () => {
       mockCad.connected = true;
+      let installed = false;
+      mockSendCommandWithResult.mockImplementation(async (code) => {
+        if (code.includes('@mcp-unsaved')) return 'ATLISP-SAVED';
+        if (code.includes('atoms-family') && code.includes('BASE:INIT')) {
+          return installed ? 'ATLISP-CORE' : 'ATLISP-NONE';
+        }
+        if (code.includes('/@')) {
+          installed = true;
+          return 'ok';
+        }
+        return 'ok';
+      });
+
       const result = await handleToolCall('install_atlisp', {});
-      expect(mockSendCommand).toHaveBeenCalled();
-      expect(result.content[0].text).toContain('安装代码');
+      expect(mockSendCommandWithResult).toHaveBeenCalled();
+      expect(result.content[0].text).toContain('核心安装完成');
     });
   });
 
@@ -347,11 +360,24 @@ describe('handleToolCall', () => {
       expect(result.content[0].text).toContain('未连接');
     });
 
-    it('sends init code when connected', async () => {
+    it('loads the function library when connected', async () => {
       mockCad.connected = true;
+      let initialized = false;
+      mockSendCommandWithResult.mockImplementation(async (code) => {
+        if (code.includes('@mcp-unsaved')) return 'ATLISP-SAVED';
+        if (code.includes('atoms-family') && code.includes('BASE:INIT')) {
+          return initialized ? 'ATLISP-READY' : 'ATLISP-CORE';
+        }
+        if (code.includes('/cloud')) {
+          initialized = true;
+          return 'ok';
+        }
+        return 'ok';
+      });
+
       const result = await handleToolCall('init_atlisp', {});
-      expect(mockSendCommand).toHaveBeenCalled();
-      expect(result.content[0].text).toContain('加载代码');
+      expect(mockSendCommandWithResult).toHaveBeenCalled();
+      expect(result.content[0].text).toContain('函数库');
     });
   });
 

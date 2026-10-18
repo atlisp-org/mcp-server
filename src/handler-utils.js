@@ -1,5 +1,7 @@
 import { mcpSuccessResponse, createError, ERROR_CODES } from './errors.js';
 import { getClientRoots } from './client-roots.js';
+import { ensureAtlispReady } from './atlisp-bootstrap.js';
+import { log } from './logger.js';
 import path from 'path';
 import fs from 'fs';
 import { progressContext } from './mcp-server-state.js';
@@ -22,13 +24,35 @@ export function mcpError(text) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-export async function ensureCadConnected() {
+/**
+ * 连接成功后自动安装/加载 @lisp。
+ * 失败只记录日志，不阻断 CAD 连接本身（MCP 的多数基础工具不依赖 @lisp）。
+ */
+async function ensureAtlispAfterConnect(autoInstall) {
+  // 单测里 CAD/网络都是 mock，自动安装没有意义，还会污染各 handler 的命令断言
+  if (!autoInstall || process.env.VITEST) return;
+  try {
+    const result = await ensureAtlispReady({ reason: 'auto-connect' });
+    if (!result.ok) {
+      log(`[atlisp] 自动安装/加载未完成（${result.action}）：${result.message}`);
+    }
+  } catch (e) {
+    log(`[atlisp] 自动安装/加载异常：${e.message}`);
+  }
+}
+
+export async function ensureCadConnected(options = {}) {
   const { resolveCadConnection } = await import('./cad.js');
   const { pool } = await import('./cad-pool.js');
   const config = (await import('./config.js')).default;
   const conn = resolveCadConnection();
+  // 紧急工具（send_esc / bring_to_front）不能被 @lisp 安装卡住
+  const autoInstall = config.autoInstallAtlisp && !options.skipAtlisp;
 
-  if (conn.connected) return;
+  if (conn.connected) {
+    await ensureAtlispAfterConnect(autoInstall);
+    return;
+  }
 
   const tryConnect = async () => {
     if (conn.connected) return true;
@@ -45,7 +69,10 @@ export async function ensureCadConnected() {
     return false;
   };
 
-  if (await tryConnect()) return;
+  if (await tryConnect()) {
+    await ensureAtlispAfterConnect(autoInstall);
+    return;
+  }
 
   if (!process.env.VITEST && config.autoLaunch) {
     const { ensureCadInstance } = await import('./cad-launcher.js');
@@ -56,7 +83,10 @@ export async function ensureCadConnected() {
 
     for (let i = 0; i < Math.ceil(config.launchTimeout / 2000); i++) {
       await sleep(2000);
-      if (await tryConnect()) return;
+      if (await tryConnect()) {
+        await ensureAtlispAfterConnect(autoInstall);
+        return;
+      }
     }
   }
 
@@ -64,12 +94,12 @@ export async function ensureCadConnected() {
     'CAD 未连接。请先打开 CAD 或调用 open_cad 工具');
 }
 
-export function withCadConnection(handler) {
+export function withCadConnection(handler, options = {}) {
   return async function(...args) {
     try {
       const hasInstance = typeof args[args.length - 1] === 'string' && args[args.length - 1].length > 0;
       const instance = hasInstance ? args.pop() : null;
-      await ensureCadConnected();
+      await ensureCadConnected(options);
       return await handler(...args, instance);
     } catch (e) {
       if (e.code === ERROR_CODES.CAD_NOT_CONNECTED) {

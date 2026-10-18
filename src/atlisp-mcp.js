@@ -103,6 +103,8 @@ Options:
   --api-key <key>              API key for authentication
   --client-id <id>             Client identifier for remote health report
   --security-level <type>      Security level: strict, standard, relaxed (default: relaxed)
+  --auto-install-atlisp        Auto install/load @lisp core after CAD connects (default)
+  --no-auto-install-atlisp     Disable automatic @lisp installation
   --install-autostart          Register server to auto-start after user login
   --uninstall-autostart        Remove auto-start registration
   --autostart-status           Check if auto-start is installed
@@ -289,6 +291,7 @@ export async function startServer() {
     console.error(`  安全级别: ${config.securityLevel || 'relaxed'}`);
     console.error(`  Lint 预设: ${config.lintPreset || 'recommended'}`);
     console.error(`  自动连接: ${config.autoConnect ? '是' : '否'}`);
+    console.error(`  @lisp 自动安装: ${config.autoInstallAtlisp ? '是' : '否'}`);
     console.error(`  API Key: ${config.apiKey ? '已启用' : '未设置'}`);
     console.error(`  调试模式: ${process.env.DEBUG === 'true' || process.env.DEBUG === '1' ? '是' : '否'}`);
 

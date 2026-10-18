@@ -1,9 +1,35 @@
 import iconv from 'iconv-lite';
 import { cad } from '../cad.js';
 import { log } from '../logger.js';
+import config from '../config.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 import { analyzeLispCode } from '../lint-analyzer.js';
+import {
+    ensureAtlispReady, installAtlispCore, initAtlispLibrary, getAtlispStatus,
+} from '../atlisp-bootstrap.js';
 import { jsonStructured } from './structured-output.js';
+
+/**
+ * 显式连接工具也走自动安装，但受配置开关控制。
+ * 失败只作为提示返回，不影响“已连接”这一事实。
+ */
+async function bootstrapAtlisp(reason) {
+    if (!config.autoInstallAtlisp) {
+        return { ok: true, skipped: true, message: '自动安装 @lisp 已关闭' };
+    }
+    try {
+        return await ensureAtlispReady({ reason, force: true });
+    } catch (e) {
+        log(`[atlisp] ${reason} 自动安装异常: ${e.message}`);
+        return { ok: false, message: e.message };
+    }
+}
+
+function atlispSuffix(status) {
+    if (status && status.skipped) return '；自动安装 @lisp 已关闭';
+    if (status && status.ok) return '；@lisp 环境已就绪';
+    return `；@lisp 自动安装未完成：${status?.message || '未知错误'}`;
+}
 
 export async function openCad(platform = null) {
     log(`open_cad called${platform ? ` (target: ${platform})` : ''}`);
@@ -15,8 +41,9 @@ export async function openCad(platform = null) {
         const platformName = cad.getPlatform();
         const version = cad.getVersion();
         await cad.bringToFront();
-        initAtlisp().catch(e => log(`open_cad: initAtlisp failed: ${e.message}`));
-        return mcpSuccess(`已打开 ${platformName} ${version} 并切换到前台`);
+        const atlisp = await bootstrapAtlisp('open_cad');
+        return mcpSuccess(`已打开 ${platformName} ${version} 并切换到前台` +
+            atlispSuffix(atlisp));
     } catch (e) {
         log('open_cad error: ' + e.message);
         return mcpError(`打开 CAD 失败: ${e.message}`);
@@ -30,9 +57,9 @@ export async function connectCad(platform = null) {
         const connected = await cad.connect(platform);
         log('cad.connect() returned: ' + connected + ', cad.connected: ' + cad.connected);
         if (connected) {
-            const messages = [`已连接到 ${cad.getPlatform()} ${cad.getVersion()}`];
-            initAtlisp().catch(e => log(`connect_cad: initAtlisp failed: ${e.message}`));
-            return mcpSuccess(messages.join('；'));
+            const atlisp = await bootstrapAtlisp('connect_cad');
+            return mcpSuccess(`已连接到 ${cad.getPlatform()} ${cad.getVersion()}` +
+                atlispSuffix(atlisp));
         }
         return mcpError('未能连接或启动 CAD，请确保 CAD 已安装');
     } catch (e) {
@@ -79,7 +106,7 @@ export const getCadInfo = withCadConnection(async () => {
         }
     } catch { /* peer 状态为附加信息，失败时忽略 */ }
     return mcpSuccess(info);
-});
+}, { skipAtlisp: true });
 
 export const atCommand = withCadConnection(async (command) => {
     const trimmed = (command || '').trim();
@@ -107,7 +134,7 @@ export const newDocument = withCadConnection(async () => {
     } catch (e) {
         return mcpError(`新建文档异常: ${e.message}`);
     }
-});
+}, { skipAtlisp: true });
 
 export const bringToFront = withCadConnection(async () => {
     const result = await cad.bringToFront();
@@ -115,7 +142,7 @@ export const bringToFront = withCadConnection(async () => {
         return mcpSuccess('已将 CAD 窗口切换到前台');
     }
     return mcpError('切换前台失败');
-});
+}, { skipAtlisp: true });
 
 export const sendEsc = withCadConnection(async () => {
     const result = await cad.sendEsc(true);
@@ -123,19 +150,18 @@ export const sendEsc = withCadConnection(async () => {
         return mcpSuccess('已向 CAD 发送 ESC');
     }
     return mcpError('发送 ESC 失败');
-});
+}, { skipAtlisp: true });
 
 export const installAtlisp = withCadConnection(async () => {
-    const installCode = '(progn(vl-load-com)(setq s strcat h "http" o(vlax-create-object (s"win"h".win"h"request.5.1"))v vlax-invoke e eval r read)(v o\'open "get" (s h"://atlisp.""cn/@"):vlax-true)(v o\'send)(v o\'WaitforResponse 1000)(e(r(vlax-get-property o\'ResponseText))))';
-    await cad.sendCommand(installCode + '\n');
-    return mcpSuccess('已发送 @lisp 安装代码到 CAD');
+    const status = await installAtlispCore();
+    return status.ok ? mcpSuccess(status.message) : mcpError(status.message);
 });
 
 export const listFunctionsInCad = withCadConnection(async () => {
     const result = await cad.sendCommandWithResult('(atoms-family 0)', null);
     if (result) return mcpSuccess(result);
     return mcpError('CAD 函数列表为空');
-});
+}, { skipAtlisp: true });
 
 export async function getSystemStatus() {
   const status = {
@@ -143,6 +169,7 @@ export async function getSystemStatus() {
     worker: { alive: false },
     cad: { connected: false, platform: null, version: null, busy: false, hasDoc: false },
     lisp: { available: false, testResult: null, error: null },
+    atlisp: { connected: false, installed: false, ready: false, ok: false },
     packages: null,
   };
 
@@ -174,6 +201,14 @@ export async function getSystemStatus() {
         status.packages = pkgResult;
       }
     } catch (e) { log(`cad-handlers: getSystemStatus package-list error: ${e.message}`); }
+    try {
+      status.atlisp = await getAtlispStatus();
+    } catch (e) {
+      status.atlisp = {
+        connected: true, installed: false, ready: false, ok: false,
+        message: `探测失败: ${e.message}`,
+      };
+    }
   }
 
   const text = JSON.stringify(status, null, 2);
@@ -181,24 +216,16 @@ export async function getSystemStatus() {
 }
 
 export const initAtlisp = withCadConnection(async () => {
-    const code = `(if (null @::load-module)
-	   (progn
-	     (vl-load-com)
-	     (setq s strcat h"http"o(vlax-create-object (s"win"h".win"h"request.5.1"))
-		   v vlax-invoke e eval r read)(v o'open "get" (s h"://""atlisp.""cn/cloud"):vlax-true)
-		   (v o'send)
-		   (v o'WaitforResponse 1000)
-		   (e(r(vlax-get o'ResponseText)))))`;
-    await cad.sendCommand(code + '\n');
-    return mcpSuccess('已发送 @lisp 函数库加载代码到 CAD');
+    const status = await initAtlispLibrary();
+    return status.ok ? mcpSuccess(status.message) : mcpError(status.message);
 });
 
 export const getSystemVariable = withCadConnection(async (name) => {
     const result = await cad.sendCommandWithResult(`(vl-princ-to-string (getvar "${escapeLispString(name)}"))`);
     return mcpSuccess(result || 'nil');
-});
+}, { skipAtlisp: true });
 
 export const setSystemVariable = withCadConnection(async (name, value) => {
     await cad.sendCommand(`(setvar "${escapeLispString(name)}" ${value})\n`);
     return mcpSuccess(`已设置 ${name} = ${value}`);
-});
+}, { skipAtlisp: true });

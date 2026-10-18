@@ -430,11 +430,10 @@ process.on('unhandledRejection', (reason) => {
 let stdinBuffer = '';
 let isProcessing = false;
 const requestQueue = [];
-const QUEUE_TIMEOUT = 30000; // 队列处理超时时间 30 秒
+const QUEUE_TIMEOUT = 30000; // 单个请求默认超时时间 30 秒（可由 msg.timeoutMs 覆盖）
 // 单个 worker 是串行的：一个 COM 调用耗时数秒时，父进程仍会继续往 stdin 灌，
 // 队列条数没有上限就会一直涨（每条都持有完整 LISP 文本），直到把 4GB 堆撑爆。
 const QUEUE_MAX = Math.max(1, config.workerQueueMax || 200);
-let processingStartTime = 0;
 
 process.stdin.on('data', (data) => {
   stdinBuffer += data;
@@ -466,36 +465,40 @@ process.stdin.on('data', (data) => {
   }
 });
 
+function rejectStaleQueued() {
+  if (requestQueue.length === 0) return;
+  const now = Date.now();
+  for (let i = requestQueue.length - 1; i >= 0; i--) {
+    if (now - requestQueue[i].timestamp <= QUEUE_TIMEOUT) continue;
+    const stale = requestQueue.splice(i, 1)[0];
+    process.stdout.write(JSON.stringify({
+      error: 'Queue processing timeout',
+      requestId: stale.requestId,
+      remaining: requestQueue.length,
+    }) + '\n');
+  }
+}
+
 async function processQueue() {
   if (isProcessing || requestQueue.length === 0) return;
   
   isProcessing = true;
-  processingStartTime = Date.now();
   
   while (requestQueue.length > 0) {
-    // 检查队列处理超时
-    if (Date.now() - processingStartTime > QUEUE_TIMEOUT) {
-      log(`[Worker] 队列处理超时，剩余 ${requestQueue.length} 个请求`);
-      // 清空队列并返回错误
-      while (requestQueue.length > 0) {
-        const { requestId } = requestQueue.shift();
-        process.stdout.write(JSON.stringify({ 
-          error: 'Queue processing timeout', 
-          requestId,
-          remaining: requestQueue.length 
-        }) + '\n');
-      }
-      break;
-    }
+    // 清理排队超过默认超时的请求；当前正在执行的请求由自己的 timeoutMs 控制
+    rejectStaleQueued();
+    if (requestQueue.length === 0) break;
 
     const { msg, requestId } = requestQueue.shift();
-    // 为每个请求添加超时（定时器必须在请求完成后清掉，否则每个请求都留一个 30s 的活定时器）
+    // 为每个请求添加超时（定时器必须在请求完成后清掉，否则每个请求都留一个活定时器）
+    // @lisp 引导会传 timeoutMs=120000，用于 moniker 连接下等待内核下载/加载完成。
+    const requestTimeout = Number(msg.timeoutMs) > 0 ? Number(msg.timeoutMs) : QUEUE_TIMEOUT;
     let timer = null;
     try {
       const result = await Promise.race([
         handleMessage(msg),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('Request timeout')), QUEUE_TIMEOUT);
+          timer = setTimeout(() => reject(new Error('Request timeout')), requestTimeout);
         })
       ]);
       process.stdout.write(JSON.stringify({ ...result, requestId }) + '\n');
@@ -739,11 +742,13 @@ async function monikerOrEdge(rotFn, edgeFn, args, platform) {
   });
 }
 
-function validateCode(code) {
+function validateCode(code, trusted = false) {
   const parenCheck = checkParens(code);
   if (!parenCheck.valid) {
     return { valid: false, error: `括号错误: ${parenCheck.error} (位置 ${parenCheck.pos})` };
   }
+  // trusted 仅由服务端 @lisp 引导模块设置，用于放行内部的安装/加载脚本
+  if (trusted) return { valid: true };
   const securityLevel = process.env.SECURITY_LEVEL || 'relaxed';
   if (securityLevel !== 'relaxed') {
     const injectionCheck = validateLispCodeWorker(code);
@@ -835,7 +840,7 @@ async function executeLisp(msg, withResult) {
     msg.code += '\n';
   }
 
-  const validation = validateCode(msg.code);
+  const validation = validateCode(msg.code, msg.trusted === true);
   if (!validation.valid) return validation;
 
   if (!await ensureDocument(msg.platform)) {

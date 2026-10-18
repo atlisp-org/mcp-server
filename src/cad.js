@@ -86,6 +86,8 @@ class CadConnection {
   /** @type {string|null} */
   _product = null;
   connected = false;
+  /** 每次成功连接递增：@lisp 引导缓存据此判断是否需要重新探测 */
+  _connectionEpoch = 0;
 
   /** @type {NodeJS.Timeout|null} */
   _heartbeatTimer = null;
@@ -155,6 +157,7 @@ class CadConnection {
         this._product = result.platform;
         this._platform = result.platform;
         this.connected = true;
+        this._connectionEpoch += 1;
         this._clearStall();
         setCadConnected(true);
         this._activeDocName = null;
@@ -192,15 +195,17 @@ class CadConnection {
    * @param {string} code
    * @param {string|null} [encoding]
    * @param {boolean} [raw]
+   * @param {number|null} [timeoutMs] 单条命令超时覆盖（默认 CAD_COMMAND_TIMEOUT）
+   * @param {boolean} [trusted] 内部可信代码，跳过安全规则（仅 @lisp 引导使用）
    * @returns {Promise<string|{ text: string, rawBase64: string }>}
    */
-  async sendCommandWithResult(code, encoding = null, raw = false) {
+  async sendCommandWithResult(code, encoding = null, raw = false, timeoutMs = null, trusted = false) {
     if (!this.connected) throw new Error(t('cad.notConnected'));
     if (this.isStalled()) throw this._stallError();
     return new Promise((resolve, reject) => {
       this._commandQueue.enqueue({
         type: 'sendResult', code, platform: this._platform, encoding: encoding || '',
-        resolve, reject
+        timeoutMs, trusted, resolve, reject
       }, PRIORITY_NORMAL);
     }).then(result => {
       if (result.success) {
@@ -919,12 +924,13 @@ export function resolveCadConnection() {
 /**
  * @type {{
  *   connected: boolean,
+ *   connectionEpoch: number,
  *   version: string|null,
  *   product: string|null,
  *   _platform: string|null,
  *   connect(platform?: string|null, options?: { moniker?: string, key?: string, forceLaunch?: boolean }): Promise<boolean>,
  *   sendCommand(code: string): Promise<boolean>,
- *   sendCommandWithResult(code: string, encoding?: string|null, raw?: boolean): Promise<string|{text:string,rawBase64:string}>,
+ *   sendCommandWithResult(code: string, encoding?: string|null, raw?: boolean, timeoutMs?: number|null, trusted?: boolean): Promise<string|{text:string,rawBase64:string}>,
  *   getVersion(): string|null,
  *   getPlatform(): string|null,
  *   getConnectionId(): string|null,
@@ -947,6 +953,7 @@ export function resolveCadConnection() {
 export const cad = {
   get connected() { return _resolveConn().connected; },
   set connected(v) { _resolveConn().connected = v; },
+  get connectionEpoch() { return _resolveConn()._connectionEpoch; },
 
   get version() { return _resolveConn()._version; },
   set version(v) { _resolveConn()._version = v; },
@@ -957,7 +964,9 @@ export const cad = {
 
   async connect(platform, options) { return _resolveConn().connect(platform, options); },
   async sendCommand(code) { return _resolveConn().sendCommand(code); },
-  async sendCommandWithResult(code, encoding, raw) { return _resolveConn().sendCommandWithResult(code, encoding, raw); },
+  async sendCommandWithResult(code, encoding, raw, timeoutMs, trusted) {
+    return _resolveConn().sendCommandWithResult(code, encoding, raw, timeoutMs, trusted);
+  },
   getVersion() { return _resolveConn().getVersion(); },
   getPlatform() { return _resolveConn().getPlatform(); },
   getConnectionId() { return _resolveConn().getConnectionId(); },

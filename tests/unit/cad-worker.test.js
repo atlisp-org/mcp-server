@@ -81,6 +81,12 @@ describe('cad-worker', () => {
             expect(result.valid).toBe(false);
             expect(result.error).toContain('安全限制');
         });
+
+        it('allows trusted internal bootstrap code to bypass security rules', () => {
+            mocks.lispCheckParens.mockReturnValue({ valid: true });
+            mocks.lispValidate.mockReturnValue({ valid: false, error: '禁止使用 eval 函数' });
+            expect(validateCode('(eval 1)', true)).toEqual({ valid: true });
+        });
     });
 
     describe('computeCodeHash', () => {

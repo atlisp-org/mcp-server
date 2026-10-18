@@ -1,7 +1,7 @@
 export const tools = [
 {
         name: 'open_cad',
-        description: '首次操作 CAD 前必调。用户说"打开CAD/启动CAD/开启CAD"时调用。如果 CAD 未启动则启动它，已运行则连接并使窗口前置。自动检测 AutoCAD > ZWCAD > GStarCAD > BricsCAD。如需后台连接不切窗口请用 connect_cad',
+        description: '首次操作 CAD 前必调。用户说"打开CAD/启动CAD/开启CAD"时调用。如果 CAD 未启动则启动它，已运行则连接并使窗口前置。连接成功后自动安装/加载 @lisp 环境（AUTO_INSTALL_ATLISP=true）。自动检测 AutoCAD > ZWCAD > GStarCAD > BricsCAD。如需后台连接不切窗口请用 connect_cad',
         inputSchema: {
             type: 'object',
             properties: {
@@ -11,7 +11,7 @@ export const tools = [
     },
 {
         name: 'connect_cad',
-        description: '后台连接 CAD（不切窗口），适合 open_cad 失败时的备用方案。用户说"连CAD/连接CAD"时使用。自动检测 AutoCAD > ZWCAD > GStarCAD > BricsCAD。如需窗口前置请用 open_cad',
+        description: '后台连接 CAD（不切窗口），适合 open_cad 失败时的备用方案。用户说"连CAD/连接CAD"时使用。连接成功后自动安装/加载 @lisp 环境（AUTO_INSTALL_ATLISP=true）。自动检测 AutoCAD > ZWCAD > GStarCAD > BricsCAD。如需窗口前置请用 open_cad',
         inputSchema: {
             type: 'object',
             properties: {
@@ -76,17 +76,17 @@ export const tools = [
     },
 {
         name: 'install_atlisp',
-        description: '在 CAD 中安装 @lisp 包管理器（首次使用前调用一次即可）。当用户说"安装@lisp/准备@lisp环境"时调用。安装后需调用 init_atlisp 加载。若已安装则自动跳过，返回已安装信息',
+        description: '在 CAD 中安装 @lisp 核心/包管理器。连接 CAD 后默认已自动安装（AUTO_INSTALL_ATLISP=true），通常无需手动调用；仅当自动安装因未保存图纸/网络失败而跳过，或用户明确要求重新安装时调用。若已安装会直接返回已安装信息',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'init_atlisp',
-        description: '加载 @lisp 函数库和初始变量到 CAD。当用户需要用到 @lisp 函数/包时调用。前置条件：CAD 已连接，@lisp 已安装(install_atlisp)。所有 @lisp 工具(list_packages/at_command/search_packages等)前需先调用此工具。若自动加载失败可手动调用',
+        description: '加载 @lisp 函数库和初始变量到 CAD。连接 CAD 后默认已自动完成；仅当自动加载失败、或用户明确要求重新初始化时调用。前置条件：@lisp 核心已安装。加载后可显式检查 get_system_status 的 atlisp.ready',
         inputSchema: { type: 'object', properties: {} }
     },
 {
         name: 'get_system_status',
-        description: '获取完整诊断信息：MCP版本、Worker状态、CAD连接状态(Lisp可执行性)、已安装包。用户说"工具不工作/CAD没反应/查一下状态"时优先调用。先于 get_cad_info 用于深度排查',
+        description: '获取完整诊断信息：MCP版本、Worker状态、CAD连接状态(Lisp可执行性)、@lisp 自动安装状态、已安装包。用户说"工具不工作/@lisp不可用/CAD没反应/查一下状态"时优先调用。先于 get_cad_info 用于深度排查',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: {
             type: 'object',
@@ -95,6 +95,7 @@ export const tools = [
                 worker: { type: 'object', description: 'CAD Worker 存活状态' },
                 cad: { type: 'object', description: 'CAD 连接状态（platform/version/busy/hasDoc）' },
                 lisp: { type: 'object', description: 'Lisp 可执行性探测结果' },
+                atlisp: { type: 'object', description: '@lisp 自动安装状态（installed/ready/message/action）' },
                 packages: { description: 'CAD 内已安装包列表（未探测到时为 null）' },
                 raw: { type: 'string', description: '原始文本（仅当 JSON 解析失败时出现）' }
             }

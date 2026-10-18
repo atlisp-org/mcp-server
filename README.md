@@ -34,6 +34,7 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 - **执行 AutoLISP** — 执行 LISP 代码并获取结果
 - **AI Agent 控制 CAD** — 340+ MCP 工具，涵盖绘图、编辑、查询、管理
 - **包管理** — 列出、搜索、安装 @lisp 包
+- **自动安装 @lisp** — 连接 CAD 后自动安装/加载核心与函数库（未保存图纸时安全跳过）
 - **批量操作** — 批量复制/移动/旋转/缩放/镜像/偏移/改名/改色/改图层
 - **3D 建模** — 创建 Box/Sphere/Cylinder/Cone/Torus/Wedge，布尔运算，拉伸/旋转
 - **图纸集管理** — 创建/发布/归档/比较/打包图纸集
@@ -313,8 +314,35 @@ curl http://localhost:8110/metrics
 - 如果 CAD 已运行，连接现有实例
 - 如果 CAD 未运行，通过 COM 自动创建新实例
 - `open_cad` 额外将 CAD 窗口切换到前台
+- 连接成功后自动安装/加载 @lisp 核心与函数库（见下节）
 
-连接成功返回类似: `已连接到 AutoCAD 2025`
+连接成功返回类似: `已连接到 AutoCAD 2025；@lisp 环境已就绪`
+
+### 连接后自动安装 @lisp
+
+默认开启（`AUTO_INSTALL_ATLISP=true`）。连接 CAD 后（`open_cad` / `connect_cad` / 自动连接 / 首次普通工具调用；`send_esc`、`bring_to_front` 等紧急工具会跳过自动安装）会：
+
+1. 探测 CAD 内 `@::init-once` / `@::load-module`
+2. 未安装则从 `https://atlisp.cn/@` 下载并加载 @lisp 内核
+3. 从 `https://atlisp.cn/cloud` 加载函数库，等待 `base:init` 就绪
+
+首次安装可能需要数十秒到两分钟，`connect_cad` / `open_cad` 会等待完成后再返回；之后使用连接缓存，不再重复安装/探测。
+
+安全限制：
+
+- 安装前检查所有打开的图纸是否有未保存修改（与安装脚本一致，忽略新建的 `Drawing1.dwg` 等模板图）；存在未保存修改时**跳过自动安装**并提示（安装脚本在未保存时会弹窗/exit）
+- 单条安装/加载命令默认 120 秒超时；失败后 60 秒内不重复尝试
+- 自动安装失败不会阻断 CAD 连接；基础工具仍可使用，可调用 `get_system_status` 查看 `atlisp` 字段
+
+关闭自动安装：
+
+```bash
+AUTO_INSTALL_ATLISP=false atlisp-mcp
+# 或
+atlisp-mcp --no-auto-install-atlisp
+```
+
+显式调用仍然可用：`install_atlisp`、`init_atlisp`。
 
 ### 多 CAD 实例管理
 
@@ -365,8 +393,8 @@ curl http://localhost:8110/metrics
 | `at_command` | 执行 @lisp 命令 | `command` (必填) |
 | `new_document` | 新建空白文档 | — |
 | `bring_to_front` | 切换 CAD 到前台 | — |
-| `install_atlisp` | 安装 @lisp | — |
-| `init_atlisp` | 初始化 @lisp 环境 | — |
+| `install_atlisp` | 安装 @lisp（通常连接后已自动完成） | — |
+| `init_atlisp` | 加载 @lisp 函数库（通常连接后已自动完成） | — |
 | `get_system_status` | 获取系统诊断信息 | — |
 
 ### LISP 执行
@@ -905,6 +933,9 @@ curl http://localhost:8110/metrics
 | `LLM_MAX_TOKENS` | `4096` | LLM 最大 tokens |
 | `LLM_TEMPERATURE` | `0.7` | LLM 温度 |
 | `API_KEY_RATE_LIMIT` | `1000` | API Key 速率限制 |
+| `AUTO_INSTALL_ATLISP` | `true` | 连接 CAD 后自动安装/加载 @lisp 核心与函数库（false/0/off/no 关闭） |
+| `ATLISP_BOOTSTRAP_TIMEOUT` | `120000` | 自动安装/加载单条命令超时 (ms) |
+| `ATLISP_BOOTSTRAP_RETRY` | `60000` | 自动安装失败后的重试间隔 (ms) |
 
 ---
 
@@ -920,6 +951,8 @@ curl http://localhost:8110/metrics
 | `--config <path>` | 配置文件路径 |
 | `--ssl-key <path>` | SSL 私钥文件 |
 | `--ssl-cert <path>` | SSL 证书文件 |
+| `--auto-install-atlisp` | 连接 CAD 后自动安装/加载 @lisp（默认） |
+| `--no-auto-install-atlisp` | 关闭 @lisp 自动安装 |
 | `--install-autostart` | 注册用户登录后自动启动 HTTP 服务 |
 | `--uninstall-autostart` | 移除自动启动注册 |
 | `--autostart-status` | 查询自动启动是否已安装 |
@@ -949,6 +982,9 @@ curl http://localhost:8110/metrics
   "errorReportEnabled": true,
   "errorReportUrl": "https://atlisp.cn/api/error/report",
   "maxPoolSize": 3,
+  "autoInstallAtlisp": true,
+  "atlispBootstrapTimeout": 120000,
+  "atlispBootstrapRetry": 60000,
   "apiKeys": [
     { "key": "key1", "limit": 100, "name": "user1", "role": "admin" }
   ],

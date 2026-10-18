@@ -17,6 +17,11 @@ describe('config', () => {
   it('has default port', () => expect(config.port).toBeDefined());
   it('has default host', () => expect(config.host).toBeDefined());
   it('has transport mode', () => expect(['http', 'stdio']).toContain(config.transport));
+  it('enables @lisp auto install by default', () => {
+    expect(config.autoInstallAtlisp).toBe(true);
+    expect(config.atlispBootstrapTimeout).toBeGreaterThan(0);
+    expect(config.atlispBootstrapRetry).toBeGreaterThan(0);
+  });
   it('getConfig returns specific key', () => expect(getConfig('port')).toBe(config.port));
   it('getAllConfig returns all config', () => {
     const all = getAllConfig();

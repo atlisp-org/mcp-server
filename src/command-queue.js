@@ -180,7 +180,7 @@ export class CommandQueue {
         if (dedupKey) this._dedupMap.delete(dedupKey);
       }
       try {
-        const result = await this._conn._sendMessageInternal(cmd);
+        const result = await this._conn._sendMessageInternal(cmd, false, cmd.timeoutMs || null);
         cmd.resolve(result);
       } catch (e) {
         cmd.reject(e);

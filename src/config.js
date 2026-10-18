@@ -69,6 +69,10 @@ const envSchema = z.object({
     AUTO_CONNECT: z.coerce.boolean().optional().default(false),
     AUTO_LAUNCH: z.coerce.boolean().optional().default(true),
     LAUNCH_TIMEOUT: z.coerce.number().optional().default(30000),
+    // 连接 CAD 后自动安装/加载 @lisp 核心与函数库（false/0/off/no 可关闭）
+    AUTO_INSTALL_ATLISP: z.string().optional(),
+    ATLISP_BOOTSTRAP_TIMEOUT: z.coerce.number().optional().default(120000),
+    ATLISP_BOOTSTRAP_RETRY: z.coerce.number().optional().default(60000),
     PEER_DISCOVERY_ENABLED: z.coerce.boolean().optional().default(true),
     PEER_DISCOVERY_PORT: z.coerce.number().optional().default(9811),
     PEER_DISCOVERY_INTERVAL: z.coerce.number().optional().default(5000),
@@ -151,6 +155,9 @@ const configSchema = z.object({
     autoConnect: z.boolean().optional(),
     autoLaunch: z.boolean().optional(),
     launchTimeout: z.number().optional(),
+    autoInstallAtlisp: z.boolean().optional(),
+    atlispBootstrapTimeout: z.number().optional(),
+    atlispBootstrapRetry: z.number().optional(),
     peerDiscovery: z.object({
         enabled: z.boolean().optional(),
         port: z.number().optional(),
@@ -227,6 +234,10 @@ function parseArgs() {
         } else if (args[i] === '--tool-profile' && args[i + 1]) {
             result.toolProfile = args[i + 1];
             i++;
+        } else if (args[i] === '--auto-install-atlisp') {
+            result.autoInstallAtlisp = true;
+        } else if (args[i] === '--no-auto-install-atlisp') {
+            result.autoInstallAtlisp = false;
         }
     }
     return result;
@@ -340,6 +351,10 @@ const config = {
     autoConnect: fileConfig?.autoConnect ?? env.AUTO_CONNECT,
     autoLaunch: fileConfig?.autoLaunch ?? env.AUTO_LAUNCH,
     launchTimeout: fileConfig?.launchTimeout ?? env.LAUNCH_TIMEOUT,
+    autoInstallAtlisp: cliArgs.autoInstallAtlisp ?? fileConfig?.autoInstallAtlisp ??
+        parseBool(env.AUTO_INSTALL_ATLISP, true),
+    atlispBootstrapTimeout: fileConfig?.atlispBootstrapTimeout ?? env.ATLISP_BOOTSTRAP_TIMEOUT,
+    atlispBootstrapRetry: fileConfig?.atlispBootstrapRetry ?? env.ATLISP_BOOTSTRAP_RETRY,
     peerDiscovery: {
         enabled: fileConfig?.peerDiscovery?.enabled ?? env.PEER_DISCOVERY_ENABLED,
         port: fileConfig?.peerDiscovery?.port ?? env.PEER_DISCOVERY_PORT,
