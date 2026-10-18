@@ -2,6 +2,29 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.2] - 2026-10-18
+
+### 更新内容
+
+- feat(plugin): 新增 plugin_list / plugin_reload 管理工具 (0d1f6d7)
+- feat(plugin): 接通工具与 CAD 生命周期钩子，支持回收插件注册的工具 (7b28623)
+- fix(robustness): 为缺失超时的外部 HTTP 调用补超时 (9f84299)
+- perf(startup): @atlisp/lint 延迟加载，减少日志热路径系统调用 (17c2035)
+- refactor(cad): 提取命令队列到 command-queue.js 并修复去重竞态 (52e11a4)
+- fix(text-clean): 保留 MTEXT 转义花括号，补 21 条单元测试 (d797a7f)
+- fix(plugin): 修复纯 ESM 下插件全部加载失败，完善热重载生命周期 (3b5c6ac)
+- chore(log): 空闲会话清理日志降为 info，避免误报 error (77b559e)
+- feat(data): 文本清洗/type+layer、图框去重、analysis facts 下沉到 MCP (7592496)
+- feat(relay): 常驻后台中继 —— 页面关闭后仍可操作 CAD (87d9164)
+- fix(cad): 心跳区分「worker 忙」与「worker 死」，消除重启循环 (22fff01)
+- docs(AGENTS): 更正「CAD 会话未加载 lib」的错误判断（atoms-family format=1 返回字符串） (d5a04a9)
+- fix(health): 探测超时单独报 timeout，超时上限 3s → 8s（3s 会把正常 CAD 误判为 down） (718ddab)
+- fix(health): /health 未连接时不再一律报 connected:false，新增 status/probed 与 ?probe=1 (0a98050)
+- fix: 修复端口锁释放时 ENOENT 误报错误日志 (09eb6b1)
+- fix(dwg): list_frames 未登记分派表导致「未知工具」，并加目录↔分派一致性棘轮测试 (134a313)
+- feat(dwg): 图框识别资源与工具；修 block-refs 属性读取与 T 真值依赖 (2a1ac3a)
+- fix(dwg): analysis 聚合截断、blockUsage 语义错误、block-refs 分页与含 $ 块名 (bb090ff)
+
 ## [1.11.1] - 2026-10-16
 
 ### 更新内容

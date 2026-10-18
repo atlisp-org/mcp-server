@@ -1,6 +1,6 @@
 {
   "name": "@atlisp/mcp",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
   "type": "module",
   "bin": {
