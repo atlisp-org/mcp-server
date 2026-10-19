@@ -1,4 +1,4 @@
-# @lisp MCP Server 托盘管理工具 - 构建脚本
+﻿# @lisp MCP Server 托盘管理工具 - 构建脚本
 #
 # 依赖：Windows 自带的 .NET Framework 4.x csc.exe（无需安装 .NET SDK）
 #
