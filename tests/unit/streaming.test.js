@@ -34,6 +34,24 @@ describe('streaming', () => {
             expect(lisp).toContain('(cons 0 "LINE")');
         });
 
+        it('生成的 LISP 用 prog1 清理全局临时变量（ss 持有整个选择集）', async () => {
+            mocks.sendCommandWithResult.mockResolvedValue(JSON.stringify([0]));
+            await streamEntitiesByType({});
+            const lisp = mocks.sendCommandWithResult.mock.calls[0][0];
+            expect(lisp.trim().startsWith('(prog1')).toBe(true);
+            expect(lisp).toContain('(setq ss nil result nil elist nil e nil count nil i nil)');
+
+            // 括号必须平衡，否则 CAD 侧会直接报语法错误
+            let depth = 0;
+            let minDepth = 0;
+            for (const ch of lisp) {
+                if (ch === '(') depth++;
+                else if (ch === ')') { depth--; minDepth = Math.min(minDepth, depth); }
+            }
+            expect(depth).toBe(0);
+            expect(minDepth).toBe(0);
+        });
+
         it('filters by layer in Lisp expression', async () => {
             mocks.sendCommandWithResult.mockResolvedValue(JSON.stringify([0]));
             await streamEntitiesByType({ layer: 'walls' });

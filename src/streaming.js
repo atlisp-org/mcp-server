@@ -15,28 +15,31 @@ async function streamEntities({ filterExpr, extractFields, itemMapper, offset, l
     ? `(ssget "_X" ${filterExpr})`
     : `(ssget "_X")`;
 
-  const extractCode = extractFields.length === 1
-    ? `(list ${extractFields.join(' ')})`
-    : `(list ${extractFields.join(' ')})`;
+  const extractCode = `(list ${extractFields.join(' ')})`;
 
-  const lisp = `(progn
-    (setq ss ${ssgetExpr})
-    (setq total (if ss (sslength ss) 0))
-    (if (> total ${MAX_ENTITY_LIMIT})
-      (list -1 total)
-      (if (>= ${offset} total)
-        (list total)
-        (progn
-          (setq result (list total))
-          (setq i ${offset})
-          (setq count 0)
-          (while (and (< i total) (< count ${limit}))
-            (setq e (ssname ss i))
-            (setq elist (entget e))
-            (setq result (cons ${extractCode} result))
-            (setq i (1+ i))
-            (setq count (1+ count)))
-          (reverse result)))))`;
+  // 最外层用 prog1 收尾清理：AutoLISP 的 setq 是全局的，ss 持有整个选择集，
+  // result/elist 持有中间结果。不置 nil 的话，大图扫描后这些对象会一直挂在
+  // CAD 会话里（一次全图 ssget 可能就是几十万个实体）。
+  const lisp = `(prog1
+    (progn
+      (setq ss ${ssgetExpr})
+      (setq total (if ss (sslength ss) 0))
+      (if (> total ${MAX_ENTITY_LIMIT})
+        (list -1 total)
+        (if (>= ${offset} total)
+          (list total)
+          (progn
+            (setq result (list total))
+            (setq i ${offset})
+            (setq count 0)
+            (while (and (< i total) (< count ${limit}))
+              (setq e (ssname ss i))
+              (setq elist (entget e))
+              (setq result (cons ${extractCode} result))
+              (setq i (1+ i))
+              (setq count (1+ count)))
+            (reverse result)))))
+    (setq ss nil result nil elist nil e nil count nil i nil))`;
 
   const raw = await cad.sendCommandWithResult(lisp);
   try {
