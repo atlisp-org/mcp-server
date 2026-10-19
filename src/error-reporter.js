@@ -4,7 +4,7 @@
  * 设计要点：
  * - 只上报 `logger.error()` 的条目，通过 `setErrorNotify()` 接线，避免 logger ↔ reporter 循环依赖；
  * - 默认开启，可用 `ERROR_REPORT_ENABLED=false` 或配置文件 `errorReportEnabled: false` 关闭；
- * - 同一指纹 60s 内只上报一次，避免 relay 502、worker 轮换等重复错误刷屏；
+ * - 同一指纹 60s 内只上报一次，避免 relay 502 等重复错误刷屏；
  * - 上报失败只写 stderr（console.error），**绝不走 logger.error**，否则会递归上报；
  * - 负载只包含错误文本、客户端标识与运行上下文，不含图纸内容或用户数据。
  */

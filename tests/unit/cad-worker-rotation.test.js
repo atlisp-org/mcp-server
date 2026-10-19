@@ -17,10 +17,11 @@ vi.mock('../../src/config.js', () => ({
 vi.mock('../../src/metrics.js', () => ({ setCadConnected: vi.fn() }));
 
 const logError = vi.fn();
+const logWarn = vi.fn();
 vi.mock('../../src/logger.js', () => ({
   error: (...args) => logError(...args),
   info: vi.fn(),
-  warn: vi.fn(),
+  warn: (...args) => logWarn(...args),
   debug: vi.fn(),
   log: vi.fn(),
 }));
@@ -86,13 +87,18 @@ function sendInternal(msg) {
 }
 
 function thresholdLogs() {
-  return logError.mock.calls.filter((c) => String(c[0]).includes('达到最大请求数'));
+  return logWarn.mock.calls.filter((c) => String(c[0]).includes('达到最大请求数'));
+}
+
+function rotationLogs() {
+  return logWarn.mock.calls.filter((c) => String(c[0]).includes('轮换'));
 }
 
 describe('worker 轮换计数（外部请求计算，内部请求不计）', () => {
   beforeEach(() => {
     uuidSeq = 0;
     logError.mockClear();
+    logWarn.mockClear();
     conn = createCadConnection();
     worker = makeWorker();
     conn._primaryWorker = worker;
@@ -120,6 +126,9 @@ describe('worker 轮换计数（外部请求计算，内部请求不计）', () 
     expect(thresholdLogs()).toHaveLength(1);
     expect(conn._rotateWorker).toHaveBeenCalledTimes(1);
     expect(conn._rotateWorker).toHaveBeenCalledWith(worker);
+
+    // 轮换是设计内动作：只记 WARN，不能进 ERROR（否则会被错误上报污染）
+    expect(logError.mock.calls.filter((c) => String(c[0]).includes('轮换'))).toHaveLength(0);
   });
 
   it('心跳/内部请求不计入轮换计数，也不会触发轮换', () => {
@@ -158,6 +167,34 @@ describe('worker 轮换计数（外部请求计算，内部请求不计）', () 
 
     expect(worker._requestCount).toBe(MAX_REQUESTS_PER_WORKER + 5);
     expect(thresholdLogs()).toHaveLength(1);
+  });
+
+  it('读 worker 达到阈值后同样轮换（修复前只读请求永远不触发轮换）', async () => {
+    // 必须用 >1 的池，只读请求才会真正落到 read worker 上
+    const { default: cfg } = await import('../../src/config.js');
+    cfg.workerPoolSize = 2;
+    try {
+      conn._rotateWorker = vi.fn();
+      const readWorker = conn._getWorker(true);
+      expect(readWorker).not.toBe(worker);
+      expect(readWorker._workerType).toBe('read');
+
+      for (let i = 0; i < MAX_REQUESTS_PER_WORKER - 1; i++) {
+        const { entry } = dispatch({ type: 'sendResult', code: '(getvar "CLAYER")' });
+        entry.resolve({ success: true });
+      }
+      expect(conn._rotateWorker).not.toHaveBeenCalled();
+
+      const { entry } = dispatch({ type: 'sendResult', code: '(getvar "CLAYER")' });
+      entry.resolve({ success: true });
+
+      expect(readWorker._requestCount).toBe(MAX_REQUESTS_PER_WORKER);
+      expect(conn._rotateWorker).toHaveBeenCalledTimes(1);
+      expect(conn._rotateWorker).toHaveBeenCalledWith(readWorker);
+      expect(rotationLogs().some((c) => String(c[0]).includes('read worker'))).toBe(true);
+    } finally {
+      cfg.workerPoolSize = 1;
+    }
   });
 
   it('_rotateWorker 清除旧 worker 的轮换标记，避免在途请求重复触发', () => {

@@ -36,7 +36,9 @@ const HEARTBEAT_RESET_COOLDOWN = config.heartbeatResetCooldown ?? 60000;
 const DOC_POLL_COOLDOWN = Math.max(HEARTBEAT_INTERVAL * 2, 30000);
 const MAX_RESTART_ATTEMPTS = 10; // 增加重启次数
 const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
-const MAX_REQUESTS_PER_WORKER = 100; // 每个worker最大处理请求数，超过后轮换
+// 每个 worker 最大处理请求数，超过后轮换（释放 edge-js/.NET 侧原生内存）。
+// 可配置：高频调用场景调大可以减少 worker 冷启动（CLR 初始化）次数。
+const MAX_REQUESTS_PER_WORKER = config.workerMaxRequests ?? 100;
 
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
@@ -121,8 +123,10 @@ class CadConnection {
     this._commandQueue = new CommandQueue(this);
     this._cb = new CircuitBreaker(
       this._connectionId,
-      (id) => logError(`[${id}] Circuit breaker OPEN`),
-      (id) => logError(`[${id}] Circuit breaker HALF_OPEN, allowing trial request`)
+      // 熔断是保护动作而非根因：真正的失败（stall/heartbeat）已经各自记过 ERROR，
+      // 这里记 WARN，避免同一故障在日志里出现三层 ERROR。
+      (id) => logWarn(`[${id}] Circuit breaker OPEN`),
+      (id) => logWarn(`[${id}] Circuit breaker HALF_OPEN, allowing trial request`)
     );
   }
 
@@ -458,6 +462,17 @@ class CadConnection {
         }
         const idx = this._readWorkers.indexOf(w);
         if (idx >= 0) this._readWorkers.splice(idx, 1);
+        // 读 worker 退出（崩溃或主动轮换）时，挂在它身上的在途请求必须立即失败，
+        // 否则只能干等 CAD_COMMAND_TIMEOUT。primary 的 exit 处理会兜底全部请求，
+        // 读 worker 原本没有任何清理路径。
+        const readExitError = new Error(`Read worker exited with code ${code}`);
+        for (const [id, entry] of this._pendingRequests) {
+          if (entry._worker !== w) continue;
+          clearTimeout(entry.timeout);
+          entry._skipCb = true;
+          this._pendingRequests.delete(id);
+          entry.reject(readExitError);
+        }
         // 主动轮换/重置导致的退出由调用方负责补位，避免重复 spawn
         if (w._intentionalExit) return;
         this._scheduleReadWorkerRestart();
@@ -790,7 +805,8 @@ class CadConnection {
 
   async _sendMessage(msg) {
     if (!this._cb.allowRequest()) {
-      logError(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
+      // 自愈动作：重置熔断器 + 重建 worker，不属于新的故障
+      logWarn(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
       this._cb.reset();
       await this._resetWorker();
       await this._getWorker(false);
@@ -814,7 +830,9 @@ class CadConnection {
 
       // 检查是否需要轮换 worker（只在跨越阈值时标记一次，避免重复刷日志）
       if (w._requestCount >= MAX_REQUESTS_PER_WORKER && !w._needsRotation) {
-        logError(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
+        // 主动轮换是设计内的生命周期动作，不是故障：用 WARN，
+        // 否则每次轮换都会进错误上报，把真实的 ERROR 淹没。
+        logWarn(`[${self._connectionId}] worker 达到最大请求数 ${MAX_REQUESTS_PER_WORKER}，准备轮换`);
         // 标记需要轮换，但在当前请求完成后执行
         w._needsRotation = true;
       }
@@ -842,9 +860,10 @@ class CadConnection {
         resolve: (v) => { 
           if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); 
           clearTimeout(timeout);
-          // 检查是否需要轮换 worker
-          if (w._needsRotation && !isReadOnly) {
-            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+          // 检查是否需要轮换 worker。这里不能按消息是否只读来过滤：
+          // 只读请求全部落在读 worker 上，加 !isReadOnly 会让读 worker 永远不轮换。
+          if (w._needsRotation) {
+            logWarn(`[${self._connectionId}] 轮换 ${w._workerType || 'primary'} worker (已处理 ${w._requestCount} 个请求)`);
             self._rotateWorker(w);
           }
           resolve(v); 
@@ -852,9 +871,9 @@ class CadConnection {
         reject: (e) => { 
           if (!noCircuitBreaker && !entry._skipCb) self._cb.recordFailure(); 
           clearTimeout(timeout);
-          // 检查是否需要轮换 worker
-          if (w._needsRotation && !isReadOnly) {
-            logError(`[${self._connectionId}] 轮换 primary worker (已处理 ${w._requestCount} 个请求)`);
+          // 检查是否需要轮换 worker（失败路径同样需要，否则阈值标记会一直挂着）
+          if (w._needsRotation) {
+            logWarn(`[${self._connectionId}] 轮换 ${w._workerType || 'primary'} worker (已处理 ${w._requestCount} 个请求)`);
             self._rotateWorker(w);
           }
           reject(e); 
@@ -863,6 +882,8 @@ class CadConnection {
         // 心跳据此区分「worker 正在跑真实命令」与「worker 无响应」
         _isCommand: msg.type === 'send' || msg.type === 'sendResult',
         _startedAt: Date.now(),
+        // 记录归属 worker：读 worker 退出时只清理自己的在途请求
+        _worker: w,
       };
       self._pendingRequests.set(requestId, entry);
       try {

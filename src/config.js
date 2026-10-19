@@ -57,6 +57,9 @@ const envSchema = z.object({
     LLM_MAX_TOKENS: z.coerce.number().optional().default(4096),
     LLM_TEMPERATURE: z.coerce.number().optional().default(0.7),
     WORKER_POOL_SIZE: z.coerce.number().optional().default(2),
+    // 每个 CAD worker 处理多少个请求后轮换（释放 edge-js/.NET 原生内存）。
+    // 高频调用场景可调大以减少 worker 冷启动开销；调小则更频繁回收。
+    WORKER_MAX_REQUESTS: z.coerce.number().optional().default(100),
     LINT_PRESET: z.string().optional().default(''),
     LINT_CONFIG_PATH: z.string().optional().default(''),
     LINT_LEVEL: z.string().optional().default(''),
@@ -339,6 +342,7 @@ const config = {
     llmTemperature: fileConfig?.llmTemperature ?? env.LLM_TEMPERATURE,
     maxPoolSize: fileConfig?.maxPoolSize ?? 3,
     workerPoolSize: fileConfig?.workerPoolSize ?? env.WORKER_POOL_SIZE,
+    workerMaxRequests: fileConfig?.workerMaxRequests ?? env.WORKER_MAX_REQUESTS,
     lintPreset: cliArgs.lintPreset ?? fileConfig?.lintPreset ?? (env.LINT_PRESET || undefined),
     lintConfigPath: cliArgs.lintConfigPath ?? fileConfig?.lintConfigPath ?? (env.LINT_CONFIG_PATH || undefined),
     lintLevel: cliArgs.lintLevel ?? fileConfig?.lintLevel ?? (env.LINT_LEVEL || undefined),
@@ -410,6 +414,9 @@ export function validateConfig() {
     }
     if (config.rateLimitMax < 1) {
         errors.push(`速率限制无效: ${config.rateLimitMax}`);
+    }
+    if (config.workerMaxRequests < 10) {
+        errors.push(`worker 轮换阈值过小: ${config.workerMaxRequests} (最小 10)`);
     }
     if (errors.length > 0) {
         console.error('配置验证错误:');
