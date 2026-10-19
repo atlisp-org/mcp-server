@@ -159,6 +159,27 @@ describe('ReadBatcher', () => {
         expect(combinedCmd._dedupKeys).toEqual(['k1', 'k2']);
     });
 
+    it('合并代码清理 _br* 临时变量（AutoLISP setq 是全局的，否则选择集被长期引用）', () => {
+        const batcher = new ReadBatcher(makeConn(), 1000, 2);
+        batcher.add(makeCmd('(tblnext "LAYER" nil)'));
+        batcher.add(makeCmd('(ssget "_X")'));
+        const combinedCmd = connQueue.enqueueHighPriority.mock.calls[0][0];
+        expect(combinedCmd.code.startsWith('(progn ')).toBe(true);
+        expect(combinedCmd.code).toContain('(prog1 (list _br0 _br1)');
+        expect(combinedCmd.code).toContain('(setq _br0 nil _br1 nil)');
+    });
+
+    it('clear 丢弃未 flush 的批次并立即 reject（定时器同时取消）', async () => {
+        const batcher = new ReadBatcher(makeConn(), 20, 10);
+        const cmd = makeCmd('(tblnext "LAYER" nil)');
+        batcher.add(cmd);
+        const err = new Error('CAD stalled');
+        batcher.clear(err);
+        expect(cmd.reject).toHaveBeenCalledWith(err);
+        await new Promise(r => setTimeout(r, 60));
+        expect(connQueue.enqueueHighPriority).not.toHaveBeenCalled();
+    });
+
     it('cleans up dedup entries after batched commands are processed', async () => {
         const conn = {
             _platform: 'AutoCAD',
@@ -177,6 +198,32 @@ describe('ReadBatcher', () => {
         expect(conn._sendMessageInternal).toHaveBeenCalledTimes(1);
         expect(c1.resolve).toHaveBeenCalled();
         expect(c2.resolve).toHaveBeenCalled();
+    });
+
+    it('CommandQueue.clear 同时清空批处理中的读命令（不再逃过快速失败）', async () => {
+        const conn = {
+            _platform: 'AutoCAD',
+            _sendMessageInternal: vi.fn().mockResolvedValue({ success: true, result: '["nil"]' }),
+        };
+        const q = new CommandQueue(conn);
+        conn._commandQueue = q;
+        q.enableBatcher();
+        const c1 = {
+            type: 'sendResult', code: '(tblnext "LAYER" nil)', platform: 'AutoCAD',
+            encoding: '', resolve: vi.fn(), reject: vi.fn(),
+        };
+        q.enqueue(c1);
+        expect(q._batcher._batch.length).toBe(1);
+
+        const err = new Error('CAD stalled');
+        q.clear(err);
+
+        expect(c1.reject).toHaveBeenCalledWith(err);
+        expect(q._batcher._batch.length).toBe(0);
+        expect(q._dedupMap.size).toBe(0);
+        // 批次定时器已取消：冷却期内不会再把命令发往卡住的 CAD
+        await new Promise(r => setTimeout(r, 120));
+        expect(conn._sendMessageInternal).not.toHaveBeenCalled();
     });
 
   it('批处理同步 flush 后不会残留去重键（后续同码请求不能被吞）', async () => {

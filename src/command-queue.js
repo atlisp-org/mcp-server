@@ -66,6 +66,20 @@ export class ReadBatcher {
     return true;
   }
 
+  /**
+   * 丢弃尚未 flush 的批次（队列清理/重置时调用）。
+   * 不处理的话，这些命令会逃过 clear() 的快速失败：定时器照常触发、照样发往
+   * 已经卡住的 CAD，调用方还要多等一轮 CAD_COMMAND_TIMEOUT。
+   * @param {Error} [error]
+   */
+  clear(error) {
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    const items = this._batch.splice(0);
+    for (const { command } of items) {
+      try { command.reject(error || new Error('Batch cleared')); } catch { /* 调用方兜底 */ }
+    }
+  }
+
   _flush() {
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
     const items = this._batch.splice(0);
@@ -75,9 +89,15 @@ export class ReadBatcher {
       this._conn._commandQueue.enqueueHighPriority(command);
       return;
     }
-    const combinedCode = items.map((item, idx) =>
+    const assigns = items.map((item, idx) =>
       `(setq _br${idx} (${item.command.code.replace(/^\(/, '')}))`
-    ).join(' ') + ` (list${items.map((_, idx) => ` _br${idx}`).join('')})`;
+    ).join(' ');
+    const refs = items.map((_, idx) => `_br${idx}`);
+    // 用完把临时变量置 nil：AutoLISP 的 setq 是全局的，不清掉会让
+    // (ssget ...) 返回的选择集在整个 CAD 会话里被这些全局变量引用住。
+    const cleanup = refs.map((ref) => `${ref} nil`).join(' ');
+    const combinedCode =
+      `(progn ${assigns} (prog1 (list ${refs.join(' ')}) (setq ${cleanup})))`;
     const combinedCommand = {
       type: 'sendResult', code: combinedCode, platform: this._conn._platform, encoding: '',
       _dedupKeys: items.map(item => item.dedupKey).filter(Boolean),
@@ -201,6 +221,7 @@ export class CommandQueue {
   }
 
   clear(error) {
+    if (this._batcher) this._batcher.clear(error);
     for (const q of this._queues) {
       while (q.length) {
         const cmd = q.shift();
