@@ -59,7 +59,8 @@ $compilerArgs = @(
     '/r:System.Drawing.dll',
     '/r:System.Windows.Forms.dll',
     '/r:System.Web.Extensions.dll',
-    '/r:System.Xml.dll'
+    '/r:System.Xml.dll',
+    '/r:System.IO.Compression.dll'
 )
 if (-not $NoOptimize) {
     $compilerArgs += '/optimize+'

@@ -83,7 +83,8 @@ async function buildWithDotnet() {
     'System.Drawing.dll',
     'System.Windows.Forms.dll',
     'System.Web.Extensions.dll',
-    'System.Xml.dll'
+    'System.Xml.dll',
+    'System.IO.Compression.dll'
   ];
 
   const args = [

@@ -17,6 +17,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -153,6 +154,29 @@ namespace Atlisp.Tray
                     "atlisp-mcp", "downloads");
             }
         }
+
+        /// <summary>免管理员的 portable Node.js（解压 zip 到用户目录，无需 UAC）。</summary>
+        public static string PortableNodeDir
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "atlisp-mcp", "node");
+            }
+        }
+
+        /// <summary>首次自动开启开机自启的标记文件，用户关闭后不会被再次打开。</summary>
+        public static string AutostartDefaultPath
+        {
+            get { return Path.Combine(DataDir, "autostart-default.txt"); }
+        }
+
+        /// <summary>自动安装的退避状态，避免反复失败时反复下载。</summary>
+        public static string BootstrapStatePath
+        {
+            get { return Path.Combine(DataDir, "bootstrap.state"); }
+        }
     }
 
     internal static class AppLog
@@ -199,6 +223,117 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>
+    /// 解压 portable Node.js 的 zip 包。官方 zip 顶层带一个
+    /// node-vX.Y.Z-win-x64\ 目录，这里统一剥掉，避免多一层路径。
+    /// 全程只写用户目录，不需要管理员权限。
+    /// </summary>
+    internal static class ZipInstaller
+    {
+        /// <summary>返回解压后 node.exe 的路径；失败时抛出异常。</summary>
+        public static string ExtractNodeZip(string zipPath, string destDir)
+        {
+            if (!File.Exists(zipPath)) throw new IOException("安装包不存在：" + zipPath);
+            Directory.CreateDirectory(destDir);
+
+            string staging = destDir + ".tmp-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            try
+            {
+                using (FileStream stream = File.OpenRead(zipPath))
+                using (ZipArchive archive = new ZipArchive(stream, ZipArchiveMode.Read))
+                {
+                    if (archive.Entries.Count == 0) throw new IOException("压缩包为空。");
+                    string root = CommonRoot(archive);
+                    foreach (ZipArchiveEntry entry in archive.Entries)
+                    {
+                        string relative = StripRoot(entry.FullName, root);
+                        if (relative.Length == 0) continue;
+
+                        string target = Path.GetFullPath(Path.Combine(staging, relative));
+                        if (!IsUnder(staging, target))
+                        {
+                            throw new IOException("压缩包含非法路径：" + entry.FullName);
+                        }
+
+                        if (entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+                            entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+                        {
+                            Directory.CreateDirectory(target);
+                            continue;
+                        }
+
+                        string dir = Path.GetDirectoryName(target);
+                        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                        // 手动复制，避免依赖 System.IO.Compression.FileSystem
+                        using (Stream source = entry.Open())
+                        using (FileStream sink = new FileStream(
+                            target, FileMode.Create, FileAccess.Write, FileShare.None))
+                        {
+                            source.CopyTo(sink);
+                        }
+                    }
+                }
+
+                string nodeExe = Path.Combine(staging, "node.exe");
+                if (!File.Exists(nodeExe)) throw new IOException("压缩包中没有 node.exe。");
+                string npmCmd = Path.Combine(staging, "npm.cmd");
+                if (!File.Exists(npmCmd)) throw new IOException("压缩包中没有 npm.cmd。");
+
+                // 旧版本残留目录先清掉再替换，避免 node.exe 被占用导致失败
+                if (Directory.Exists(destDir))
+                {
+                    try { Directory.Delete(destDir, true); }
+                    catch (Exception ex)
+                    {
+                        throw new IOException("无法替换已有目录（可能有 node.exe 正在运行）：" +
+                            ex.Message);
+                    }
+                }
+                Directory.Move(staging, destDir);
+                return Path.Combine(destDir, "node.exe");
+            }
+            finally
+            {
+                try { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
+                catch { }
+            }
+        }
+
+        /// <summary>取所有条目共有的第一层目录名；没有则返回空。</summary>
+        private static string CommonRoot(ZipArchive archive)
+        {
+            string root = null;
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                string name = entry.FullName.Replace('\\', '/');
+                int slash = name.IndexOf('/');
+                if (slash <= 0) return "";
+                string first = name.Substring(0, slash);
+                if (root == null) root = first;
+                else if (!string.Equals(root, first, StringComparison.OrdinalIgnoreCase)) return "";
+            }
+            return root ?? "";
+        }
+
+        private static string StripRoot(string fullName, string root)
+        {
+            string name = fullName.Replace('\\', '/');
+            if (root.Length > 0)
+            {
+                if (name.Length <= root.Length) return "";
+                if (!name.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return "";
+                name = name.Substring(root.Length).TrimStart('/');
+            }
+            return name.Replace('/', Path.DirectorySeparatorChar);
+        }
+
+        private static bool IsUnder(string root, string target)
+        {
+            string left = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            return target.StartsWith(left, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     public sealed class TrayConfig
     {
         public int Port { get; set; }
@@ -212,6 +347,7 @@ namespace Atlisp.Tray
         public bool AutoStartServer { get; set; }
         public bool CheckUpdateOnStart { get; set; }
         public bool StopServerOnExit { get; set; }
+        public bool AutoInstall { get; set; }
         public int HealthyPollSeconds { get; set; }
 
         public TrayConfig()
@@ -227,6 +363,7 @@ namespace Atlisp.Tray
             AutoStartServer = true;
             CheckUpdateOnStart = true;
             StopServerOnExit = false;
+            AutoInstall = true;
             HealthyPollSeconds = 5;
         }
 
@@ -267,6 +404,7 @@ namespace Atlisp.Tray
             AutoStartServer = other.AutoStartServer;
             CheckUpdateOnStart = other.CheckUpdateOnStart;
             StopServerOnExit = other.StopServerOnExit;
+            AutoInstall = other.AutoInstall;
             HealthyPollSeconds = other.HealthyPollSeconds;
             Normalize();
         }
@@ -543,6 +681,73 @@ namespace Atlisp.Tray
 
     internal static class ProcessRunner
     {
+        private static readonly object PathSync = new object();
+
+        /// <summary>
+        /// 确保 node 所在目录在当前进程 PATH 中。
+        /// 托盘可能从 Explorer（或安装 Node.js 之前的登录会话）启动，其 PATH 不含
+        /// “C:\Program Files\nodejs”，此时 npm 的安装脚本（如 edge-js 的
+        /// node tools/install.js）会因为找不到 node 而失败：
+        ///     'C:\Windows\system32\cmd.exe' /d /s /c node tools/install.js
+        ///     'node' 不是内部或外部命令，也不是可运行的程序或批处理文件。
+        /// 这里补进当前进程环境变量，所有 UseShellExecute=false 的子进程都会继承修正值。
+        /// 返回 true 表示发生了修改。
+        /// </summary>
+        public static bool EnsureNodeOnPath(string nodePath)
+        {
+            if (string.IsNullOrEmpty(nodePath)) return false;
+            string nodeDir;
+            try
+            {
+                nodeDir = Path.GetDirectoryName(Path.GetFullPath(nodePath));
+            }
+            catch
+            {
+                return false;
+            }
+            if (string.IsNullOrEmpty(nodeDir)) return false;
+
+            lock (PathSync)
+            {
+                string current;
+                try { current = Environment.GetEnvironmentVariable("PATH") ?? ""; }
+                catch { return false; }
+
+                string[] parts = current.Split(new char[] { ';' },
+                    StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (SameDir(parts[i], nodeDir)) return false;
+                }
+
+                try
+                {
+                    Environment.SetEnvironmentVariable("PATH", nodeDir + ";" + current);
+                }
+                catch
+                {
+                    return false;
+                }
+                AppLog.Write("已将 " + nodeDir + " 补充到当前进程 PATH");
+                return true;
+            }
+        }
+
+        private static bool SameDir(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a)) return false;
+            try
+            {
+                string left = Path.GetFullPath(a.Trim().Trim('"')).TrimEnd('\\');
+                string right = Path.GetFullPath(b).TrimEnd('\\');
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static string Where(string executable)
         {
             int exitCode;
@@ -673,7 +878,8 @@ namespace Atlisp.Tray
             return "\"" + value.Replace("\"", "\\\"") + "\"";
         }
 
-        public static Process StartElevated(string commandLine, string logFile, out string error)
+        public static Process StartElevated(string commandLine, string logFile,
+            string nodePath, out string error)
         {
             error = null;
             try
@@ -684,6 +890,15 @@ namespace Atlisp.Tray
                 StringBuilder content = new StringBuilder();
                 content.AppendLine("@echo off");
                 content.AppendLine("chcp 65001 >nul");
+                // UAC 提升的进程不一定继承托盘的 PATH，npm 安装脚本需要能找到 node
+                if (!string.IsNullOrEmpty(nodePath))
+                {
+                    string nodeDir = Path.GetDirectoryName(Path.GetFullPath(nodePath));
+                    if (!string.IsNullOrEmpty(nodeDir))
+                    {
+                        content.AppendLine("set \"PATH=" + nodeDir + ";%PATH%\"");
+                    }
+                }
                 content.AppendLine("call " + commandLine + " > " + Quote(logFile) + " 2>&1");
                 content.AppendLine("exit /b %ERRORLEVEL%");
                 File.WriteAllText(batchFile, content.ToString(), Encoding.Default);
@@ -774,6 +989,8 @@ namespace Atlisp.Tray
 
                 ServerInfo info = new ServerInfo();
                 info.NodePath = FindNode(config);
+                // 必须先于 npm 检测：托盘自身 PATH 可能没有 node 目录
+                ProcessRunner.EnsureNodeOnPath(info.NodePath);
                 info.NpmPath = FindNpm(config, info.NodePath);
                 info.NpmCliPath = FindNpmCli(info.NpmPath, info.NodePath);
                 info.ScriptPath = FindScript(config, info);
@@ -824,6 +1041,10 @@ namespace Atlisp.Tray
 
             string nvmNode = FindNewestNvmNode(Path.Combine(roamingAppData, "nvm"));
             if (nvmNode != null) return nvmNode;
+
+            // 托盘自动安装的免管理员 Node.js（解压在用户目录下，无需 UAC）
+            string portableNode = Path.Combine(Paths.PortableNodeDir, "node.exe");
+            if (ExistsFile(portableNode)) return portableNode;
 
             string fromPath = ProcessRunner.Where("node.exe");
             if (fromPath != null) return fromPath;
@@ -2235,6 +2456,49 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>
+    /// 后台线程解压 portable Node.js，避免 30MB 的解压阻塞 UI 消息循环。
+    /// </summary>
+    internal sealed class PortableInstallJob
+    {
+        private readonly string _zipPath;
+        private readonly string _destDir;
+
+        public volatile bool Finished;
+        public volatile bool Success;
+        public volatile string Error;
+        public volatile string NodePath;
+
+        public string ZipPath
+        {
+            get { return _zipPath; }
+        }
+
+        public PortableInstallJob(string zipPath, string destDir)
+        {
+            _zipPath = zipPath;
+            _destDir = destDir;
+        }
+
+        public void Start()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    NodePath = ZipInstaller.ExtractNodeZip(_zipPath, _destDir);
+                    Success = true;
+                }
+                catch (Exception ex)
+                {
+                    Error = ex.Message;
+                    Success = false;
+                }
+                Finished = true;
+            });
+        }
+    }
+
     internal sealed class DownloadJob : IDisposable
     {
         private readonly object _sync = new object();
@@ -2414,6 +2678,7 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _serverAutoItem;
         private readonly ToolStripMenuItem _mirrorItem;
         private readonly ToolStripMenuItem _diagItem;
+        private readonly ToolStripMenuItem _autoInstallItem;
 
         private Icon _currentIcon;
         private ServerState _lastState = ServerState.Stopped;
@@ -2440,11 +2705,24 @@ namespace Atlisp.Tray
         private bool _nodeNeedsReboot;
         private bool _restartAfterNodeInstall;
 
+        // ---- 自动补齐运行环境（零人工干预）----
+        private const int AutoInstallMaxFailures = 3;
+        private bool _autoInstallDone;
+        private bool _autoStartAttempted;
+        private bool _portableNodeAttempted;
+        private bool _msiFallbackTried;
+        private int _autoInstallFailures;
+        private DateTime _autoInstallRetryAt = DateTime.MinValue;
+        private string _downloadKind;
+        private bool _bootstrapMode;
+        private PortableInstallJob _portableJob;
+
         public TrayApplication(bool silent)
         {
             _silent = silent;
             _config = TrayConfig.Load();
             _activePort = _config.Port;
+            LoadBootstrapState();
             ServerLocator.Resolve(_config, true);
             _health = new HealthMonitor(_config.Port, _config.HealthyPollSeconds * 1000);
             _health.CheckNow();
@@ -2508,6 +2786,9 @@ namespace Atlisp.Tray
             _mirrorItem = new ToolStripMenuItem("使用 npmmirror 镜像下载");
             _mirrorItem.Click += delegate { ToggleMirror(); };
 
+            _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
+            _autoInstallItem.Click += delegate { ToggleAutoInstall(); };
+
             _diagItem = new ToolStripMenuItem("环境诊断…");
             _diagItem.Click += delegate { ShowDiagnostics(); };
 
@@ -2549,6 +2830,7 @@ namespace Atlisp.Tray
             _settingsMenu.DropDownItems.Add(_trayAutoItem);
             _settingsMenu.DropDownItems.Add(_serverAutoItem);
             _settingsMenu.DropDownItems.Add(_mirrorItem);
+            _settingsMenu.DropDownItems.Add(_autoInstallItem);
             _settingsMenu.DropDownItems.Add(new ToolStripSeparator());
             _settingsMenu.DropDownItems.Add(reloadItem);
             _settingsMenu.DropDownItems.Add(configItem);
@@ -2589,9 +2871,19 @@ namespace Atlisp.Tray
             // 初始状态已经反映到 UI，后续第一次真实状态变化应当正常提醒
             _firstTick = false;
 
+            // 默认随 Windows 启动（只发生一次，用户关闭后不再自动打开）
+            EnsureDefaultAutostart();
+
             if (_config.AutoStartServer)
             {
-                EnsureServerStartedOnLaunch();
+                // 开启自动补齐时由 AutoBootstrap 统一编排（缺依赖会先装再启动）；
+                // 关闭时保持原行为：缺依赖就报启动失败。
+                ServerInfo bootInfo = ServerLocator.Resolve(_config, false);
+                if (!_config.AutoInstall ||
+                    (!string.IsNullOrEmpty(bootInfo.NodePath) && bootInfo.IsInstalled))
+                {
+                    EnsureServerStartedOnLaunch();
+                }
             }
 
             if (!_silent)
@@ -2616,6 +2908,9 @@ namespace Atlisp.Tray
 
         private void EnsureServerStartedOnLaunch()
         {
+            if (_autoStartAttempted) return;
+            _autoStartAttempted = true;
+
             HealthSnapshot snapshot = _health.Snapshot;
             if (snapshot != null && snapshot.Ok) return;
             if (ServiceHelper.IsRunning()) return;
@@ -2639,13 +2934,259 @@ namespace Atlisp.Tray
             }
         }
 
+        /// <summary>
+        /// 首次启动自动把托盘加入 Windows 开机自启（HKCU\...\Run）。
+        /// 用标记文件保证只发生一次：用户之后手动关闭，再启动不会被重新打开。
+        /// </summary>
+        private void EnsureDefaultAutostart()
+        {
+            try
+            {
+                if (File.Exists(Paths.AutostartDefaultPath)) return;
+
+                bool added = false;
+                if (!AutostartHelper.IsEnabled())
+                {
+                    AutostartHelper.SetEnabled(true);
+                    added = true;
+                }
+
+                Directory.CreateDirectory(Paths.DataDir);
+                File.WriteAllText(Paths.AutostartDefaultPath,
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), new UTF8Encoding(false));
+
+                AppLog.Write(added
+                    ? "首次启动：已自动加入 Windows 开机自启"
+                    : "首次启动：开机自启已存在，保持不变");
+                if (added && !_silent)
+                {
+                    Balloon("已加入开机自启",
+                        "托盘将随 Windows 自动启动。\r\n如不需要，可在右键菜单「随 Windows 启动托盘」中关闭。",
+                        ToolTipIcon.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("设置默认开机自启失败: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 启动后按环境自动补齐依赖，全程不需要人工确认：
+        ///   1) 没有 Node.js → 从 npmmirror 下载 zip 解压到用户目录（免 UAC）
+        ///   2) 没有 @lisp/mcp → npm install -g（用户级前缀，同样免 UAC）
+        ///   3) 都齐了 → 按 AutoStartServer 启动服务
+        /// 安装动作按指数退避重试并限次，但环境就绪的检测一直继续，
+        /// 这样用户手动装好依赖后托盘仍能自动启动服务。
+        /// </summary>
+        private void AutoBootstrap()
+        {
+            if (!_config.AutoInstall || _autoInstallDone) return;
+            if (DateTime.UtcNow < _autoInstallRetryAt) return;
+            if (TaskBusy()) return;
+
+            try
+            {
+                // 用缓存版：force=true 每次都会拉起 npm root -g，1s 一次的定时器扛不住
+                ServerInfo info = ServerLocator.Resolve(_config, false);
+
+                if (!string.IsNullOrEmpty(info.NodePath) && info.IsInstalled)
+                {
+                    _autoInstallDone = true;
+                    _bootstrapMode = false;
+                    if (_autoInstallFailures > 0)
+                    {
+                        _autoInstallFailures = 0;
+                        SaveBootstrapState();
+                    }
+                    AppLog.Write("auto-install: 运行环境就绪 node=" + info.NodePath +
+                        " version=" + info.VersionText);
+
+                    if (_config.AutoStartServer) EnsureServerStartedOnLaunch();
+                    return;
+                }
+
+                if (_autoInstallFailures >= AutoInstallMaxFailures) return;
+
+                if (string.IsNullOrEmpty(info.NodePath))
+                {
+                    StartPortableNode();
+                    return;
+                }
+
+                _bootstrapMode = true;
+                AppLog.Write("auto-install: 正在安装 @lisp/mcp");
+                InstallServer();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("auto-install 异常: " + ex);
+                ScheduleAutoInstallRetry();
+            }
+        }
+
+        private void ScheduleAutoInstallRetry()
+        {
+            _autoInstallFailures++;
+            int minutes = _autoInstallFailures <= 1 ? 1 :
+                (_autoInstallFailures <= 2 ? 5 : 30);
+            _autoInstallRetryAt = DateTime.UtcNow.AddMinutes(minutes);
+            AppLog.Write("auto-install 第 " + _autoInstallFailures +
+                " 次失败，" + minutes + " 分钟后重试");
+            SaveBootstrapState();
+        }
+
+        /// <summary>
+        /// 退避时间写入磁盘：托盘每次开机自启都会重新开始，
+        /// 不落盘会导致网络故障时反复重下 35MB。
+        /// </summary>
+        private void SaveBootstrapState()
+        {
+            try
+            {
+                Directory.CreateDirectory(Paths.DataDir);
+                File.WriteAllText(Paths.BootstrapStatePath,
+                    _autoInstallRetryAt.ToString("o") + Environment.NewLine +
+                    _autoInstallFailures.ToString(CultureInfo.InvariantCulture),
+                    new UTF8Encoding(false));
+            }
+            catch
+            {
+                // 状态文件写不了不影响主流程
+            }
+        }
+
+        private void LoadBootstrapState()
+        {
+            try
+            {
+                if (!File.Exists(Paths.BootstrapStatePath)) return;
+                string[] lines = File.ReadAllLines(Paths.BootstrapStatePath);
+                if (lines.Length > 0)
+                {
+                    DateTime retryAt;
+                    if (DateTime.TryParse(lines[0], CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out retryAt))
+                    {
+                        _autoInstallRetryAt = retryAt;
+                    }
+                }
+                if (lines.Length > 1)
+                {
+                    int failures;
+                    if (int.TryParse(lines[1], NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out failures))
+                    {
+                        _autoInstallFailures = failures;
+                    }
+                }
+            }
+            catch
+            {
+                _autoInstallRetryAt = DateTime.MinValue;
+            }
+        }
+
+        /// <summary>下载并解压免管理员的 portable Node.js。</summary>
+        private void StartPortableNode()
+        {
+            if (_portableNodeAttempted) return;
+            _portableNodeAttempted = true;
+            _bootstrapMode = true;
+
+            string version = _config.NodeVersion;
+            string arch = DetectNodeArch();
+            string url = BuildNodeZipUrl(version, arch);
+            string filePath = Path.Combine(Paths.DownloadDir,
+                "node-v" + version + "-win-" + arch + ".zip");
+
+            _downloadKind = "portable";
+            _downloadVersion = version;
+            _downloadArch = arch;
+            _downloadUrl = url;
+            _portableJob = null;
+            _downloadJob = new DownloadJob(url, filePath);
+
+            if (_taskWindow != null && !_taskWindow.IsDisposed)
+            {
+                try { _taskWindow.Close(); } catch { }
+            }
+            OutputForm form = new OutputForm("自动安装 Node.js v" + version, "", true);
+            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
+            _taskWindow = form;
+            form.Show();
+            form.Append("未检测到 Node.js，正在自动下载（无需管理员权限）\r\n");
+            form.Append("下载地址：" + url + "\r\n");
+            form.Append("安装目录：" + Paths.PortableNodeDir + "\r\n\r\n");
+
+            Balloon("自动安装中", "未检测到 Node.js，正在下载 v" + version + "…",
+                ToolTipIcon.Info);
+
+            AppLog.Write("auto-install: 下载 portable Node.js " + url);
+            _downloadJob.Start();
+            if (_downloadJob.Finished) PollDownload();
+        }
+
+        private string BuildNodeZipUrl(string version, string arch)
+        {
+            string mirror = _config.NodeMirror;
+            if (string.IsNullOrEmpty(mirror))
+            {
+                mirror = "https://npmmirror.com/mirrors/node";
+            }
+            return mirror.TrimEnd('/') + "/v" + version +
+                "/node-v" + version + "-win-" + arch + ".zip";
+        }
+
+        private void PollPortableInstall()
+        {
+            PortableInstallJob job = _portableJob;
+            if (job == null || !job.Finished) return;
+            _portableJob = null;
+
+            if (_taskWindow != null && !_taskWindow.IsDisposed)
+            {
+                if (job.Success)
+                {
+                    _taskWindow.Append("\r\nNode.js 解压完成：" + job.NodePath + "\r\n");
+                    _taskWindow.SetStatus("Node.js 就绪，正在继续安装 @lisp/mcp…");
+                }
+                else
+                {
+                    _taskWindow.Append("\r\nNode.js 解压失败：" + job.Error + "\r\n");
+                    _taskWindow.SetFinished(false, -1);
+                }
+            }
+
+            if (!job.Success)
+            {
+                AppLog.Write("auto-install: portable Node.js 解压失败 " + job.Error);
+                ScheduleAutoInstallRetry();
+                Balloon("自动安装 Node.js 失败", job.Error, ToolTipIcon.Warning);
+                return;
+            }
+
+            AppLog.Write("auto-install: portable Node.js 就绪 " + job.NodePath);
+            // 解压完就删掉 35MB 的 zip
+            try { File.Delete(job.ZipPath); } catch { }
+            ServerLocator.Invalidate();
+        }
+
         private void OnUiTimer(object sender, EventArgs e)
         {
             try
             {
                 UpdateUi();
                 PollDownload();
+                PollPortableInstall();
                 PollTask();
+
+                // 启动后稍等片刻再补齐环境，避免和首轮 UI/健康检测抢线程
+                if (_config.AutoInstall && !_autoInstallDone &&
+                    (DateTime.UtcNow - _createdAt).TotalSeconds > 3)
+                {
+                    AutoBootstrap();
+                }
 
                 if (_config.CheckUpdateOnStart && !_startupUpdateChecked &&
                     (DateTime.UtcNow - _createdAt).TotalSeconds > 20)
@@ -2745,6 +3286,7 @@ namespace Atlisp.Tray
             _trayAutoItem.Checked = AutostartHelper.IsEnabled();
             _serverAutoItem.Checked = _config.AutoStartServer;
             _mirrorItem.Checked = !string.IsNullOrEmpty(_config.NpmRegistry);
+            _autoInstallItem.Checked = _config.AutoInstall;
 
             _tray.Text = Truncate("@lisp MCP · " + StateText(state) + " · 端口 " + _config.Port, 63);
         }
@@ -2920,6 +3462,7 @@ namespace Atlisp.Tray
             {
                 mirror = "https://npmmirror.com/mirrors/node";
             }
+            // 注意：MSI 的命名没有 "win-"（node-vX.Y.Z-x64.msi），zip 才有（node-vX.Y.Z-win-x64.zip）
             return mirror.TrimEnd('/') + "/v" + version + "/node-v" + version + "-" + arch + ".msi";
         }
 
@@ -3012,7 +3555,7 @@ namespace Atlisp.Tray
                     _taskWindow.SetFinished(false, -1);
                 }
                 AppLog.Write("Node.js download failed: " + error + " url=" + _downloadUrl);
-                OfferWingetFallback(error);
+                OnNodeDownloadFailed(error);
                 return;
             }
 
@@ -3026,7 +3569,16 @@ namespace Atlisp.Tray
                     _taskWindow.Append("\r\n" + sizeError + "\r\n");
                     _taskWindow.SetFinished(false, -1);
                 }
-                OfferWingetFallback(sizeError);
+                OnNodeDownloadFailed(sizeError);
+                return;
+            }
+
+            if (_downloadKind == "portable")
+            {
+                AppLog.Write("portable Node.js downloaded: " + path);
+                _downloadKind = null;
+                _portableJob = new PortableInstallJob(path, Paths.PortableNodeDir);
+                _portableJob.Start();
                 return;
             }
 
@@ -3038,6 +3590,29 @@ namespace Atlisp.Tray
             }
             AppLog.Write("Node.js downloaded: " + path);
             StartNodeMsiInstall(path);
+        }
+
+        private void OnNodeDownloadFailed(string error)
+        {
+            // 自动补齐流程：portable zip 失败后降级到需要 UAC 的安装方式（MSI → winget），
+            // UAC 本身需要用户点一次，这里不再额外询问。只降级一次，避免循环。
+            if (_bootstrapMode)
+            {
+                _downloadKind = null;
+                if (!_msiFallbackTried)
+                {
+                    _msiFallbackTried = true;
+                    AppLog.Write("auto-install: portable 路线失败，改用 MSI 安装 " + error);
+                    InstallNodeFromMirror();
+                    return;
+                }
+                ScheduleAutoInstallRetry();
+                Balloon("自动安装 Node.js 失败",
+                    error + "\r\n\r\n将在稍后自动重试，也可在托盘菜单手动操作。",
+                    ToolTipIcon.Warning);
+                return;
+            }
+            OfferWingetFallback(error);
         }
 
         private void OfferWingetFallback(string error)
@@ -3311,13 +3886,17 @@ namespace Atlisp.Tray
 
         private void RetryElevated(string title, string action, bool restartAfter)
         {
-            DialogResult result = MessageBox.Show(
-                "当前用户没有写入全局 npm 目录的权限。\r\n\r\n是否以管理员身份重试？" +
-                "\r\n（会弹出 Windows UAC 授权窗口）",
-                "@lisp MCP 托盘",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (result != DialogResult.Yes) return;
+            // 自动补齐流程里不再多问一次，直接弹 UAC（UAC 本身需要用户点“是”）
+            if (!_bootstrapMode)
+            {
+                DialogResult result = MessageBox.Show(
+                    "当前用户没有写入全局 npm 目录的权限。\r\n\r\n是否以管理员身份重试？" +
+                    "\r\n（会弹出 Windows UAC 授权窗口）",
+                    "@lisp MCP 托盘",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                if (result != DialogResult.Yes) return;
+            }
 
             ServerInfo info = ServerLocator.Resolve(_config, true);
             string arguments = action == "upgrade" || action == "install"
@@ -3333,13 +3912,22 @@ namespace Atlisp.Tray
             string logFile = NewTaskLogFile("npm-elevated");
             LongTask task = new LongTask(title + "（管理员）", logFile);
             string error;
-            Process process = ProcessRunner.StartElevated(commandLine, logFile, out error);
+            Process process = ProcessRunner.StartElevated(commandLine, logFile, info.NodePath, out error);
             if (process == null)
             {
                 task.Dispose();
                 if (!string.IsNullOrEmpty(error) && error != "已取消管理员授权")
                 {
                     ShowError(title, error);
+                }
+                else if (_bootstrapMode)
+                {
+                    // 用户主动取消了 UAC，停止自动重试以免反复弹窗
+                    AppLog.Write("auto-install: 用户取消了 UAC 授权，停止自动安装");
+                    _autoInstallDone = true;
+                    Balloon("自动安装已取消",
+                        "管理员授权被取消，未能完成 @lisp/mcp 安装。\r\n可在托盘菜单手动重试。",
+                        ToolTipIcon.Warning);
                 }
                 return;
             }
@@ -3464,6 +4052,9 @@ namespace Atlisp.Tray
                     try { _server.Start(); } catch (Exception ex) { AppLog.Write("安装后启动失败: " + ex.Message); }
                 }
                 ServerLocator.Invalidate();
+                _autoInstallDone = true;
+                _autoInstallFailures = 0;
+                _bootstrapMode = false;
                 UpdateUi();
                 return;
             }
@@ -3501,7 +4092,8 @@ namespace Atlisp.Tray
                 }
                 else if (!string.IsNullOrEmpty(after.NodePath) && !after.IsInstalled)
                 {
-                    PromptInstallServer();
+                    if (_bootstrapMode) InstallServer();
+                    else PromptInstallServer();
                 }
                 UpdateUi();
             }
@@ -3528,7 +4120,17 @@ namespace Atlisp.Tray
                 }
                 message.AppendLine();
                 message.AppendLine("可尝试手动以管理员身份运行安装包，或改用 winget 安装。");
-                ShowError("安装 Node.js 失败", message.ToString().Trim());
+                if (_bootstrapMode)
+                {
+                    ScheduleAutoInstallRetry();
+                    Balloon("自动安装 Node.js 失败",
+                        "msiexec 退出码：" + exitCode + "\r\n\r\n将在稍后自动重试。",
+                        ToolTipIcon.Warning);
+                }
+                else
+                {
+                    ShowError("安装 Node.js 失败", message.ToString().Trim());
+                }
                 if (_restartAfterNodeInstall)
                 {
                     _restartAfterNodeInstall = false;
@@ -3560,6 +4162,22 @@ namespace Atlisp.Tray
             }
 
             string detail = LastLines(text, 12);
+
+            // 自动补齐流程：按退避重试，不打扰用户
+            if (_bootstrapMode)
+            {
+                ScheduleAutoInstallRetry();
+                Balloon("自动安装未成功",
+                    LastLines(text, 3) + "\r\n\r\n将在稍后自动重试，也可在托盘菜单手动操作。",
+                    ToolTipIcon.Warning);
+                if (_restartAfterNodeInstall)
+                {
+                    _restartAfterNodeInstall = false;
+                    _server.RestartAsync();
+                }
+                return;
+            }
+
             ShowError("操作失败", string.IsNullOrEmpty(detail) ? "命令执行失败，请查看日志。" : detail);
 
             if (action == "node" && _restartAfterNodeInstall)
@@ -3640,6 +4258,35 @@ namespace Atlisp.Tray
             _config.AutoStartServer = !_config.AutoStartServer;
             _config.Save();
             UpdateUi();
+        }
+
+        private void ToggleAutoInstall()
+        {
+            _config.AutoInstall = !_config.AutoInstall;
+            _config.Save();
+            if (_config.AutoInstall)
+            {
+                // 重新开启时重置所有开关，否则本进程内的自动补齐不会恢复
+                _autoInstallDone = false;
+                _autoStartAttempted = false;
+                _portableNodeAttempted = false;
+                _msiFallbackTried = false;
+                _autoInstallFailures = 0;
+                _autoInstallRetryAt = DateTime.MinValue;
+                SaveBootstrapState();
+            }
+            else
+            {
+                // 关闭后停止当前进程里的自动重试；已装好的依赖和服务不受影响
+                _autoInstallDone = true;
+                _portableNodeAttempted = true;
+            }
+            UpdateUi();
+            Balloon("自动补齐运行环境",
+                _config.AutoInstall
+                    ? "开启：缺少 Node.js 或 @lisp/mcp 时会自动下载安装。"
+                    : "关闭：缺少依赖时只提示，需要手动从菜单安装。",
+                ToolTipIcon.Info);
         }
 
         private void ToggleMirror()
@@ -3726,10 +4373,15 @@ namespace Atlisp.Tray
             builder.AppendLine("端口         : " + _config.Port);
             builder.AppendLine("托盘自启     : " + (AutostartHelper.IsEnabled() ? "已启用" : "未启用"));
             builder.AppendLine("启动时启服务 : " + (_config.AutoStartServer ? "是" : "否"));
+            builder.AppendLine("自动补齐环境 : " + (_config.AutoInstall ? "开" : "关") + BootstrapStateText());
             builder.AppendLine("npm 源       : " +
                 (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
             builder.AppendLine();
             builder.AppendLine("Node.js      : " + (string.IsNullOrEmpty(info.NodePath) ? "未检测到" : info.NodePath));
+            if (Directory.Exists(Paths.PortableNodeDir))
+            {
+                builder.AppendLine("portable 目录: " + Paths.PortableNodeDir);
+            }
             builder.AppendLine("npm          : " + (string.IsNullOrEmpty(info.NpmPath) ? "未检测到" : info.NpmPath));
             builder.AppendLine("npm-cli.js   : " + (string.IsNullOrEmpty(info.NpmCliPath) ? "未检测到" : info.NpmCliPath));
             builder.AppendLine("@lisp/mcp    : " + (info.IsInstalled ? info.ScriptPath : "未安装"));
@@ -3761,6 +4413,20 @@ namespace Atlisp.Tray
 
             OutputForm form = new OutputForm("环境诊断", builder.ToString(), false);
             form.Show();
+        }
+
+        private string BootstrapStateText()
+        {
+            if (_autoInstallDone) return "（环境已就绪）";
+            if (_autoInstallFailures >= AutoInstallMaxFailures) return "（已重试 " +
+                _autoInstallFailures + " 次，停止自动重试）";
+            if (_bootstrapMode) return "（进行中…）";
+            if (DateTime.UtcNow < _autoInstallRetryAt)
+            {
+                return "（退避至 " + _autoInstallRetryAt.ToLocalTime()
+                    .ToString("HH:mm:ss") + "）";
+            }
+            return "";
         }
 
         private static string FormatUptime(double seconds)

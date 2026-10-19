@@ -4,11 +4,11 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 
 - **启动 / 停止 / 重启** 本机 `atlisp-mcp` 服务（自动识别 Windows 服务模式）
 - **下载 / 安装 / 升级**：通过 npm 安装或升级到 `@atlisp/mcp@latest`
-- **自动安装 Node.js**：检测不到 Node.js 时，从 npmmirror 下载官方 MSI 并静默安装（需 UAC 授权）
+- **自动安装 Node.js**：检测不到 Node.js 时，默认下载免 UAC 的 portable zip 解压到用户目录；失败才降级 MSI（需 UAC 授权）
 - **检查更新**：对比本机版本与 npm 上的最新版本，发现新版本时气泡提醒
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
-- **开机自启**：托盘随 Windows 启动；可选托盘启动时自动启动服务
+- **开机自启**：首次启动自动加入 Windows 启动项（之后尊重手动开关）；可选托盘启动时自动启动服务
 - **环境诊断**：Node/npm 路径、安装位置、服务状态、健康检查一屏查看
 - **npm 镜像**：一键切换 npmmirror（国内网络）
 
@@ -124,20 +124,38 @@ npm pack --dry-run
 | `NodeMirror` | `https://npmmirror.com/mirrors/node` | Node.js 安装包镜像地址 |
 | `AutoStartServer` | `true` | 托盘启动时自动启动服务 |
 | `CheckUpdateOnStart` | `true` | 托盘启动 20 秒后自动检查更新 |
+| `AutoInstall` | `true` | 启动时自动补齐缺失的 Node.js / @lisp/mcp（见下方「自动补齐运行环境」） |
 | `StopServerOnExit` | `false` | 退出托盘时是否停止服务 |
 | `HealthyPollSeconds` | `5` | 健康检查间隔（秒） |
 
 修改后可从托盘菜单选择 **重新加载配置**（端口等设置立即生效）。
+
+## 自动补齐运行环境
+
+托盘启动 3 秒后开始检查环境，缺什么装什么，默认无需人工确认：
+
+1. **缺 Node.js** → 从 `NodeMirror` 下载 `node-v<版本>-win-<架构>.zip`，解压到 `%LOCALAPPDATA%\atlisp-mcp\node\`。zip 版不需要安装、不写注册表、不弹 UAC。解压在后台线程完成，不阻塞界面。
+2. **portable 路线失败**（镜像不可达、磁盘不足等）→ 自动降级为 MSI 安装，此时会弹 **UAC**（这是唯一需要人工点「是」的环节），再失败则退到 winget。
+3. **缺 @lisp/mcp** → `npm install -g @atlisp/mcp@latest`。普通用户的 npm 全局前缀是 `%APPDATA%\npm`，同样不需要管理员权限；只有确实没有写权限时才会触发 UAC 重试。
+4. **依赖齐全** → 按 `AutoStartServer` 启动服务。
+
+Node.js 探测顺序：`tray.json` 的 `NodePath` → `%ProgramFiles%\nodejs` / fnm / nvm / scoop → **portable 目录** → `PATH`。portable 排在 `PATH` 之前是为了修复「刚装完 Node.js 但 Explorer 环境没刷新」的情况；同时托盘会在调用 npm 前把 Node.js 目录补进自身 `PATH`（否则 `edge-js` 等依赖的安装脚本会报 `'node' 不是内部或外部命令`）。
+
+失败退避：1 分钟 → 5 分钟 → 30 分钟，累计 3 次后停止自动安装并给出提示。退避状态写入 `%APPDATA%\atlisp-mcp\bootstrap.state`，避免每次开机重复下载 35 MB。环境一旦就绪（即使是你手动装的），托盘仍会自动启动服务。
+
+菜单 **设置 → 启动时自动补齐运行环境** 可开关该行为。
 
 服务日志：`%APPDATA%\atlisp-mcp\logs\server-YYYYMMDD.log`
 托盘日志：`%APPDATA%\atlisp-mcp\logs\tray.log`
 npm 任务日志：`%APPDATA%\atlisp-mcp\logs\npm-*.log`
 Node.js 安装日志：`%APPDATA%\atlisp-mcp\logs\node-msi-*.log`
 Node.js 安装包缓存：`%LOCALAPPDATA%\atlisp-mcp\downloads\`
+portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
+首次自动开启自启的标记：`%APPDATA%\atlisp-mcp\autostart-default.txt`（删除后下次启动会重新检查）
 
 ## 自动检测顺序
 
-**Node.js**：配置项 → `%ProgramFiles%\nodejs\node.exe` → fnm / nvm / scoop → `PATH` 中的 `node.exe`。
+**Node.js**：配置项 → `%ProgramFiles%\nodejs\node.exe` → fnm / nvm / scoop → portable 目录（`%LOCALAPPDATA%\atlisp-mcp\node`）→ `PATH` 中的 `node.exe`。
 
 **@lisp/mcp**：
 
@@ -199,6 +217,7 @@ Node.js 安装包缓存：`%LOCALAPPDATA%\atlisp-mcp\downloads\`
 | Node.js 下载失败 | 检查网络/镜像；托盘会询问是否改用 winget；也可手动从 npmmirror 下载 MSI 放入 `%LOCALAPPDATA%\atlisp-mcp\downloads\` |
 | Node.js 安装失败 | 查看 `%APPDATA%\atlisp-mcp\logs\node-msi-*.log`，常见原因是取消 UAC 或系统策略禁止 MSI |
 | 启动失败：未安装 @lisp MCP Server | 托盘菜单 → 下载并安装 |
+| 安装失败：`'node' 不是内部或外部命令` | 托盘进程继承的 `PATH` 不含 Node.js 目录（常见于「用托盘装完 Node.js 后没重启 Explorer/注销」）。新版托盘会在执行 npm 前自动把 Node.js 目录补进 `PATH`；若仍失败请重启托盘或注销后重新登录，也可在 `tray.json` 显式配置 `NodePath` |
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
@@ -212,6 +231,7 @@ Node.js 安装包缓存：`%LOCALAPPDATA%\atlisp-mcp\downloads\`
 - `ServerManager`：启动/停止/重启、pid/lock 文件解析、Windows 服务识别
 - `HealthMonitor` / `HealthClient`：后台线程轮询 `/health`，避免阻塞 UI
 - `ServerLocator`：Node/npm/@lisp mcp 路径与版本探测
+- `ZipInstaller` / `PortableInstallJob`：portable Node.js zip 的剥根解压（后台线程）
 - `NpmRunner` / `LongTask`：npm 安装、升级、检查更新的异步执行与日志
 - `DownloadJob`：npmmirror 下载、进度与文件大小校验
 - `IconFactory`：从 exe 提取品牌图标，叠加状态圆点（失败时回退到内置绘制图标）
