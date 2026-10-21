@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.7] - 2026-10-21
+
+### 更新内容
+
+- fix(atlisp): 修复探测 token 与未保存图纸判断（.53 实测） (96646c0)
+
 ## [1.11.6] - 2026-10-21
 
 ### 更新内容
