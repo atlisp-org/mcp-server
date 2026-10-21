@@ -12,6 +12,7 @@ const { version } = require(path.join(__dirname, '..', 'package.json'));
 import express from 'express';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { cad, onDocumentChanged } from './cad.js';
+import { installAtlispConnectHook } from './atlisp-bootstrap.js';
 import {  SERVER_NAME } from './constants.js';
 import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
 import {  clearCache, RESOURCES } from './handlers/resource-handlers.js';
@@ -218,6 +219,11 @@ if (config.apiKey) log('API Key authentication enabled');
 
 const { setLocale } = await import('./i18n.js');
 setLocale(config.locale || 'zh-CN');
+
+// 连上 CAD 后必须检查 @lisp 是否已安装，未安装则自动安装/加载（AUTO_INSTALL_ATLISP=true）。
+// 钩子挂在 cad.js 的连接事件上，覆盖 open_cad / connect_cad / 自动连接 / handler 内直接
+// cad.connect() / 连接池切换实例等全部路径。
+void installAtlispConnectHook();
 
 if (config.autoConnect) {
     log('Attempting to connect to CAD on startup...');

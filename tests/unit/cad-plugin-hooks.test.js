@@ -26,7 +26,7 @@ vi.mock('../../src/plugin-loader.js', () => ({ callPluginHook }));
 vi.mock('crypto', () => ({ randomUUID: () => 'req-1' }));
 vi.mock('child_process', () => ({ spawn: vi.fn() }));
 
-const { createCadConnection } = await import('../../src/cad.js');
+const { createCadConnection, onCadConnected } = await import('../../src/cad.js');
 
 describe('cad 插件钩子', () => {
   beforeEach(() => {
@@ -41,6 +41,18 @@ describe('cad 插件钩子', () => {
     expect(callPluginHook).toHaveBeenCalledWith('onCadConnected', {
       platform: 'AutoCAD', version: '2026.1',
     });
+  });
+
+  it('连接成功触发进程内 onCadConnected 回调（@lisp 自动安装依赖）', async () => {
+    const conn = createCadConnection();
+    conn.isAvailable = () => true;
+    conn._sendMessage = vi.fn(async () => ({ success: true, platform: 'ZWCAD', version: '2026.2' }));
+    const cb = vi.fn();
+    onCadConnected(cb);
+    await conn.connect();
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({
+      connection: conn, platform: 'ZWCAD', version: '2026.2', reason: 'connect',
+    }));
   });
 
   it('已连接状态下 _reset 触发 onCadDisconnected，未连接时不触发', () => {

@@ -6,12 +6,19 @@ const mockCad = {
   getConnectionId: vi.fn(() => 'conn-1'),
   isBusy: vi.fn(async () => false),
   sendCommandWithResult: vi.fn(),
+  /** 由 onCadConnected 注册的连接事件回调（测试里手动触发） */
+  connectHandler: null,
 };
 
-vi.mock('../src/cad.js', () => ({ cad: mockCad }));
+vi.mock('../src/cad.js', () => ({
+  cad: mockCad,
+  resolveCadConnection: () => mockCad,
+  onCadConnected: (cb) => { mockCad.connectHandler = cb; },
+}));
 vi.mock('../src/logger.js', () => ({ log: vi.fn(), error: vi.fn() }));
 vi.mock('../src/config.js', () => ({
   default: {
+    autoInstallAtlisp: true,
     atlispBootstrapTimeout: 5000,
     atlispBootstrapRetry: 60000,
   },
@@ -19,7 +26,7 @@ vi.mock('../src/config.js', () => ({
 
 const {
   ensureAtlispReady, installAtlispCore, initAtlispLibrary,
-  getAtlispStatus, probeAtlisp, resetAtlispReady,
+  getAtlispStatus, probeAtlisp, resetAtlispReady, installAtlispConnectHook,
 } = await import('../src/atlisp-bootstrap.js');
 
 function classify(code) {
@@ -196,5 +203,33 @@ describe('atlisp-bootstrap', () => {
     mockCad.connected = false;
     const offline = await getAtlispStatus();
     expect(offline).toMatchObject({ connected: false, ready: false, ok: false });
+  });
+
+  it('CAD 连接成功事件触发检查，未安装则自动安装并加载函数库', async () => {
+    await installAtlispConnectHook();
+    expect(typeof mockCad.connectHandler).toBe('function');
+
+    mockCad.connectHandler({
+      connection: mockCad, platform: 'AutoCAD', version: '2026', reason: 'connect',
+    });
+
+    await vi.waitFor(() => expect(calls).toContain('install'), { timeout: 3000 });
+    await vi.waitFor(() => expect(ready).toBe(true), { timeout: 3000 });
+    expect(calls).toContain('probe');
+    expect(calls).toContain('init');
+  });
+
+  it('CAD 连接成功事件在 @lisp 已就绪时只探测、不重复安装', async () => {
+    await installAtlispConnectHook();
+    ready = true;
+    calls = [];
+
+    mockCad.connectHandler({
+      connection: mockCad, platform: 'AutoCAD', version: '2026', reason: 'activate',
+    });
+
+    await vi.waitFor(() => expect(calls).toContain('probe'), { timeout: 3000 });
+    expect(calls).not.toContain('install');
+    expect(calls).not.toContain('init');
   });
 });

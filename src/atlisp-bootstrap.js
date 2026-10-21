@@ -136,6 +136,79 @@ export function resetAtlispReady() {
     invalidate();
 }
 
+let connectHookInstalled = false;
+let pendingConnectCheck = null;
+
+/**
+ * 连接事件触发点：任何路径连上 CAD 后都要检查 @lisp 是否已安装，未安装则自动安装。
+ *
+ * 单独依赖 ensureCadConnected 是不够的：
+ *   - 不少 handler 直接调用 `cad.connect()`（purge/text/file/query-print 等），不会经过它；
+ *   - 连接池切换活动实例、后台重连也不经过它。
+ * 因此从 cad.js 的连接事件统一下发，用 setImmediate 延后一拍，让连接后立即发出的
+ * 紧急命令（send_esc 等）先入队，安装/加载排在其后。
+ *
+ * @param {{connection?: object, platform?: string, version?: string, reason?: string}} info
+ */
+function onConnectionReady(info) {
+    if (pendingConnectCheck) return;
+    pendingConnectCheck = setImmediate(async () => {
+        pendingConnectCheck = null;
+        if (!config.autoInstallAtlisp) return;
+        if (!cad.connected) return;
+        const reason = info?.reason === 'activate' ? 'cad-activate' : 'cad-connected';
+        try {
+            const result = await ensureAtlispReady({ reason });
+            if (result.ok) {
+                log(`[atlisp] 连接后检查完成：${result.message}（${result.action}）`);
+            } else {
+                log(`[atlisp] 连接后自动安装/加载未完成（${result.action}）：${result.message}`);
+            }
+        } catch (e) {
+            log(`[atlisp] 连接后自动安装/加载异常：${e.message}`);
+        }
+    });
+    if (typeof pendingConnectCheck.unref === 'function') pendingConnectCheck.unref();
+}
+
+/**
+ * 安装连接事件钩子（幂等）。
+ *
+ * cad.js 不能反向 import 本模块（循环依赖），所以这里用动态 import 取 onCadConnected /
+ * resolveCadConnection；被测试 mock 的 cad.js 没有这些导出时会安全跳过。
+ */
+export async function installAtlispConnectHook() {
+    if (connectHookInstalled) return true;
+    let cadModule;
+    try {
+        cadModule = await import('./cad.js');
+        // 访问被 mock 的模块上不存在的导出时 Vitest 会抛错，所以判断也要放在 try 内
+        if (typeof cadModule.onCadConnected !== 'function') return false;
+        if (typeof cadModule.resolveCadConnection !== 'function') return false;
+    } catch (e) {
+        log(`[atlisp] 无法安装连接钩子：${e.message}`);
+        return false;
+    }
+    connectHookInstalled = true;
+    cadModule.onCadConnected((info) => {
+        // 只处理当前活动实例：连接池新建的非活动实例会在 setActive 时补发事件
+        if (info?.connection) {
+            let active;
+            try {
+                active = cadModule.resolveCadConnection();
+            } catch {
+                active = null;
+            }
+            if (active && active !== info.connection) return;
+        }
+        onConnectionReady(info);
+    });
+    return true;
+}
+
+// 模块被引入即接线（entry / handler-utils 都会静态 import 本模块）
+void installAtlispConnectHook();
+
 /**
  * 探测 CAD 内 @lisp 状态。使用唯一 token 返回，避免依赖返回值格式。
  * @param {number} [timeoutMs]

@@ -43,9 +43,34 @@ const MAX_REQUESTS_PER_WORKER = config.workerMaxRequests ?? 100;
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const _docChangeCallbacks = [];
+const _connectCallbacks = [];
 
 export function onDocumentChanged(callback) {
   _docChangeCallbacks.push(callback);
+}
+
+/**
+ * 注册「CAD 连接已就绪」回调。
+ *
+ * 与插件钩子 onCadConnected 的区别：插件钩子会跨进程/跨模块分发且允许用户插件注册；
+ * 这里只服务于进程内基础能力（如 @lisp 自动安装），回调同步触发、不得阻塞连接。
+ * cad.js 不能反向依赖 handler 层，所以由 atlisp-bootstrap.js 动态 import 本函数注册。
+ *
+ * @param {(info: {connection: CadConnection, platform?: string, version?: string, reason: string}) => void} callback
+ */
+export function onCadConnected(callback) {
+  _connectCallbacks.push(callback);
+}
+
+/** 触发进程内连接回调（连接池切换活动实例等场景复用）。 */
+export function notifyCadConnected(info) {
+  for (const cb of _connectCallbacks) {
+    try {
+      cb(info);
+    } catch (e) {
+      logError('cad connect callback error:', e.message);
+    }
+  }
 }
 
 function emitDocumentChanged(info) {
@@ -169,6 +194,14 @@ class CadConnection {
         this._commandQueue.enableBatcher();
         this._startMonitor();
         callPluginHook('onCadConnected', { platform: result.platform, version: result.version });
+        // 进程内连接回调（@lisp 自动安装依赖此事件，不能只依赖工具调用路径：
+        // 很多 handler 直接调 cad.connect()，不经过 ensureCadConnected）
+        notifyCadConnected({
+          connection: this,
+          platform: result.platform,
+          version: result.version,
+          reason: 'connect',
+        });
         return true;
       }
     } catch (e) {

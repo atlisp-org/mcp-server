@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { pool, POOL_STRATEGIES } from '../../src/cad-pool.js';
-import { cad, createCadConnection, setActiveConnection, getActiveConnection } from '../../src/cad.js';
+import { cad, createCadConnection, setActiveConnection, getActiveConnection, onCadConnected } from '../../src/cad.js';
 
 vi.mock('../../src/config.js', () => ({
   default: {
@@ -38,6 +38,29 @@ describe('CadConnectionPool', () => {
   it('should list instances when empty', () => {
     const instances = pool.listInstances();
     expect(instances.length).toBe(0);
+  });
+
+  it('切换活动实例时补发连接事件（@lisp 自动安装依赖）', () => {
+    const cb = vi.fn();
+    onCadConnected(cb);
+    const conn = createCadConnection();
+    pool['_instances'].set('notify', {
+      key: 'notify',
+      connection: conn,
+      connected: true,
+      platform: 'AutoCAD',
+      version: '2026',
+      lastPing: Date.now(),
+      createdAt: Date.now(),
+      label: 'notify',
+      autoReconnect: false,
+    });
+
+    pool.setActive('notify');
+
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({
+      connection: conn, platform: 'AutoCAD', version: '2026', reason: 'activate',
+    }));
   });
 
   it('should return stats with correct structure', () => {

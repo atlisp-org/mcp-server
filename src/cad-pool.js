@@ -1,4 +1,4 @@
-import { createCadConnection, setActiveConnection, cad } from './cad.js';
+import { createCadConnection, setActiveConnection, cad, notifyCadConnected } from './cad.js';
 import { log, error as logError } from './logger.js';
 import config from './config.js';
 import { discoverCadInstances } from './cad-rot-helper.js';
@@ -165,6 +165,17 @@ class CadConnectionPool {
     cad.connected = entry.connected;
 
     log(`连接池: 已切换到实例 "${key}"`);
+
+    // 切换活动实例同样视为「连上了 CAD」：连接池的连接在 connect() 时还不是
+    // 活动实例（回调会被跳过），必须在这里补发，否则新实例不会自动装 @lisp。
+    if (entry.connected) {
+      notifyCadConnected({
+        connection: entry.connection,
+        platform: entry.platform,
+        version: entry.version,
+        reason: 'activate',
+      });
+    }
 
     if (this._onInstanceSwitch) {
       try { this._onInstanceSwitch(key, entry); } catch (e) { logError(`切换回调用错误: ${e.message}`); }
