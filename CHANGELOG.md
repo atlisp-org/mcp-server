@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.8] - 2026-10-21
+
+### 更新内容
+
+- fix(build): 检测 dist 与包版本不一致，避免发布旧构建 (4fd7c3e)
+
 ## [1.11.7] - 2026-10-21
 
 ### 更新内容
