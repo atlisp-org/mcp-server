@@ -13,7 +13,7 @@ import express from 'express';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { cad, onDocumentChanged } from './cad.js';
 import { installAtlispConnectHook } from './atlisp-bootstrap.js';
-import {  SERVER_NAME } from './constants.js';
+import {  SERVER_NAME, BUILD_META } from './constants.js';
 import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
 import {  clearCache, RESOURCES } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
@@ -242,6 +242,10 @@ export async function startServer() {
 
     console.error('\n========== @lisp MCP Server 启动 ==========');
     console.error(`版本: ${version}`);
+    if (BUILD_META && BUILD_META.version !== version) {
+        console.error(`⚠ dist 由 v${BUILD_META.version} 构建（${BUILD_META.commit || 'unknown'}），` +
+            `与 package.json v${version} 不一致：请重新运行 npm run build 后再发布`);
+    }
     console.error(`Node.js: ${process.version}`);
     console.error(`平台: ${process.platform} ${process.arch}`);
     console.error(`PID: ${process.pid}`);

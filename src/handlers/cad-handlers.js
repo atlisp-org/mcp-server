@@ -4,6 +4,7 @@ import { log } from '../logger.js';
 import config from '../config.js';
 import { withCadConnection, mcpSuccess, mcpError, escapeLispString } from '../handler-utils.js';
 import { analyzeLispCode } from '../lint-analyzer.js';
+import { SERVER_VERSION, BUILD_META } from '../constants.js';
 import {
     ensureAtlispReady, installAtlispCore, initAtlispLibrary, getAtlispStatus,
 } from '../atlisp-bootstrap.js';
@@ -164,8 +165,15 @@ export const listFunctionsInCad = withCadConnection(async () => {
 }, { skipAtlisp: true });
 
 export async function getSystemStatus() {
+  const distMismatch = Boolean(BUILD_META && BUILD_META.version !== SERVER_VERSION);
   const status = {
-    mcp: { version: process.env.npm_package_version || 'unknown' },
+    mcp: {
+      version: SERVER_VERSION,
+      build: BUILD_META
+        ? { version: BUILD_META.version, commit: BUILD_META.commit, builtAt: BUILD_META.builtAt }
+        : null,
+      distMismatch,
+    },
     worker: { alive: false },
     cad: { connected: false, platform: null, version: null, busy: false, hasDoc: false },
     lisp: { available: false, testResult: null, error: null },

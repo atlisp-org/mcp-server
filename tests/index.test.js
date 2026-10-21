@@ -68,6 +68,7 @@ vi.mock('../src/constants.js', () => ({
   PROTOCOL_VERSION: '2024-11-05',
   SERVER_NAME: 'atlisp-mcp-server',
   SERVER_VERSION: '1.0.10',
+  BUILD_META: { version: '1.0.10', commit: 'test', builtAt: '2026-01-01T00:00:00.000Z' },
   SERVER_CAPABILITIES: {
     tools: { listChanged: true },
     resources: { subscribe: true, listChanged: true },

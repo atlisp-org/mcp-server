@@ -133,6 +133,7 @@ npm run lint          # eslint 检查（CI 强制，必须 0 问题）
 npm ci → npm run build → npm test     # Node 20/22/24
 npm run lint                          # eslint（强制，0 问题才算通过）
 npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git tag
+npm publish                           # 发布到 npm（prepublishOnly 会重新构建 + 校验 dist 版本）
 ```
 
 ## Lint 代码分析

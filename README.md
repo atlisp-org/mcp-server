@@ -236,7 +236,11 @@ atlisp-mcp --autostart-status
 npm run build:tray
 ```
 
-`npm publish` 时 `prepack` 会自动构建托盘，并把 `dist/AtlispTray.exe` 和 `atlisp-tray` 启动器一起发布到 npm。全局安装后运行：
+`npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘，把 `dist/AtlispTray.exe` 和 `atlisp-tray` 启动器一起发布到 npm。
+
+> 不要用 `npm publish --ignore-scripts`：它会跳过构建，把旧 `dist/` 发出去。服务端启动时和 `get_system_status` 的 `mcp.distMismatch` 都会提示这种不一致。
+
+全局安装后运行：
 
 ```bash
 atlisp-tray

@@ -7,6 +7,7 @@ export const FILE_EXTENSIONS = {
 };
 
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
@@ -14,6 +15,28 @@ import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { version } = require(path.join(__dirname, '..', 'package.json'));
+
+/**
+ * dist/build-meta.json：构建时写入的版本/提交，用来识别「package.json 是新的、
+ * dist 还是旧构建」的情况（运行时 SERVER_VERSION 读的是 package.json，发现不了）。
+ * 源码模式（node src/atlisp-mcp.js）下不存在 dist 元数据，返回 null。
+ */
+function readBuildMeta() {
+    const candidates = [
+        path.join(__dirname, 'build-meta.json'),
+        path.join(__dirname, '..', 'dist', 'build-meta.json'),
+    ];
+    for (const file of candidates) {
+        try {
+            return JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch {
+            // 试下一个位置
+        }
+    }
+    return null;
+}
+
+export const BUILD_META = readBuildMeta();
 
 /**
  * 协议版本不再写死，直接取 SDK 内置的最新版本（当前 2025-11-25）。
