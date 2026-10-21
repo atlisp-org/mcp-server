@@ -20,6 +20,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -31,8 +32,19 @@ namespace Atlisp.Tray
 {
     internal static class Program
     {
+#if TRAY_VERSION_STAMPED
+        // 构建时由 build.ps1 / scripts/build-tray.mjs 注入（取自 package.json 版本）
+        internal const string AppVersion = BuildInfo.TrayVersion;
+#else
         internal const string AppVersion = "1.0.0";
+#endif
         private const string MutexName = "Local\\atlisp-mcp-tray";
+
+        /// <summary>本次启动是否为 --silent（托盘重启/自我更新时保留）。</summary>
+        internal static bool SilentMode;
+
+        /// <summary>本次启动是否带 --start-server（托盘自我更新重启后确保服务恢复）。</summary>
+        internal static bool StartServerRequested;
 
         [STAThread]
         private static void Main(string[] args)
@@ -44,7 +56,12 @@ namespace Atlisp.Tray
                 {
                     silent = true;
                 }
+                else if (string.Equals(args[i], "--start-server", StringComparison.OrdinalIgnoreCase))
+                {
+                    StartServerRequested = true;
+                }
             }
+            SilentMode = silent;
 
             AppLog.Init();
 
@@ -77,6 +94,20 @@ namespace Atlisp.Tray
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
+                // 从 npm 包目录启动时先把自己迁到用户目录：运行中的 exe 会被 Windows
+                // 锁住，会导致 `npm install -g @atlisp/mcp@latest` 在替换 dist\AtlispTray.exe
+                // 时报 EBUSY/EPERM。迁移后包内文件不再被占用，也便于后续自我更新。
+                string relocateMessage;
+                if (TraySelfUpdate.TryRelocate(out relocateMessage))
+                {
+                    AppLog.Write("tray-selfupdate: " + relocateMessage);
+                    return;
+                }
+                if (!string.IsNullOrEmpty(relocateMessage))
+                {
+                    AppLog.Write("tray-selfupdate: 跳过自迁移：" + relocateMessage);
+                }
+
                 Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
                 {
                     AppLog.Write("ThreadException: " + e.Exception);
@@ -93,7 +124,7 @@ namespace Atlisp.Tray
 
                 try
                 {
-                    using (TrayApplication app = new TrayApplication(silent))
+                    using (TrayApplication app = new TrayApplication(silent, StartServerRequested))
                     {
                         Application.Run(app);
                     }
@@ -348,6 +379,8 @@ namespace Atlisp.Tray
         public bool CheckUpdateOnStart { get; set; }
         public bool StopServerOnExit { get; set; }
         public bool AutoInstall { get; set; }
+        public bool AutoUpgrade { get; set; }
+        public int AutoUpgradeHours { get; set; }
         public int HealthyPollSeconds { get; set; }
 
         public TrayConfig()
@@ -364,6 +397,8 @@ namespace Atlisp.Tray
             CheckUpdateOnStart = true;
             StopServerOnExit = false;
             AutoInstall = true;
+            AutoUpgrade = true;
+            AutoUpgradeHours = 1;
             HealthyPollSeconds = 5;
         }
 
@@ -405,6 +440,8 @@ namespace Atlisp.Tray
             CheckUpdateOnStart = other.CheckUpdateOnStart;
             StopServerOnExit = other.StopServerOnExit;
             AutoInstall = other.AutoInstall;
+            AutoUpgrade = other.AutoUpgrade;
+            AutoUpgradeHours = other.AutoUpgradeHours;
             HealthyPollSeconds = other.HealthyPollSeconds;
             Normalize();
         }
@@ -430,6 +467,7 @@ namespace Atlisp.Tray
         {
             if (Port < 1 || Port > 65535) Port = 8110;
             if (HealthyPollSeconds < 2 || HealthyPollSeconds > 60) HealthyPollSeconds = 5;
+            if (AutoUpgradeHours < 1 || AutoUpgradeHours > 168) AutoUpgradeHours = 1;
             NodePath = NodePath ?? "";
             NpmPath = NpmPath ?? "";
             ServerScript = ServerScript ?? "";
@@ -2018,18 +2056,288 @@ namespace Atlisp.Tray
 
         public static void SetEnabled(bool enabled)
         {
+            SetEnabled(enabled, Application.ExecutablePath);
+        }
+
+        public static void SetEnabled(bool enabled, string executablePath)
+        {
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKey))
             {
                 if (key == null) throw new TrayException("无法写入注册表自启动项。");
                 if (enabled)
                 {
-                    string command = ProcessRunner.Quote(Application.ExecutablePath) + " --silent";
+                    string command = ProcessRunner.Quote(executablePath) + " --silent";
                     key.SetValue(ValueName, command, RegistryValueKind.String);
                 }
                 else
                 {
                     key.DeleteValue(ValueName, false);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 托盘自身的搬迁与自我更新。
+    ///
+    /// 背景：托盘 exe 随 @atlisp/mcp 一起发布，`atlisp-tray` 默认直接运行包内的
+    /// `dist\AtlispTray.exe`。Windows 会锁住运行中的 exe，导致 npm 升级替换该文件时
+    /// 失败（EBUSY/EPERM），运行中的旧进程也不会自动变成新版本。
+    ///
+    /// 处理方式：
+    ///   1. 启动时若发现自己运行在 node_modules 里，复制到用户目录并重启（自迁移）；
+    ///   2. 每次升级 @lisp/mcp 成功后，比对新包内 exe 与当前 exe，不同则用临时 cmd
+    ///      脚本（等本进程退出 → 覆盖 → 重新启动）完成自我替换。
+    /// </summary>
+    internal static class TraySelfUpdate
+    {
+        private const string StagedName = ".AtlispTray.update.exe";
+
+        public static string StablePath
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Programs", "atlisp-mcp", "AtlispTray.exe");
+            }
+        }
+
+        public static string PackageTrayPath(ServerInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.PackageDir)) return null;
+            string candidate = Path.Combine(info.PackageDir, "dist", "AtlispTray.exe");
+            return File.Exists(candidate) ? candidate : null;
+        }
+
+        /// <summary>
+        /// 从 npm 包目录启动时把自身复制到用户目录，并在本进程退出后启动新副本。
+        /// 返回 true 表示已安排重启，调用方应直接退出。
+        /// </summary>
+        public static bool TryRelocate(out string message)
+        {
+            message = "";
+            string current = Application.ExecutablePath;
+            if (SamePath(current, StablePath)) return false;
+            if (!IsUnderNpmPackage(current)) return false;
+
+            try
+            {
+                string dir = Path.GetDirectoryName(StablePath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.Copy(current, StablePath, true);
+            }
+            catch (Exception ex)
+            {
+                message = "复制到 " + StablePath + " 失败: " + ex.Message;
+                return false;
+            }
+
+            // 开机自启原先可能指向包内路径，改指用户目录下的副本
+            try
+            {
+                if (AutostartHelper.IsEnabled()) AutostartHelper.SetEnabled(true, StablePath);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("tray-selfupdate: 更新自启路径失败: " + ex.Message);
+            }
+
+            string error;
+            if (!ScheduleRestartScript(Process.GetCurrentProcess().Id, null, StablePath,
+                Program.StartServerRequested, out error))
+            {
+                message = "无法启动迁移后的托盘: " + error;
+                return false;
+            }
+
+            message = "已迁移到 " + StablePath + "，正在重启托盘";
+            return true;
+        }
+
+        /// <summary>
+        /// 升级 @lisp/mcp 成功后调用：包内托盘与当前 exe 不同则安排自我替换 + 重启。
+        /// </summary>
+        public static bool TryApplyUpdate(ServerInfo info, bool startServer, out string message)
+        {
+            message = "";
+            string current = Application.ExecutablePath;
+            string candidate = PackageTrayPath(info);
+            if (candidate == null)
+            {
+                AppLog.Write("tray-selfupdate: 包内未找到 dist\\AtlispTray.exe，跳过托盘更新");
+                return false;
+            }
+            if (SamePath(current, candidate)) return false;
+            // 只更新受管副本（%LOCALAPPDATA%\Programs\atlisp-mcp）：开发目录/Program Files
+            // 等位置不自动替换，避免把开发中构建的 exe 覆盖成 npm 包里的版本。
+            if (!SamePath(current, StablePath))
+            {
+                if (IsUnderNpmPackage(current))
+                {
+                    message = "托盘仍运行在 npm 包目录内（自迁移未生效），跳过自我替换";
+                }
+                else
+                {
+                    AppLog.Write("tray-selfupdate: 托盘不在受管目录，跳过自我替换（" +
+                        current + "）");
+                }
+                return false;
+            }
+
+            try
+            {
+                if (string.Equals(FileHash(current), FileHash(candidate),
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                message = "比较托盘版本失败: " + ex.Message;
+                return false;
+            }
+
+            string staged = Path.Combine(Path.GetDirectoryName(current), StagedName);
+            try
+            {
+                File.Copy(candidate, staged, true);
+            }
+            catch (Exception ex)
+            {
+                message = "无法写入托盘目录（" + Path.GetDirectoryName(current) + "）: " + ex.Message;
+                return false;
+            }
+
+            string error;
+            if (!ScheduleRestartScript(Process.GetCurrentProcess().Id, staged, current,
+                startServer, out error))
+            {
+                try { File.Delete(staged); } catch { }
+                message = "无法启动托盘更新脚本: " + error;
+                return false;
+            }
+
+            message = "托盘程序已就绪，退出后自动替换并重启";
+            return true;
+        }
+
+        /// <summary>
+        /// 写一个临时 cmd：等本进程退出 → （可选）覆盖 exe → 重新启动。
+        /// Windows 不允许覆盖正在运行的 exe，所以这一步只能交给独立进程。
+        /// </summary>
+        private static bool ScheduleRestartScript(int pid, string stagedExe, string targetExe,
+            bool startServer, out string error)
+        {
+            error = "";
+            try
+            {
+                Directory.CreateDirectory(Paths.DataDir);
+                string logFile = Path.Combine(Paths.LogDir, "tray-update.log");
+                string script = Path.Combine(Paths.DataDir, "update-tray.cmd");
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("@echo off");
+                sb.AppendLine("setlocal enabledelayedexpansion");
+                sb.AppendLine("set /a tries=0");
+                sb.AppendLine(":wait");
+                sb.AppendLine("tasklist /FI \"PID eq " + pid.ToString(CultureInfo.InvariantCulture) +
+                    "\" /NH 2>nul | findstr /C:\"" + pid.ToString(CultureInfo.InvariantCulture) + "\" >nul");
+                sb.AppendLine("if errorlevel 1 goto apply");
+                sb.AppendLine("set /a tries+=1");
+                sb.AppendLine("if !tries! GEQ 120 goto fail");
+                sb.AppendLine("ping -n 1 127.0.0.1 >nul");
+                sb.AppendLine("goto wait");
+                sb.AppendLine(":apply");
+                if (!string.IsNullOrEmpty(stagedExe))
+                {
+                    sb.AppendLine("set /a tries=0");
+                    sb.AppendLine(":copy");
+                    sb.AppendLine("copy /y \"" + stagedExe + "\" \"" + targetExe + "\" >nul 2>&1");
+                    sb.AppendLine("if not errorlevel 1 goto start");
+                    sb.AppendLine("set /a tries+=1");
+                    sb.AppendLine("if !tries! GEQ 30 goto copyfail");
+                    sb.AppendLine("ping -n 1 127.0.0.1 >nul");
+                    sb.AppendLine("goto copy");
+                }
+                sb.AppendLine(":start");
+                if (!string.IsNullOrEmpty(stagedExe))
+                {
+                    sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
+                }
+                string args = "";
+                if (Program.SilentMode) args += " --silent";
+                if (startServer) args += " --start-server";
+                string targetDir = Path.GetDirectoryName(targetExe);
+                if (!string.IsNullOrEmpty(targetDir))
+                {
+                    sb.AppendLine("cd /d \"" + targetDir + "\"");
+                }
+                sb.AppendLine("start \"\" \"" + targetExe + "\"" + args);
+                sb.AppendLine("del /q \"%~f0\" >nul 2>&1");
+                sb.AppendLine("exit /b 0");
+                sb.AppendLine(":copyfail");
+                // 覆盖失败说明目标还是旧版：先把旧版拉起来，避免托盘消失
+                sb.AppendLine("echo [%date% %time%] tray update copy failed >>\"" + logFile + "\"");
+                sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
+                if (!string.IsNullOrEmpty(targetDir))
+                {
+                    sb.AppendLine("cd /d \"" + targetDir + "\"");
+                }
+                sb.AppendLine("start \"\" \"" + targetExe + "\"" + args);
+                sb.AppendLine("del /q \"%~f0\" >nul 2>&1");
+                sb.AppendLine("exit /b 1");
+                sb.AppendLine(":fail");
+                sb.AppendLine("echo [%date% %time%] tray update failed (target=" + targetExe +
+                    ") >>\"" + logFile + "\"");
+                sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
+                sb.AppendLine("exit /b 1");
+
+                File.WriteAllText(script, sb.ToString(), Encoding.Default);
+
+                ProcessStartInfo psi = new ProcessStartInfo();
+                string comspec = Environment.GetEnvironmentVariable("ComSpec");
+                psi.FileName = string.IsNullOrEmpty(comspec) ? "cmd.exe" : comspec;
+                psi.Arguments = "/c call " + ProcessRunner.Quote(script);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.WindowStyle = ProcessWindowStyle.Hidden;
+                Process.Start(psi);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        public static bool IsUnderNpmPackage(string path)
+        {
+            return !string.IsNullOrEmpty(path) &&
+                path.IndexOf("\\node_modules\\", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool SamePath(string left, string right)
+        {
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string FileHash(string path)
+        {
+            using (FileStream stream = File.OpenRead(path))
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(stream);
+                StringBuilder sb = new StringBuilder(hash.Length * 2);
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+                }
+                return sb.ToString();
             }
         }
     }
@@ -2679,6 +2987,7 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _mirrorItem;
         private readonly ToolStripMenuItem _diagItem;
         private readonly ToolStripMenuItem _autoInstallItem;
+        private readonly ToolStripMenuItem _autoUpgradeItem;
 
         private Icon _currentIcon;
         private ServerState _lastState = ServerState.Stopped;
@@ -2686,6 +2995,9 @@ namespace Atlisp.Tray
         private bool _suppressNotifications;
         private bool _startupUpdateChecked;
         private DateTime _createdAt = DateTime.UtcNow;
+        private DateTime _nextUpdateCheckAt = DateTime.MinValue;
+        private readonly bool _startServerOnLaunch;
+        private bool _restartForSelfUpdate;
         private string _latestVersion;
         private string _lastNotifiedError;
         private LongTask _task;
@@ -2717,9 +3029,10 @@ namespace Atlisp.Tray
         private bool _bootstrapMode;
         private PortableInstallJob _portableJob;
 
-        public TrayApplication(bool silent)
+        public TrayApplication(bool silent, bool startServerOnLaunch)
         {
             _silent = silent;
+            _startServerOnLaunch = startServerOnLaunch;
             _config = TrayConfig.Load();
             _activePort = _config.Port;
             LoadBootstrapState();
@@ -2789,6 +3102,9 @@ namespace Atlisp.Tray
             _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
             _autoInstallItem.Click += delegate { ToggleAutoInstall(); };
 
+            _autoUpgradeItem = new ToolStripMenuItem("定时自动检查并升级 @lisp/mcp");
+            _autoUpgradeItem.Click += delegate { ToggleAutoUpgrade(); };
+
             _diagItem = new ToolStripMenuItem("环境诊断…");
             _diagItem.Click += delegate { ShowDiagnostics(); };
 
@@ -2831,6 +3147,7 @@ namespace Atlisp.Tray
             _settingsMenu.DropDownItems.Add(_serverAutoItem);
             _settingsMenu.DropDownItems.Add(_mirrorItem);
             _settingsMenu.DropDownItems.Add(_autoInstallItem);
+            _settingsMenu.DropDownItems.Add(_autoUpgradeItem);
             _settingsMenu.DropDownItems.Add(new ToolStripSeparator());
             _settingsMenu.DropDownItems.Add(reloadItem);
             _settingsMenu.DropDownItems.Add(configItem);
@@ -2874,7 +3191,7 @@ namespace Atlisp.Tray
             // 默认随 Windows 启动（只发生一次，用户关闭后不再自动打开）
             EnsureDefaultAutostart();
 
-            if (_config.AutoStartServer)
+            if (_config.AutoStartServer || _startServerOnLaunch)
             {
                 // 开启自动补齐时由 AutoBootstrap 统一编排（缺依赖会先装再启动）；
                 // 关闭时保持原行为：缺依赖就报启动失败。
@@ -3002,7 +3319,7 @@ namespace Atlisp.Tray
                     AppLog.Write("auto-install: 运行环境就绪 node=" + info.NodePath +
                         " version=" + info.VersionText);
 
-                    if (_config.AutoStartServer) EnsureServerStartedOnLaunch();
+                    if (_config.AutoStartServer || _startServerOnLaunch) EnsureServerStartedOnLaunch();
                     return;
                 }
 
@@ -3188,12 +3505,14 @@ namespace Atlisp.Tray
                     AutoBootstrap();
                 }
 
-                if (_config.CheckUpdateOnStart && !_startupUpdateChecked &&
+                if (_config.CheckUpdateOnStart && !_config.AutoUpgrade && !_startupUpdateChecked &&
                     (DateTime.UtcNow - _createdAt).TotalSeconds > 20)
                 {
                     _startupUpdateChecked = true;
                     CheckUpdate(true);
                 }
+
+                MaybeAutoUpgrade();
             }
             catch (Exception ex)
             {
@@ -3287,6 +3606,9 @@ namespace Atlisp.Tray
             _serverAutoItem.Checked = _config.AutoStartServer;
             _mirrorItem.Checked = !string.IsNullOrEmpty(_config.NpmRegistry);
             _autoInstallItem.Checked = _config.AutoInstall;
+            _autoUpgradeItem.Checked = _config.AutoUpgrade;
+            _autoUpgradeItem.Text = "定时自动检查并升级 @lisp/mcp（每 " +
+                (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1) + " 小时）";
 
             _tray.Text = Truncate("@lisp MCP · " + StateText(state) + " · 端口 " + _config.Port, 63);
         }
@@ -3795,9 +4117,88 @@ namespace Atlisp.Tray
 
         private void CheckUpdate(bool silentCheck)
         {
+            CheckUpdate(silentCheck, false);
+        }
+
+        private void CheckUpdate(bool silentCheck, bool autoUpgrade)
+        {
             RunNpmTask("检查更新",
                 NpmRunner.WithRegistry(_config, "view @atlisp/mcp version"),
-                silentCheck ? "check-silent" : "check", false, false);
+                autoUpgrade ? "check-auto" : (silentCheck ? "check-silent" : "check"),
+                false, false);
+        }
+
+        /// <summary>
+        /// 定时检查更新（AutoUpgrade，默认每小时一次）：发现新版本直接静默升级。
+        /// 启动 20 秒后才开始首轮，避免和自动补齐环境/首轮健康检查抢线程。
+        /// </summary>
+        private void MaybeAutoUpgrade()
+        {
+            if (!_config.AutoUpgrade) return;
+            if (TaskBusy()) return;
+
+            DateTime now = DateTime.UtcNow;
+            if (_nextUpdateCheckAt == DateTime.MinValue &&
+                (now - _createdAt).TotalSeconds < 20)
+            {
+                return;
+            }
+            if (now < _nextUpdateCheckAt) return;
+
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            _nextUpdateCheckAt = now.AddHours(hours);
+            AppLog.Write("auto-upgrade: 开始检查 @lisp/mcp 新版本");
+            CheckUpdate(true, true);
+        }
+
+        /// <summary>
+        /// 自动升级：和手动升级一样走 npm 全局安装，但不弹任务窗口、不询问 UAC。
+        /// 服务运行中会先停止，升级完成后再重启（见 HandleTaskSuccess）。
+        /// </summary>
+        private void AutoUpgradeServer()
+        {
+            if (TaskBusy()) return;
+            ServerInfo info = ServerLocator.Resolve(_config, true);
+            if (!info.IsInstalled) return;
+            bool shouldRunAfter = IsServerBusy();
+            StopServerForUpdate();
+            RunNpmTask("自动升级 @lisp MCP Server",
+                NpmRunner.WithRegistry(_config, "install -g @atlisp/mcp@latest --loglevel=error"),
+                "upgrade-auto", false, shouldRunAfter);
+        }
+
+        /// <summary>
+        /// 升级 @lisp/mcp 成功后，如果新包里的 AtlispTray.exe 与当前运行的托盘不同，
+        /// 安排“退出 → 覆盖 → 重启”，让托盘也升到同一版本。
+        /// 服务由重启后的托盘（--start-server）负责启动/恢复。
+        /// </summary>
+        private bool TryApplyTraySelfUpdate(ServerInfo info, bool startServerAfter)
+        {
+            string message;
+            if (!TraySelfUpdate.TryApplyUpdate(info, startServerAfter, out message))
+            {
+                if (!string.IsNullOrEmpty(message))
+                {
+                    AppLog.Write("tray-selfupdate: " + message);
+                    if (!_silent)
+                    {
+                        Balloon("托盘未能自动更新",
+                            message + "\r\n可稍后手动重启托盘以应用新版本。",
+                            ToolTipIcon.Warning);
+                    }
+                }
+                return false;
+            }
+
+            AppLog.Write("tray-selfupdate: " + message);
+            if (!_silent)
+            {
+                Balloon("托盘更新", "托盘程序已更新，正在重启以应用新版本…", ToolTipIcon.Info);
+            }
+            _restartForSelfUpdate = true;
+            _uiTimer.Stop();
+            ExitApplication();
+            return true;
         }
 
         private void RunWingetTask(string wingetPath, string arguments)
@@ -3842,9 +4243,9 @@ namespace Atlisp.Tray
             ServerInfo info = ServerLocator.Resolve(_config, true);
             if (string.IsNullOrEmpty(info.NodePath) && string.IsNullOrEmpty(info.NpmPath))
             {
-                if (action == "check-silent")
+                if (action == "check-silent" || action == "check-auto")
                 {
-                    AppLog.Write("启动时静默检查更新失败：未检测到 Node.js/npm");
+                    AppLog.Write("定时检查更新失败：未检测到 Node.js/npm");
                     return;
                 }
                 PromptInstallNode();
@@ -3878,7 +4279,7 @@ namespace Atlisp.Tray
             if (!showWindow) _taskWindow = null;
             task.Attach(process);
             if (showWindow) ShowTaskWindow(title, task);
-            else if (action != "check-silent")
+            else if (action != "check-silent" && action != "check-auto")
             {
                 Balloon(title, "正在执行，请稍候…", ToolTipIcon.Info);
             }
@@ -3995,20 +4396,28 @@ namespace Atlisp.Tray
             ServerLocator.Invalidate();
             ServerInfo info = ServerLocator.Resolve(_config, true);
 
-            if (action == "check" || action == "check-silent")
+            if (action == "check" || action == "check-silent" || action == "check-auto")
             {
+                bool autoCheck = action == "check-auto";
                 string latest = VersionUtil.Extract(output);
                 _latestVersion = latest;
                 if (latest == null)
                 {
                     if (showWindow) return;
-                    Balloon("检查更新", "无法解析 npm 返回的版本号。", ToolTipIcon.Warning);
+                    if (!autoCheck)
+                    {
+                        Balloon("检查更新", "无法解析 npm 返回的版本号。", ToolTipIcon.Warning);
+                    }
+                    else
+                    {
+                        AppLog.Write("auto-upgrade: 无法解析 npm 返回的版本号");
+                    }
                     return;
                 }
                 AppLog.Write("latest version: " + latest);
                 if (!info.IsInstalled)
                 {
-                    if (!_silent)
+                    if (!_silent && !autoCheck)
                     {
                         Balloon("尚未安装",
                             "@lisp MCP Server v" + latest +
@@ -4020,14 +4429,54 @@ namespace Atlisp.Tray
                 }
                 if (VersionUtil.IsNewer(latest, info.Version))
                 {
-                    Balloon("发现新版本",
-                        "@lisp MCP Server v" + latest + " 可用（当前 " + info.VersionText + "）。" +
-                        "右键托盘图标 → 升级到最新版。",
-                        ToolTipIcon.Info);
+                    if (autoCheck)
+                    {
+                        AppLog.Write("auto-upgrade: 发现新版本 " + latest +
+                            "（当前 " + info.VersionText + "），开始自动升级");
+                        if (!_silent)
+                        {
+                            Balloon("正在自动升级",
+                                "@lisp MCP Server v" + latest + " 已发布（当前 " +
+                                info.VersionText + "），正在后台升级。",
+                                ToolTipIcon.Info);
+                        }
+                        AutoUpgradeServer();
+                    }
+                    else
+                    {
+                        Balloon("发现新版本",
+                            "@lisp MCP Server v" + latest + " 可用（当前 " + info.VersionText + "）。" +
+                            "右键托盘图标 → 升级到最新版。",
+                            ToolTipIcon.Info);
+                    }
                 }
                 else if (!string.IsNullOrEmpty(info.Version) && action == "check")
                 {
                     Balloon("已是最新版本", "当前版本 " + info.VersionText + "。", ToolTipIcon.Info);
+                }
+                UpdateUi();
+                return;
+            }
+
+            if (action == "upgrade-auto")
+            {
+                if (!string.IsNullOrEmpty(info.Version))
+                {
+                    _latestVersion = info.Version;
+                }
+                AppLog.Write("auto-upgrade: 已升级到 " + info.VersionText);
+                if (!_silent)
+                {
+                    Balloon("自动升级完成", "已升级到 " + info.VersionText + "。", ToolTipIcon.Info);
+                }
+                ServerLocator.Invalidate();
+                if (TryApplyTraySelfUpdate(info, restartAfter))
+                {
+                    return;
+                }
+                if (restartAfter)
+                {
+                    _server.RestartAsync();
                 }
                 UpdateUi();
                 return;
@@ -4043,6 +4492,10 @@ namespace Atlisp.Tray
                     (action == "install" ? "已安装 " : "已升级到 ") + info.VersionText + "。",
                     ToolTipIcon.Info);
 
+                if (TryApplyTraySelfUpdate(info, restartAfter || _config.AutoStartServer))
+                {
+                    return;
+                }
                 if (restartAfter)
                 {
                     _server.RestartAsync();
@@ -4158,6 +4611,29 @@ namespace Atlisp.Tray
             if (action == "check-silent")
             {
                 AppLog.Write("启动时检查更新失败（已静默）");
+                return;
+            }
+
+            if (action == "check-auto")
+            {
+                AppLog.Write("auto-upgrade: 检查更新失败，将在下一次定时检查时重试");
+                return;
+            }
+
+            if (action == "upgrade-auto")
+            {
+                AppLog.Write("auto-upgrade: 升级失败 exitCode=" + exitCode +
+                    " output=" + Tail(text, 2000));
+                if (!_silent)
+                {
+                    Balloon("自动升级失败",
+                        LastLines(text, 3) + "\r\n\r\n将在下一次定时检查时重试。",
+                        ToolTipIcon.Warning);
+                }
+                if (restartAfter)
+                {
+                    _server.RestartAsync();
+                }
                 return;
             }
 
@@ -4289,6 +4765,23 @@ namespace Atlisp.Tray
                 ToolTipIcon.Info);
         }
 
+        private void ToggleAutoUpgrade()
+        {
+            _config.AutoUpgrade = !_config.AutoUpgrade;
+            _config.Save();
+            // 重新开启时立即按新周期重新计时（20 秒启动宽限仍生效）
+            _nextUpdateCheckAt = DateTime.MinValue;
+            _startupUpdateChecked = _config.AutoUpgrade;
+            UpdateUi();
+
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            Balloon("定时自动检查并升级",
+                _config.AutoUpgrade
+                    ? "开启：每 " + hours + " 小时检查一次 @lisp/mcp 新版本，发现后自动升级。"
+                    : "关闭：不再自动检查/升级，可在“更新与安装”里手动操作。",
+                ToolTipIcon.Info);
+        }
+
         private void ToggleMirror()
         {
             if (string.IsNullOrEmpty(_config.NpmRegistry))
@@ -4333,6 +4826,9 @@ namespace Atlisp.Tray
             _activePort = _config.Port;
             ServerLocator.Invalidate();
             _health.SetPort(_config.Port);
+            // 定时自动升级按新配置重新计时
+            _nextUpdateCheckAt = DateTime.MinValue;
+            _startupUpdateChecked = _config.AutoUpgrade;
 
             if (restart)
             {
@@ -4365,6 +4861,7 @@ namespace Atlisp.Tray
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("@lisp MCP 托盘 诊断信息");
             builder.AppendLine("托盘版本     : v" + Program.AppVersion);
+            builder.AppendLine("托盘路径     : " + Application.ExecutablePath);
             builder.AppendLine("生成时间     : " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             builder.AppendLine("操作系统     : " + Environment.OSVersion.VersionString);
             builder.AppendLine("64 位进程    : " + (Environment.Is64BitProcess ? "是" : "否"));
@@ -4374,6 +4871,10 @@ namespace Atlisp.Tray
             builder.AppendLine("托盘自启     : " + (AutostartHelper.IsEnabled() ? "已启用" : "未启用"));
             builder.AppendLine("启动时启服务 : " + (_config.AutoStartServer ? "是" : "否"));
             builder.AppendLine("自动补齐环境 : " + (_config.AutoInstall ? "开" : "关") + BootstrapStateText());
+            builder.AppendLine("自动升级     : " +
+                (_config.AutoUpgrade
+                    ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1) + " 小时检查并升级"
+                    : "关"));
             builder.AppendLine("npm 源       : " +
                 (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
             builder.AppendLine();
@@ -4452,7 +4953,8 @@ namespace Atlisp.Tray
                 "端口：" + _config.Port + "\r\n\r\n" +
                 "双击托盘图标打开 https://atlisp.cn/agent/chat；\r\n" +
                 "右键菜单可启动/停止服务、\r\n" +
-                "检查更新、升级、安装以及设置开机自启。\r\n\r\n" +
+                "检查更新、升级、安装以及设置开机自启。\r\n" +
+                "托盘随 @lisp/mcp 自动升级（默认每小时检查一次）。\r\n\r\n" +
                 "项目主页：https://gitee.com/atlisp",
                 "关于 @lisp MCP 托盘",
                 MessageBoxButtons.OK,
@@ -4563,7 +5065,7 @@ namespace Atlisp.Tray
                 if (result != DialogResult.Yes) return;
             }
 
-            if (_config.StopServerOnExit)
+            if (_config.StopServerOnExit && !_restartForSelfUpdate)
             {
                 // 退出时必须同步等待停止完成，否则后台线程会随进程一起结束
                 _server.StopSync();

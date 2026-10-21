@@ -222,7 +222,8 @@ atlisp-mcp --autostart-status
 `tray/` 下提供一个 WinForms 托盘程序（单文件 C#，无需额外运行时），用于图形化管理本机服务：
 
 - 启动 / 停止 / 重启服务，自动识别 `service.ps1` 安装的 Windows 服务
-- 检查更新、通过 npm 下载安装 / 升级 `@atlisp/mcp@latest`
+- 检查更新、通过 npm 下载安装 / 升级 `@atlisp/mcp@latest`；默认每小时自动检查并静默升级
+- 托盘自我更新：从 npm 包目录启动时迁移到 `%LOCALAPPDATA%\Programs\atlisp-mcp`，升级包后自动替换托盘 exe 并重启
 - 检测不到 Node.js 时，从 npmmirror 下载官方 MSI 并静默安装（UAC 授权）
 - 显示端口、CAD 连接状态、版本；异常退出气泡提醒
 - 一键打开调试面板、API 文档、Playground、服务器日志
@@ -320,13 +321,13 @@ curl http://localhost:8110/metrics
 
 ### 连接后自动安装 @lisp
 
-默认开启（`AUTO_INSTALL_ATLISP=true`）。连接 CAD 后（`open_cad` / `connect_cad` / 自动连接 / 首次普通工具调用；`send_esc`、`bring_to_front` 等紧急工具会跳过自动安装）会：
+默认开启（`AUTO_INSTALL_ATLISP=true`）。**只要连上 CAD 就会检查**（`cad.connect()` 成功后由连接事件统一触发，覆盖 `open_cad` / `connect_cad` / 启动自动连接 / 任何在 handler 内直接连接的工具 / 连接池切换活动实例），未安装则自动安装并加载函数库：
 
 1. 探测 CAD 内 `@::init-once` / `@::load-module`
 2. 未安装则从 `https://atlisp.cn/@` 下载并加载 @lisp 内核
 3. 从 `https://atlisp.cn/cloud` 加载函数库，等待 `base:init` 就绪
 
-首次安装可能需要数十秒到两分钟，`connect_cad` / `open_cad` 会等待完成后再返回；之后使用连接缓存，不再重复安装/探测。
+首次安装可能需要数十秒到两分钟，`connect_cad` / `open_cad` 会等待完成后再返回；之后使用连接缓存，不再重复安装/探测。`send_esc`、`bring_to_front` 等紧急工具自身不等安装，它们的 ESC 等命令会先入队，安装/加载排在其后执行。
 
 安全限制：
 

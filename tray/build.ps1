@@ -76,6 +76,36 @@ if (Test-Path $manifest) {
     $compilerArgs += ('/win32manifest:"' + $manifest + '"')
 }
 
+# 把 package.json 的版本写进 exe（程序集版本 + BuildInfo.TrayVersion）：
+# 托盘“关于/诊断”显示真实版本，升级 @lisp/mcp 后也能据此判断托盘是否需要更新。
+$packageJson = Get-Content (Join-Path $PSScriptRoot '..\package.json') -Raw -Encoding UTF8
+$versionMatch = [regex]::Match($packageJson, '"version"\s*:\s*"([^"]+)"')
+$trayVersion = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { '0.0.0' }
+$versionParts = @(($trayVersion -split '-')[0].Split('.'))
+while ($versionParts.Count -lt 4) { $versionParts += '0' }
+$fileVersion = ($versionParts[0..3] -join '.')
+$buildInfo = @"
+[assembly: System.Reflection.AssemblyVersion("$fileVersion")]
+[assembly: System.Reflection.AssemblyFileVersion("$fileVersion")]
+[assembly: System.Reflection.AssemblyInformationalVersion("$trayVersion")]
+
+namespace Atlisp.Tray
+{
+    internal static class BuildInfo
+    {
+        internal const string TrayVersion = "$trayVersion";
+    }
+}
+"@
+$buildInfoDir = Join-Path $PSScriptRoot '.cache'
+if (-not (Test-Path $buildInfoDir)) {
+    New-Item -ItemType Directory -Path $buildInfoDir -Force | Out-Null
+}
+$buildInfoPath = Join-Path $buildInfoDir 'TrayBuildInfo.g.cs'
+[System.IO.File]::WriteAllText($buildInfoPath, $buildInfo, (New-Object System.Text.UTF8Encoding($false)))
+$compilerArgs += '/define:TRAY_VERSION_STAMPED'
+$compilerArgs += ('"' + $buildInfoPath + '"')
+
 $compilerArgs += ('"' + $source + '"')
 
 Write-Host "编译 $source ..." -ForegroundColor Cyan

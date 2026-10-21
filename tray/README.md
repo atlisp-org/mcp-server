@@ -5,7 +5,8 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **启动 / 停止 / 重启** 本机 `atlisp-mcp` 服务（自动识别 Windows 服务模式）
 - **下载 / 安装 / 升级**：通过 npm 安装或升级到 `@atlisp/mcp@latest`
 - **自动安装 Node.js**：检测不到 Node.js 时，默认下载免 UAC 的 portable zip 解压到用户目录；失败才降级 MSI（需 UAC 授权）
-- **检查更新**：对比本机版本与 npm 上的最新版本，发现新版本时气泡提醒
+- **检查更新 / 自动升级**：对比本机版本与 npm 上的最新版本；默认每 1 小时检查一次，发现新版本自动静默升级（运行中的服务会先停止再重启）
+- **托盘自我更新**：从 npm 包目录启动时先迁移到用户目录（避免升级时 exe 被锁），每次升级 @lisp/mcp 后自动替换托盘自身并重启
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
 - **开机自启**：首次启动自动加入 Windows 启动项（之后尊重手动开关）；可选托盘启动时自动启动服务
@@ -92,6 +93,8 @@ npm pack --dry-run
     - 随 Windows 启动托盘
     - 托盘启动时自动启动服务
     - 使用 npmmirror 镜像下载
+    - 启动时自动补齐运行环境
+    - 定时自动检查并升级 @lisp/mcp（每 1 小时）
     - 重新加载配置
     - 打开配置文件
     - 关于
@@ -123,7 +126,9 @@ npm pack --dry-run
 | `NodeVersion` | `22.12.0` | 从 npmmirror 安装的 Node.js 版本（自动带 `v` 前缀） |
 | `NodeMirror` | `https://npmmirror.com/mirrors/node` | Node.js 安装包镜像地址 |
 | `AutoStartServer` | `true` | 托盘启动时自动启动服务 |
-| `CheckUpdateOnStart` | `true` | 托盘启动 20 秒后自动检查更新 |
+| `CheckUpdateOnStart` | `true` | 托盘启动 20 秒后自动检查更新（`AutoUpgrade=true` 时由定时检查接管） |
+| `AutoUpgrade` | `true` | 定时检查 @lisp/mcp 新版本并自动升级；服务运行中会先停止再重启 |
+| `AutoUpgradeHours` | `1` | 自动检查间隔（小时，1–168） |
 | `AutoInstall` | `true` | 启动时自动补齐缺失的 Node.js / @lisp/mcp（见下方「自动补齐运行环境」） |
 | `StopServerOnExit` | `false` | 退出托盘时是否停止服务 |
 | `HealthyPollSeconds` | `5` | 健康检查间隔（秒） |
@@ -204,9 +209,24 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 ### 安装 / 升级 @lisp/mcp
 
 - 安装与升级都通过 npm 完成：`npm install -g @atlisp/mcp@latest`
-- 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）
+- **定时自动升级**：默认每 1 小时执行一次 `npm view @atlisp/mcp version`，发现比本机新就自动升级；升级前停止服务（Windows 会锁定 `edge-js` 原生模块），升级后按原状态重启。全程不弹窗口，失败只记托盘日志并在气泡里提示，下一小时再重试。可在「设置 → 定时自动检查并升级 @lisp/mcp」关闭，或改 `tray.json` 的 `AutoUpgrade` / `AutoUpgradeHours`
+- 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）；自动升级不会弹 UAC，失败留给下一次或手动升级
 - 升级前如果服务正在运行，升级完成后托盘会自动重启服务
-- “检查更新”只读取 `npm view @atlisp/mcp version`，不会修改任何文件
+- 手动「检查更新」只读取 `npm view @atlisp/mcp version`，不会修改任何文件
+
+### 托盘自我更新
+
+托盘 exe 随 `@atlisp/mcp` 一起发布（`dist/AtlispTray.exe`），所以升级包时托盘也应该跟着换新：
+
+1. **自迁移**：如果托盘是从 npm 包目录启动的（`atlisp-tray`，路径含 `node_modules`），启动时会把自身复制到
+   `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` 并从那里重启，同时把开机自启项改到新路径。
+   这样 `npm install -g` 不会再因为运行中的 exe 被 Windows 锁定（EBUSY/EPERM）而失败。
+2. **自我替换**：每次升级 @lisp/mcp 成功后，托盘会比较包内 `dist\AtlispTray.exe` 与当前 exe 的 SHA256；
+   不同则写一个临时脚本 `%APPDATA%\atlisp-mcp\update-tray.cmd`（等本进程退出 → 覆盖 exe → 重新启动，保留 `--silent`），
+   然后托盘退出。图标会消失 1～2 秒，**服务进程不受影响**；重启后的托盘会按原状态恢复服务。
+3. **失败降级**：如果托盘所在目录不可写（例如手工放进 Program Files），只记录日志并提示手动重启，不弹 UAC。
+   更新脚本的日志在 `%APPDATA%\atlisp-mcp\logs\tray-update.log`。
+4. exe 的版本号在构建时取自 `package.json`（`npm run build:tray` / `build.ps1` 自动注入），可在「关于」和「环境诊断」里查看。
 
 ## 故障排查
 
@@ -220,6 +240,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 安装失败：`'node' 不是内部或外部命令` | 托盘进程继承的 `PATH` 不含 Node.js 目录（常见于「用托盘装完 Node.js 后没重启 Explorer/注销」）。新版托盘会在执行 npm 前自动把 Node.js 目录补进 `PATH`；若仍失败请重启托盘或注销后重新登录，也可在 `tray.json` 显式配置 `NodePath` |
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
+| 升级后托盘还是旧版本 | 查看 `%APPDATA%\atlisp-mcp\logs\tray-update.log`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
 | 首次运行被 SmartScreen 拦截 | exe 未做代码签名，点击“更多信息 → 仍要运行”；建议从本仓库自行构建 |
 
@@ -233,6 +254,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 - `ServerLocator`：Node/npm/@lisp mcp 路径与版本探测
 - `ZipInstaller` / `PortableInstallJob`：portable Node.js zip 的剥根解压（后台线程）
 - `NpmRunner` / `LongTask`：npm 安装、升级、检查更新的异步执行与日志
+- `TraySelfUpdate`：托盘自迁移（npm 包目录 → 用户目录）与升级后的自我替换/重启
 - `DownloadJob`：npmmirror 下载、进度与文件大小校验
 - `IconFactory`：从 exe 提取品牌图标，叠加状态圆点（失败时回退到内置绘制图标）
 - `OutputForm`：任务输出与环境诊断窗口

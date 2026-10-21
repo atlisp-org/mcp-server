@@ -18,6 +18,9 @@ const manifest = path.join(root, 'tray', 'AtlispTray.manifest');
 const icon = path.join(root, 'tray', 'atlisp.ico');
 const outDir = path.join(root, 'dist');
 const output = path.join(outDir, 'AtlispTray.exe');
+const packageVersion = JSON.parse(
+  fs.readFileSync(path.join(root, 'package.json'), 'utf8')
+).version;
 
 function log(message) {
   console.log(`[build:tray] ${message}`);
@@ -98,6 +101,7 @@ async function buildWithDotnet() {
     '-warn:4',
     `-win32manifest:${manifest}`,
     `-win32icon:${icon}`,
+    '-define:TRAY_VERSION_STAMPED',
     `-out:${output}`
   ];
   for (const name of references) {
@@ -107,7 +111,7 @@ async function buildWithDotnet() {
     }
     args.push(`-r:${reference}`);
   }
-  args.push(source);
+  args.push(source, writeBuildInfo());
 
   log(`使用 .NET SDK ${sdk.version} 的 Roslyn 编译器编译...`);
   try {
@@ -117,8 +121,38 @@ async function buildWithDotnet() {
   }
 }
 
-function findExecutable(name) {
-  const probe = spawnSync(name, ['--version'], { stdio: 'ignore' });
+/**
+ * 把 npm 包版本写进托盘 exe（程序集版本 + BuildInfo.TrayVersion），
+ * 供“关于/诊断”显示，也让托盘能和新包内的 exe 对比。
+ */
+function writeBuildInfo() {
+  const numeric = packageVersion.split('-')[0].split('.').map(part => {
+    const value = parseInt(part, 10);
+    return Number.isFinite(value) ? value : 0;
+  });
+  while (numeric.length < 4) numeric.push(0);
+  const fileVersion = numeric.slice(0, 4).join('.');
+
+  const content = `[assembly: System.Reflection.AssemblyVersion("${fileVersion}")]
+[assembly: System.Reflection.AssemblyFileVersion("${fileVersion}")]
+[assembly: System.Reflection.AssemblyInformationalVersion("${packageVersion}")]
+
+namespace Atlisp.Tray
+{
+    internal static class BuildInfo
+    {
+        internal const string TrayVersion = "${packageVersion}";
+    }
+}
+`;
+  const dir = path.join(root, 'tray', '.cache');
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'TrayBuildInfo.g.cs');
+  fs.writeFileSync(target, content, 'utf8');
+  return target;
+}
+
+function findExecutable(name) {  const probe = spawnSync(name, ['--version'], { stdio: 'ignore' });
   return probe.error ? null : name;
 }
 

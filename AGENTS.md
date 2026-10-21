@@ -70,7 +70,7 @@ mcp-server 生成的 LISP **不能假设执行它的 CAD 会话加载了 @lisp l
 - **ActiveX 属性读取**：`vla-get-Attributes` 报「函数错误」，必须用方法形式 `(vl-catch-all-apply 'vlax-invoke (list obj 'GetAttributes))`；`vlax-invoke` 直接返回 VLA-OBJECT 列表，**不要再套 `vlax-variant-value`**；读取前用 `vla-get-HasAttributes` 判定，勿用 `entnext`（无属性 INSERT 会返回数据库下一个实体 → 假阳性）
 - **输出格式**：worker 用 `(princ r f)` 写结果，直接返回 list 会丢字符串引号（空串值 `("A" "")` 变成 `("A")`、块名带空格会被拆开）。统一 `(vl-prin1-to-string (list ...))` 收尾，且条目用 `(list "k" v)` 而非 `(cons "k" v)`（后者 value 为 nil 时退化成 `("k")`，服务端按二元对消费会丢字段）
 - **冻结表跨仓同步**：图框标准表 `frame-standards.js` ↔ lib `frame:` ↔ `packages/at-plot`；属性别名表 `frame-aliases.js` ↔ lib `frame:aliases`（单测有跨仓守卫）
-- **@lisp 自动引导**：默认 `AUTO_INSTALL_ATLISP=true`。连接后探测 `@::init-once` / `@::load-module`，未安装先检查未保存图纸，再从 `https://atlisp.cn/@` 安装、`https://atlisp.cn/cloud` 加载函数库，等待 `BASE:INIT`。未保存图纸会**跳过**自动安装（安装脚本会弹窗/exit）。生成 LISP 仍保持自包含，不能假设引导一定成功。
+- **@lisp 自动引导**：默认 `AUTO_INSTALL_ATLISP=true`。`cad.connect()` 成功后通过连接事件（`onCadConnected`，覆盖所有连接路径与连接池切换实例）统一触发探测 `@::init-once` / `@::load-module`，未安装先检查未保存图纸，再从 `https://atlisp.cn/@` 安装、`https://atlisp.cn/cloud` 加载函数库，等待 `BASE:INIT`。未保存图纸会**跳过**自动安装（安装脚本会弹窗/exit）。生成 LISP 仍保持自包含，不能假设引导一定成功。
 
 ## 远程 Peer 转发（Linux → Windows CAD）
 
@@ -219,7 +219,7 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
-| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/升级、从 npmmirror 安装 Node.js、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
+| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、托盘自迁移与自我更新、从 npmmirror 安装 Node.js、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
 | `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：Windows 上启动 `dist/AtlispTray.exe` |
