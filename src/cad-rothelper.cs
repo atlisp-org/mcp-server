@@ -299,24 +299,33 @@ namespace CadRotHelper
                         {
                             byte[] bytes = System.IO.File.ReadAllBytes(tempFile);
                             System.Text.Encoding enc;
+                            int offset = 0;
 
                             if (!string.IsNullOrEmpty(encoding))
                             {
                                 enc = System.Text.Encoding.GetEncoding(encoding);
                             }
+                            else if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                            {
+                                // 带 UTF-8 BOM 才按 UTF-8 解码（AutoLISP 不会写 BOM，此处仅作兜底）
+                                enc = System.Text.Encoding.UTF8;
+                                offset = 3;
+                            }
                             else
                             {
-                                string utf8Result = System.Text.Encoding.UTF8.GetString(bytes);
-                                if (!utf8Result.Contains("\ufffd"))
-                                    enc = System.Text.Encoding.UTF8;
-                                else
+                                // AutoLISP (open ... "w") 一律按系统 ANSI 代码页（中文系统 GBK/936）写结果文件，
+                                // 不可能是 UTF-8；GBK 字节对常恰好构成合法 UTF-8 双字节序列，
+                                // 旧「无替换字符 -> UTF-8」启发式会把大量中文误判成 UTF-8 解出乱码。
+                                // 因此默认用系统 ANSI 代码页（与上方写 .lsp 文件用的编码一致）。
+                                try { enc = System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage); }
+                                catch
                                 {
                                     try { enc = System.Text.Encoding.GetEncoding("gbk"); }
-                                    catch { enc = System.Text.Encoding.Default; }
+                                    catch { enc = System.Text.Encoding.UTF8; }
                                 }
                             }
 
-                            result = enc.GetString(bytes).Trim();
+                            result = enc.GetString(bytes, offset, bytes.Length - offset).Trim();
                             break;
                         }
                         catch (System.IO.IOException)

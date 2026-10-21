@@ -30,12 +30,12 @@ export const tools = [
     },
 {
         name: 'eval_lisp_with_result',
-        description: '在 CAD 中执行 AutoLISP 代码并返回结果。用户说"查变量/查状态/查数据"时调用。适用查询(getvar/ssget/entget/tblnext)或需要回读函数返回值的场景。有中文时建议 encoding=gbk。不关心结果时用 eval_lisp',
+        description: '在 CAD 中执行 AutoLISP 代码并返回结果。用户说"查变量/查状态/查数据"时调用。适用查询(getvar/ssget/entget/tblnext)或需要回读函数返回值的场景。结果默认按系统 ANSI 代码页（中文 CAD 即 GBK）解码，含中文无需额外参数。不关心结果时用 eval_lisp',
         inputSchema: {
             type: 'object',
             properties: {
                 code: { type: 'string', description: '要执行的 AutoLISP 代码，如 (getvar "clayer") 或 (ssget "_X")' },
-                encoding: { type: 'string', description: '结果编码: utf-8（推荐）, gbk, gb2312, gb18030。含中文时建议 gbk（默认自动检测）' }
+                encoding: { type: 'string', description: '结果文件编码，一般无需传。默认按系统 ANSI 代码页解码（中文 CAD 即 GBK），可正确显示中文；仅当结果确实以其他编码写出时才指定，如 "utf-8"、"gb18030"' }
             },
             required: ['code']
         }

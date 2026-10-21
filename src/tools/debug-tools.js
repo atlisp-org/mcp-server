@@ -22,7 +22,7 @@ export const tools = [
             required: ['id', 'line', 'code', 'vars', 'isBreakpoint'],
           },
         },
-        encoding: { type: 'string', description: '编码（默认 auto）。如 "gbk"、"utf-8"。有中文时建议 gbk' },
+        encoding: { type: 'string', description: '结果编码，一般无需传。默认按系统 ANSI 代码页解码（中文 CAD 即 GBK）；仅当结果确实为其他编码时指定，如 "utf-8"、"gb18030"' },
       },
       required: ['code', 'chunks'],
     },
