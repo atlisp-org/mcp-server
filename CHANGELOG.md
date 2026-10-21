@@ -2,6 +2,18 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.5] - 2026-10-21
+
+### 更新内容
+
+- fix(cad): 结果文件按系统 ANSI 代码页解码，修复中文乱码 (4c52edf)
+- fix(tray): build.ps1 加 UTF-8 BOM，修复 Windows PowerShell 5.1 解析失败 (343dd06)
+- fix(streaming): stream_entities 用 prog1 清理 ss/result 等全局变量 (debff8f)
+- fix(queue): 清空队列时丢弃未 flush 的读批次，并清理 _br* 临时变量 (76b5624)
+- fix(cad): 轮换/熔断降为 WARN，修正读 worker 永不轮换与在途请求清理 (4f3ccbd)
+- fix(tray): 修复 npm 安装时找不到 node，并自动补齐运行环境 (7454697)
+- feat(atlisp): auto install and load @lisp after CAD connects (545268d)
+
 ## [1.11.4] - 2026-10-18
 
 ### 更新内容
