@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.6] - 2026-10-21
+
+### 更新内容
+
+- feat(tray): 每小时自动升级 @lisp/mcp，并支持托盘自我更新 (500e548)
+- feat(atlisp): 连接 CAD 后强制检查并自动安装 @lisp (40e2d53)
+
 ## [1.11.5] - 2026-10-21
 
 ### 更新内容
