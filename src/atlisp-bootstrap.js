@@ -44,33 +44,37 @@ export const ATLISP_INIT_CODE = `(progn
 // atoms-family 返回字符串，必须用字符串比对（不能拿 'symbol 去 member）。
 // 核心标志用 @::INIT-ONCE / @::LOAD-MODULE：前者由内核定义，
 // 后者可能由 cloud 引导定义，二者任一存在都说明内核已加载。
-export const ATLISP_PROBE_CODE = '(progn ' +
-    '(cond ' +
+//
+// 注意：worker 只把「表达式的返回值」写进结果文件（(princ r f)），princ 到命令行
+// 的内容不会出现在结果里。所以 token 必须作为返回值，不能再 (princ) 后返回 nil。
+export const ATLISP_PROBE_CODE = '(cond ' +
     '((and (or (member "@::INIT-ONCE" (atoms-family 1)) ' +
     '(member "@::LOAD-MODULE" (atoms-family 1))) ' +
-    '(member "BASE:INIT" (atoms-family 1))) (princ "' + TOKEN_READY + '")) ' +
+    '(member "BASE:INIT" (atoms-family 1))) "' + TOKEN_READY + '") ' +
     '((or (member "@::INIT-ONCE" (atoms-family 1)) ' +
-    '(member "@::LOAD-MODULE" (atoms-family 1))) (princ "' + TOKEN_CORE + '")) ' +
-    '((princ "' + TOKEN_NONE + '"))) ' +
-    '(princ))';
+    '(member "@::LOAD-MODULE" (atoms-family 1))) "' + TOKEN_CORE + '") ' +
+    '(1 "' + TOKEN_NONE + '"))';
 
 // 与 https://atlisp.cn/@ 安装脚本的 nosaved 判断保持一致：
 // 忽略 AutoCAD 新建的 Drawing1.dwg / Drawing2.dwg 等模板图纸（它们本来就未保存）。
+// 标志位必须初始化为 nil：LISP 里 0 也是真值，用 0 会把「已保存」误判成「未保存」。
+// 清理临时变量后把 token 作为最后一个表达式的值返回。
 export const ATLISP_UNSAVED_PROBE_CODE = '(progn ' +
     '(vl-load-com) ' +
-    '(setq @mcp-unsaved 0) ' +
+    '(setq @mcp-unsaved nil) ' +
     '(setq @mcp-docs (vl-catch-all-apply \'(lambda () ' +
     '(vla-get-Documents (vlax-get-acad-object))))) ' +
+    '(setq @mcp-token ' +
     '(if (vl-catch-all-error-p @mcp-docs) ' +
-    '(princ "ATLISP-UNKNOWN") ' +
+    '"ATLISP-UNKNOWN" ' +
     '(progn ' +
     '(vlax-for @mcp-doc @mcp-docs ' +
     '(if (and (not (wcmatch (vla-get-name @mcp-doc) "Drawing#.dwg")) ' +
     '(eq (vl-catch-all-apply \'vla-get-Saved (list @mcp-doc)) :vlax-false)) ' +
     '(setq @mcp-unsaved 1))) ' +
-    '(princ (if @mcp-unsaved "' + TOKEN_UNSAVED + '" "' + TOKEN_SAVED + '")))) ' +
+    '(if @mcp-unsaved "' + TOKEN_UNSAVED + '" "' + TOKEN_SAVED + '")))) ' +
     '(setq @mcp-unsaved nil @mcp-docs nil @mcp-doc nil) ' +
-    '(princ))';
+    '@mcp-token)';
 
 const state = {
     ready: false,

@@ -69,6 +69,8 @@ mcp-server 生成的 LISP **不能假设执行它的 CAD 会话加载了 @lisp l
 - **不要把 `T` 当值用**：实测某会话 `T` 被绑成 `nil`、另一会话被绑成字符串。`(setq hit T)` / `(and cond T)` / `(while ... T)` 会静默失效。用字面量 `1`（永不失效）
 - **ActiveX 属性读取**：`vla-get-Attributes` 报「函数错误」，必须用方法形式 `(vl-catch-all-apply 'vlax-invoke (list obj 'GetAttributes))`；`vlax-invoke` 直接返回 VLA-OBJECT 列表，**不要再套 `vlax-variant-value`**；读取前用 `vla-get-HasAttributes` 判定，勿用 `entnext`（无属性 INSERT 会返回数据库下一个实体 → 假阳性）
 - **输出格式**：worker 用 `(princ r f)` 写结果，直接返回 list 会丢字符串引号（空串值 `("A" "")` 变成 `("A")`、块名带空格会被拆开）。统一 `(vl-prin1-to-string (list ...))` 收尾，且条目用 `(list "k" v)` 而非 `(cons "k" v)`（后者 value 为 nil 时退化成 `("k")`，服务端按二元对消费会丢字段）
+- **结果只能是返回值**：worker 只把被加载代码的**表达式返回值**写进结果文件（`(princ r f)`），`princ` 到命令行/回显的内容不会出现在 `sendCommandWithResult` 的结果里。探测类代码（如 @lisp 的 token）必须让 token 作为最终返回值，不能用 `(princ "TOKEN")` 后返回 nil
+- **标志位用 nil 不用 0**：AutoLISP 里只有 nil 为假，`0` 是真值。`(setq flag 0)` 后再 `(if flag ...)` 会恒真，未保存图纸判断踩过这个坑
 - **冻结表跨仓同步**：图框标准表 `frame-standards.js` ↔ lib `frame:` ↔ `packages/at-plot`；属性别名表 `frame-aliases.js` ↔ lib `frame:aliases`（单测有跨仓守卫）
 - **@lisp 自动引导**：默认 `AUTO_INSTALL_ATLISP=true`。`cad.connect()` 成功后通过连接事件（`onCadConnected`，覆盖所有连接路径与连接池切换实例）统一触发探测 `@::init-once` / `@::load-module`，未安装先检查未保存图纸，再从 `https://atlisp.cn/@` 安装、`https://atlisp.cn/cloud` 加载函数库，等待 `BASE:INIT`。未保存图纸会**跳过**自动安装（安装脚本会弹窗/exit）。生成 LISP 仍保持自包含，不能假设引导一定成功。
 

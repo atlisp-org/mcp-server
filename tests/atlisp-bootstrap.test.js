@@ -27,6 +27,7 @@ vi.mock('../src/config.js', () => ({
 const {
   ensureAtlispReady, installAtlispCore, initAtlispLibrary,
   getAtlispStatus, probeAtlisp, resetAtlispReady, installAtlispConnectHook,
+  ATLISP_PROBE_CODE, ATLISP_UNSAVED_PROBE_CODE,
 } = await import('../src/atlisp-bootstrap.js');
 
 function classify(code) {
@@ -92,6 +93,20 @@ describe('atlisp-bootstrap', () => {
 
     ready = true;
     expect(await probeAtlisp()).toMatchObject({ core: true, ready: true });
+  });
+
+  // worker 只把表达式返回值写进结果文件，(princ "...") 的输出去不了服务端
+  it('探测代码把 token 作为返回值，而不是靠 princ 输出', () => {
+    expect(ATLISP_PROBE_CODE.trim().startsWith('(cond')).toBe(true);
+    expect(ATLISP_PROBE_CODE).not.toContain('(princ');
+    expect(ATLISP_UNSAVED_PROBE_CODE).not.toContain('(princ');
+    expect(ATLISP_PROBE_CODE).toContain('"ATLISP-READY"');
+  });
+
+  // LISP 里 0 也是真值，标志位用 0 会把「已保存」误判成「未保存」
+  it('未保存图纸检查用 nil 作标志位并返回 token', () => {
+    expect(ATLISP_UNSAVED_PROBE_CODE).toContain('(setq @mcp-unsaved nil)');
+    expect(ATLISP_UNSAVED_PROBE_CODE.trim().endsWith('@mcp-token)')).toBe(true);
   });
 
   it('returns quickly when already ready and caches the result', async () => {
