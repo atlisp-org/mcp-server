@@ -212,6 +212,59 @@ function Test-NpmAvailable {
     }
 }
 
+function Test-DotnetAvailable {
+    return [bool](Get-Command dotnet -ErrorAction SilentlyContinue)
+}
+
+# edge-js 的安装脚本（node tools/install.js）在 Windows 上会无条件 spawn
+# `dotnet build` 构建 CoreCLR bootstrap。没有 .NET SDK 的机器上 spawn 抛 ENOENT，
+# 整个 npm install 以退出码 1 失败（Error: spawn dotnet ENOENT）。
+# 本服务在 Windows 上走 .NET Framework 的 native CLR + COM，用不到 bootstrap，
+# 所以没有 dotnet 时改用 --ignore-scripts 安装，再补齐安装脚本本该复制的
+# VC 运行时 DLL（edge_nativeclr.node 从同目录解析依赖）。
+function Repair-EdgeNative {
+    param([string]$GlobalRoot)
+
+    $edgeCandidates = @(
+        (Join-Path $GlobalRoot "@atlisp\mcp\node_modules\edge-js"),
+        (Join-Path $GlobalRoot "edge-js")
+    )
+    $edgeRoot = $null
+    foreach ($candidate in $edgeCandidates) {
+        if (Test-Path $candidate) { $edgeRoot = $candidate; break }
+    }
+    if (-not $edgeRoot) {
+        Write-Host "未找到 edge-js 目录，跳过原生文件检查" -ForegroundColor Yellow
+        return
+    }
+
+    $winRoot = Join-Path $edgeRoot "lib\native\win32"
+    if (-not (Test-Path $winRoot)) { return }
+
+    $dlls = @("concrt140.dll", "msvcp140.dll", "vccorlib140.dll", "vcruntime140.dll")
+    $copied = 0
+    foreach ($arch in @("x64", "ia32", "arm64")) {
+        $archDir = Join-Path $winRoot $arch
+        if (-not (Test-Path $archDir)) { continue }
+        foreach ($nodeDir in (Get-ChildItem -Path $archDir -Directory -ErrorAction SilentlyContinue)) {
+            foreach ($dll in $dlls) {
+                $source = Join-Path $archDir $dll
+                if (-not (Test-Path $source)) { continue }
+                try {
+                    $target = Join-Path $nodeDir.FullName $dll
+                    if (Test-Path $target) { (Get-Item $target).Attributes = "Normal" }
+                    Copy-Item $source $target -Force -ErrorAction Stop
+                    $copied++
+                }
+                catch {
+                    Write-Host "复制 $dll 到 $($nodeDir.Name) 失败：$($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+    Write-Host "edge-js 原生文件已补齐（复制 $copied 个 DLL）" -ForegroundColor Green
+}
+
 function Install-Package {
     $nodeVersion = Test-NodeInstalled
     Test-NodeVersion $nodeVersion
@@ -219,10 +272,19 @@ function Install-Package {
 
     Write-Host ""
     Write-Host "Installing $packageName from npm registry..." -ForegroundColor Cyan
-    npm install -g @atlisp/mcp --silent
+
+    $npmArgs = @("install", "-g", "@atlisp/mcp", "--silent")
+    if (-not (Test-DotnetAvailable)) {
+        Write-Host "未检测到 .NET SDK（dotnet）：跳过 npm 安装脚本（不影响使用）" -ForegroundColor Yellow
+        $npmArgs += "--ignore-scripts"
+    }
+    & npm @npmArgs
 
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: npm install failed" -ForegroundColor Red
+        Write-Host "如果日志含 'spawn dotnet ENOENT'，说明 edge-js 安装脚本需要 .NET SDK，可选：" -ForegroundColor Yellow
+        Write-Host "  1) 重试（跳过安装脚本）：npm install -g @atlisp/mcp --ignore-scripts" -ForegroundColor Yellow
+        Write-Host "  2) 或先安装 .NET SDK：winget install Microsoft.DotNet.SDK.8" -ForegroundColor Yellow
         exit 1
     }
 
@@ -231,6 +293,21 @@ function Install-Package {
     if ($globalPath -and ($env:Path -notlike "*$globalPath*")) {
         $env:Path = "$globalPath;" + $env:Path
         Write-Host "Added npm global path to PATH: $globalPath" -ForegroundColor Cyan
+    }
+
+    Repair-EdgeNative -GlobalRoot $globalPath
+
+    if (-not (Get-Command atlisp-mcp -ErrorAction SilentlyContinue)) {
+        Write-Host "Warning: atlisp-mcp 命令未就绪，请检查 npm 全局路径是否在 PATH 中" -ForegroundColor Yellow
+    }
+    else {
+        $verify = & atlisp-mcp --version 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Warning: atlisp-mcp --version 执行失败（退出码 $LASTEXITCODE）" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Verified: $(($verify -join ' ').Trim())" -ForegroundColor Green
+        }
     }
 
     Write-Host ""

@@ -1290,8 +1290,144 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>
+    /// edge-js 的 npm 安装脚本（node tools/install.js）在 Windows 上会无条件
+    /// spawn `dotnet build` 构建 CoreCLR bootstrap。机器没有 .NET SDK 时 spawn 抛
+    /// 未处理的 ENOENT，整个 `npm install -g @atlisp/mcp` 以退出码 1 失败：
+    ///     Error: spawn dotnet ENOENT / code: 'ENOENT', syscall: 'spawn dotnet'
+    ///
+    /// 本服务在 Windows 上走 .NET Framework 的 native CLR + COM，用不到 bootstrap，
+    /// 所以没有 dotnet 时可以：
+    ///   1) npm install 加 --ignore-scripts（只跳过安装脚本，包文件照常安装）；
+    ///   2) 用 Repair() 补上安装脚本里唯一有用的那步——把 VC 运行时 DLL 复制到
+    ///      各 node ABI 目录（edge_nativeclr.node 就从这个目录解析依赖）。
+    /// </summary>
+    internal static class EdgeNativeSupport
+    {
+        private static readonly string[] RedistDlls = new string[]
+        {
+            "concrt140.dll", "msvcp140.dll", "vccorlib140.dll", "vcruntime140.dll"
+        };
+
+        private static readonly string[] ArchDirs = new string[] { "x64", "ia32", "arm64" };
+
+        /// <summary>本机是否有 .NET SDK（只有它才需要跑 edge-js 的安装脚本）。</summary>
+        public static bool DotnetAvailable()
+        {
+            return ProcessRunner.Where("dotnet.exe") != null;
+        }
+
+        /// <summary>npm install 需要追加的参数：没有 dotnet 时跳过安装脚本，避免 ENOENT。</summary>
+        public static string InstallArgs()
+        {
+            return DotnetAvailable() ? "" : " --ignore-scripts";
+        }
+
+        /// <summary>安装/升级完成后补齐 edge-js 原生文件，返回一行写日志的说明。</summary>
+        public static string Repair(ServerInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.PackageDir))
+            {
+                return "未定位到 @lisp/mcp 包目录，跳过 edge-js 原生文件检查";
+            }
+
+            string edgeDir = FindEdgeJs(info.PackageDir);
+            if (string.IsNullOrEmpty(edgeDir))
+            {
+                return "未找到 edge-js 目录，跳过原生文件检查";
+            }
+
+            string winRoot = Path.Combine(edgeDir, "lib", "native", "win32");
+            if (!Directory.Exists(winRoot))
+            {
+                return "edge-js 不含 win32 原生目录，跳过";
+            }
+
+            int copied = 0;
+            int failed = 0;
+            for (int i = 0; i < ArchDirs.Length; i++)
+            {
+                string archDir = Path.Combine(winRoot, ArchDirs[i]);
+                if (!Directory.Exists(archDir)) continue;
+
+                string[] nodeDirs;
+                try { nodeDirs = Directory.GetDirectories(archDir); }
+                catch { continue; }
+
+                for (int j = 0; j < nodeDirs.Length; j++)
+                {
+                    for (int k = 0; k < RedistDlls.Length; k++)
+                    {
+                        string source = Path.Combine(archDir, RedistDlls[k]);
+                        if (!File.Exists(source)) continue;
+                        string target = Path.Combine(nodeDirs[j], RedistDlls[k]);
+                        try
+                        {
+                            if (File.Exists(target))
+                            {
+                                // 安装脚本写过的文件带只读属性，覆盖前先清掉
+                                File.SetAttributes(target, FileAttributes.Normal);
+                            }
+                            File.Copy(source, target, true);
+                            copied++;
+                        }
+                        catch
+                        {
+                            failed++;
+                        }
+                    }
+                }
+            }
+
+            if (failed > 0)
+            {
+                return "edge-js 原生文件补齐不完整（复制 " + copied + " 个，失败 " +
+                    failed + " 个）；如报缺 DLL，可用管理员身份重试或安装 VC++ 运行库";
+            }
+            if (copied == 0)
+            {
+                return "edge-js 原生文件已就绪（无需复制）";
+            }
+            return "edge-js 原生文件已补齐（复制 " + copied + " 个 DLL）";
+        }
+
+        private static string FindEdgeJs(string packageDir)
+        {
+            // 全局安装时依赖通常嵌套在 @atlisp/mcp/node_modules，
+            // 但也可能被提升到 <prefix>/node_modules/edge-js
+            string[] candidates = new string[]
+            {
+                Path.Combine(packageDir, "node_modules", "edge-js"),
+                Path.Combine(packageDir, "..", "..", "edge-js"),
+                Path.Combine(packageDir, "..", "..", "..", "edge-js")
+            };
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                try
+                {
+                    string full = Path.GetFullPath(candidates[i]);
+                    if (Directory.Exists(full)) return full;
+                }
+                catch
+                {
+                }
+            }
+            return null;
+        }
+    }
+
     internal static class NpmRunner
     {
+        /// <summary>
+        /// 全局安装/升级命令。没有 .NET SDK 时追加 --ignore-scripts：edge-js 的安装
+        /// 脚本会因 `spawn dotnet ENOENT` 让 npm 退出码 1（见 EdgeNativeSupport）。
+        /// </summary>
+        public static string InstallServerArgs(TrayConfig config)
+        {
+            return WithRegistry(config,
+                "install -g @atlisp/mcp@latest --loglevel=error" + EdgeNativeSupport.InstallArgs());
+        }
+
         public static string WithRegistry(TrayConfig config, string arguments)
         {
             if (!string.IsNullOrEmpty(config.NpmRegistry))
@@ -4067,7 +4203,7 @@ namespace Atlisp.Tray
             bool shouldRunAfter = !info.IsInstalled || IsServerBusy();
             StopServerForUpdate();
             RunNpmTask("安装 @lisp MCP Server",
-                NpmRunner.WithRegistry(_config, "install -g @atlisp/mcp@latest --loglevel=error"),
+                NpmRunner.InstallServerArgs(_config),
                 "install", true, shouldRunAfter);
         }
 
@@ -4087,7 +4223,7 @@ namespace Atlisp.Tray
             bool shouldRunAfter = IsServerBusy();
             StopServerForUpdate();
             RunNpmTask("升级 @lisp MCP Server",
-                NpmRunner.WithRegistry(_config, "install -g @atlisp/mcp@latest --loglevel=error"),
+                NpmRunner.InstallServerArgs(_config),
                 "upgrade", true, shouldRunAfter);
         }
 
@@ -4163,7 +4299,7 @@ namespace Atlisp.Tray
             bool shouldRunAfter = IsServerBusy();
             StopServerForUpdate();
             RunNpmTask("自动升级 @lisp MCP Server",
-                NpmRunner.WithRegistry(_config, "install -g @atlisp/mcp@latest --loglevel=error"),
+                NpmRunner.InstallServerArgs(_config),
                 "upgrade-auto", false, shouldRunAfter);
         }
 
@@ -4254,6 +4390,12 @@ namespace Atlisp.Tray
 
             string logFile = NewTaskLogFile("npm");
             LongTask task = new LongTask(title, logFile);
+            if (arguments != null &&
+                arguments.IndexOf("--ignore-scripts", StringComparison.Ordinal) >= 0)
+            {
+                task.AppendLine("提示：未检测到 .NET SDK（dotnet），已跳过 npm 安装脚本。" +
+                    "edge-js 原生文件会在安装完成后自动补齐，不影响使用。");
+            }
             Process process = NpmRunner.Create(_config, info, arguments,
                 delegate(object sender, DataReceivedEventArgs e)
                 {
@@ -4301,7 +4443,7 @@ namespace Atlisp.Tray
 
             ServerInfo info = ServerLocator.Resolve(_config, true);
             string arguments = action == "upgrade" || action == "install"
-                ? NpmRunner.WithRegistry(_config, "install -g @atlisp/mcp@latest --loglevel=error")
+                ? NpmRunner.InstallServerArgs(_config)
                 : NpmRunner.WithRegistry(_config, "view @atlisp/mcp version");
             string commandLine = NpmRunner.BuildCommandLine(info, arguments);
             if (string.IsNullOrEmpty(commandLine))
@@ -4395,6 +4537,13 @@ namespace Atlisp.Tray
         {
             ServerLocator.Invalidate();
             ServerInfo info = ServerLocator.Resolve(_config, true);
+
+            // 没有 .NET SDK 时安装用 --ignore-scripts 跳过了 edge-js 的安装脚本，
+            // 这里补上它本该做的事（复制 VC 运行时 DLL）；正常安装时是幂等空操作。
+            if (action == "install" || action == "upgrade" || action == "upgrade-auto")
+            {
+                AppLog.Write("edge-js: " + EdgeNativeSupport.Repair(info));
+            }
 
             if (action == "check" || action == "check-silent" || action == "check-auto")
             {
@@ -4630,6 +4779,30 @@ namespace Atlisp.Tray
                         LastLines(text, 3) + "\r\n\r\n将在下一次定时检查时重试。",
                         ToolTipIcon.Warning);
                 }
+                if (restartAfter)
+                {
+                    _server.RestartAsync();
+                }
+                return;
+            }
+
+            // edge-js 安装脚本在没有 .NET SDK 的机器上会 spawn dotnet 失败。正常路径
+            // 已用 --ignore-scripts 规避（见 EdgeNativeSupport），走到这里说明兜底没生效，
+            // 直接给出可复制的命令，避免用户对着 "退出码 1" 发呆。
+            bool dotnetScriptFailure =
+                text.IndexOf("spawn dotnet", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (text.IndexOf("tools/install.js", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                 text.IndexOf("ENOENT", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (dotnetScriptFailure && !_bootstrapMode && !elevated &&
+                (action == "install" || action == "upgrade"))
+            {
+                AppLog.Write("安装失败：edge-js 安装脚本找不到 dotnet（--ignore-scripts 兜底未生效）");
+                ShowError("安装失败：缺少 .NET SDK",
+                    "edge-js 的 npm 安装脚本会调用 dotnet 构建 CoreCLR bootstrap，" +
+                    "本机没有 .NET SDK 时报 spawn dotnet ENOENT。\r\n\r\n" +
+                    "请关闭托盘后在命令行执行：\r\n" +
+                    "  npm install -g @atlisp/mcp --ignore-scripts\r\n\r\n" +
+                    LastLines(text, 6));
                 if (restartAfter)
                 {
                     _server.RestartAsync();

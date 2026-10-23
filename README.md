@@ -1063,6 +1063,45 @@ MCP Server 已通过多平台真机测试，所有核心功能正常：
 | CAD 未自动启动 | 检查 COM 权限，以管理员身份运行 |
 | 端口被占用 | 使用 `--port` 指定其他端口；同端口多实例冲突时，结束原进程或换端口 |
 | 全局命令找不到 | 检查 npm 全局安装路径是否在 PATH 中 |
+| 安装报 `Error: spawn dotnet ENOENT` | 没装 .NET SDK 时 `edge-js` 的安装脚本会失败，见下方说明（不影响运行） |
+| 启动后提示 `edge_nativeclr.node` 加载失败/缺 DLL | 按下方命令补齐 edge-js 的 VC 运行时 DLL |
+
+### 没有 .NET SDK 时安装（`spawn dotnet ENOENT`）
+
+`edge-js` 的 npm 安装脚本（`node tools/install.js`）在 Windows 上会无条件执行
+`dotnet restore/build` 去构建 CoreCLR bootstrap。机器上没装 .NET SDK 时，这个
+子进程直接抛 `Error: spawn dotnet ENOENT`，让整个 `npm install -g @atlisp/mcp`
+以退出码 1 失败：
+
+```
+npm error code: 'ENOENT', syscall: 'spawn dotnet', spawnargs: ['restore']
+```
+
+本服务在 Windows 上走 .NET Framework 的 native CLR + COM，**用不到 bootstrap**。
+当前版本已把 `edge-js` 锁在带 dotnet 探测的 24.0.5，新安装不再触发这个错误；
+如果装的是旧版本（或遇到同类脚本问题），跳过安装脚本即可：
+
+```powershell
+# 1) 跳过 npm 安装脚本（只跳过 edge-js 的 dotnet 构建，包文件照常安装）
+npm install -g @atlisp/mcp --ignore-scripts
+
+# 2) 补齐 edge-js 的 VC 运行时 DLL（安装脚本本该复制到各 node ABI 目录）
+$root = Join-Path (npm root -g) "node_modules\edge-js\lib\native\win32"
+if (-not (Test-Path $root)) {
+    $root = Join-Path (npm root -g) "@atlisp\mcp\node_modules\edge-js\lib\native\win32"
+}
+Get-ChildItem $root -Directory | ForEach-Object {
+    Get-ChildItem $_.FullName -Directory | ForEach-Object {
+        Copy-Item (Join-Path $_.Parent.FullName "*.dll") $_.FullName -Force
+    }
+}
+
+# 3) 验证
+atlisp-mcp --version
+```
+
+托盘（`AtlispTray.exe`）与 `install.ps1` 已自动处理这种机器：检测不到 `dotnet` 时
+安装/升级自动追加 `--ignore-scripts`，并在完成后自动补齐上述 DLL。
 
 ---
 

@@ -57,6 +57,14 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **流式限制**：`streaming.js` 默认 20000 实体上限（`MAX_ENTITY_LIMIT` 环境变量可配），超限返回错误而非执行 `ssget "_X"`
 - **Webhook**：失败自动指数退避重试 3 次（1s/2s/4s），总耗时 ≈ 7s
 - **队列清理**：`resetWorker()` 会同时清空 `CommandQueue`，确保残留命令不被消费
+- **npm 安装脚本**：`edge-js` ≥25.0.0 的 `tools/install.js` 在 Windows 上**无条件**
+  `spawn dotnet build`（CoreCLR bootstrap），没装 .NET SDK 的机器会以
+  `Error: spawn dotnet ENOENT` 让 `npm install -g @atlisp/mcp` 退出码 1。因此依赖**锁在
+  24.0.5**（最后一个带 dotnet 探测的版本，`lib/edge.js` 与 25.0.1 完全一致，只少 Node 25
+  预编译原生文件）。升级 edge-js 前先确认上游修了这个脚本；兜底逻辑仍保留：托盘
+  `EdgeNativeSupport.InstallArgs()/Repair()`、`install.ps1` 的 `Repair-EdgeNative` 在检测不到
+  `dotnet` 时用 `--ignore-scripts` 安装，并把 VC 运行时 DLL 复制到
+  `edge-js/lib/native/win32/<arch>/<node-abi>/`（安装脚本本该做的唯一有用步骤）
 
 ### CAD 侧生成 LISP 的硬约束（踩过的坑）
 

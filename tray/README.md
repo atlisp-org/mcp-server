@@ -141,7 +141,7 @@ npm pack --dry-run
 
 1. **缺 Node.js** → 从 `NodeMirror` 下载 `node-v<版本>-win-<架构>.zip`，解压到 `%LOCALAPPDATA%\atlisp-mcp\node\`。zip 版不需要安装、不写注册表、不弹 UAC。解压在后台线程完成，不阻塞界面。
 2. **portable 路线失败**（镜像不可达、磁盘不足等）→ 自动降级为 MSI 安装，此时会弹 **UAC**（这是唯一需要人工点「是」的环节），再失败则退到 winget。
-3. **缺 @lisp/mcp** → `npm install -g @atlisp/mcp@latest`。普通用户的 npm 全局前缀是 `%APPDATA%\npm`，同样不需要管理员权限；只有确实没有写权限时才会触发 UAC 重试。
+3. **缺 @lisp/mcp** → `npm install -g @atlisp/mcp@latest`。普通用户的 npm 全局前缀是 `%APPDATA%\npm`，同样不需要管理员权限；只有确实没有写权限时才会触发 UAC 重试。检测不到 `dotnet` 时自动追加 `--ignore-scripts` 并补齐 `edge-js` 的 VC 运行时 DLL（见「安装 / 升级 @lisp/mcp」）。
 4. **依赖齐全** → 按 `AutoStartServer` 启动服务。
 
 Node.js 探测顺序：`tray.json` 的 `NodePath` → `%ProgramFiles%\nodejs` / fnm / nvm / scoop → **portable 目录** → `PATH`。portable 排在 `PATH` 之前是为了修复「刚装完 Node.js 但 Explorer 环境没刷新」的情况；同时托盘会在调用 npm 前把 Node.js 目录补进自身 `PATH`（否则 `edge-js` 等依赖的安装脚本会报 `'node' 不是内部或外部命令`）。
@@ -209,6 +209,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 ### 安装 / 升级 @lisp/mcp
 
 - 安装与升级都通过 npm 完成：`npm install -g @atlisp/mcp@latest`
+- **没有 .NET SDK 的机器**：`edge-js` 的安装脚本会无条件 `spawn dotnet`（构建 CoreCLR bootstrap），没装 SDK 时报 `Error: spawn dotnet ENOENT` 让 npm 退出码 1。Windows 端走 native CLR + COM，用不到 bootstrap，所以托盘检测不到 `dotnet` 时自动给 npm 追加 `--ignore-scripts`，再调用 `EdgeNativeSupport.Repair()` 把 VC 运行时 DLL 复制到 `edge-js\lib\native\win32\<arch>\<node-abi>\`（这一步本来是安装脚本做的）。安装窗口会提示「已跳过 npm 安装脚本」，不影响使用
 - **定时自动升级**：默认每 1 小时执行一次 `npm view @atlisp/mcp version`，发现比本机新就自动升级；升级前停止服务（Windows 会锁定 `edge-js` 原生模块），升级后按原状态重启。全程不弹窗口，失败只记托盘日志并在气泡里提示，下一小时再重试。可在「设置 → 定时自动检查并升级 @lisp/mcp」关闭，或改 `tray.json` 的 `AutoUpgrade` / `AutoUpgradeHours`
 - 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）；自动升级不会弹 UAC，失败留给下一次或手动升级
 - 升级前如果服务正在运行，升级完成后托盘会自动重启服务
