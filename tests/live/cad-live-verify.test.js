@@ -218,19 +218,20 @@ describe.skipIf(!LIVE)('真机图框识别（atlisp://dwg/frames）', () => {
     expect(res.frames.find(f => dimOf(f) === '105100x59400')).toMatchObject({ elongation: '+1/4', scale: 100 });
   }, 300000);
 
-  it('frames 按面积降序，unmatched 含「很像但没命中」的 336400x118800 加长图', async () => {
+  it('frames 按面积降序，默认容差 0.0035 下 336400x118800 命中 A1+1@1:200', async () => {
     clearCache();
     const res = await readResource('atlisp://dwg/frames?layer=PUB_TITLE');
     const areas = res.frames.map(f => f.width * f.height);
     expect([...areas].sort((a, b) => b - a)).toEqual(areas);
 
-    const big = res.unmatched.filter(u => dimOf(u) === '336400x118800');
+    // 宽高比 2.8316 与比例表 2.82857(+1 加长) 差 0.0031，在默认 tolRatio=0.0035 内 → 命中
+    // （旧默认 0.002 时该图进 unmatched 供人工复核）
+    const big = res.frames.filter(f => dimOf(f) === '336400x118800');
     expect(big.length).toBeGreaterThan(0);
-    for (const u of big) {
-      expect(u.layer).toBe('PUB_TITLE');
-      // 宽高比 2.8316 与比例表 2.82857(+1 加长) 差 0.003，超出 tolRatio=0.002 → 进 unmatched 供人工复核
-      expect(u.ratio).toBeCloseTo(2.8316, 4);
-      expect(u.paperSize).toBeUndefined();
+    for (const f of big) {
+      expect(f.layer).toBe('PUB_TITLE');
+      expect(f.ratio).toBeCloseTo(2.8316, 4);
+      expect(f).toMatchObject({ paperSize: 'A1', elongation: '+1', scale: 200 });
     }
   }, 300000);
 

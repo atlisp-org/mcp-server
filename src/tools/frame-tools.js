@@ -100,7 +100,7 @@ lib 路径还会用 frame:title-fields 把框内散文字配对成图签字段�
 几何只能给物理尺寸解读：A1@1:100 与 A3@1:200 是同一个矩形，无法区分，此时首项写 paperSize/scale，其余进 alternatives；
 真实出图比例应以图签属性 fields.scale 或图内比例文字为准，不要用 alternatives 去猜。
 默认丢弃被其它图框包含的内框（标题栏内框会被自动排除，只留外框）；配不上标准表的候选放在 unmatched
-（按面积降序最多 200 条），便于人工复核"很像但没命中"的加长图幅——图纸画得不精确时可用 tolRatio=0.0035 识别 0.1% 偏差的加长图幅（本图 336400×118800 属此类）。
+（按面积降序最多 200 条），便于人工复核"很像但没命中"的加长图幅——默认 tolRatio=0.0035 已可识别约 0.1% 偏差的加长图幅（如 336400×118800）。
 返回 frames 按面积降序、默认 limit=500（含 total/nextOffset 便于分页），sources 给出三条通道各自的条数。`,
     inputSchema: {
       type: 'object',
@@ -120,7 +120,7 @@ lib 路径还会用 frame:title-fields 把框内散文字配对成图签字段�
         },
         tolRatio: {
           type: 'number',
-          description: `宽高比匹配绝对容差（默认 0.002）。图纸画得不精确时可用 0.0035 识别 0.1% 偏差的加长图幅（本图 336400×118800 属此类）`,
+          description: `宽高比匹配绝对容差（默认 0.0035，可识别约 0.1% 偏差的加长图幅，如 336400×118800）`,
         },
         includeInner: { type: 'boolean', description: 'true 则保留被包含的内框并标 inner=true（默认 false，只留外框）' },
         limit: { type: 'number', description: 'frames 每页条数（默认 500，0 = 不分页一次返回全部）' },

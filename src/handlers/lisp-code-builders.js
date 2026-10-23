@@ -101,7 +101,7 @@ const lispList = (arr) => `(${arr.join(' ')})`;
  * @param {string} [options.layer] 图层名，支持英文逗号分隔的多图层（内部按 <OR> 组合）
  * @param {number} [options.minSize=0] 最小短边长度，短于此值的候选直接忽略（frames/unmatched 都不含）
  * @param {number[]|string} [options.scales] 比例表，默认 FRAME_STANDARDS.defaultScales
- * @param {number} [options.tolRatio=0.002] 宽高比绝对容差
+ * @param {number} [options.tolRatio=0.0035] 宽高比绝对容差
  * @param {number} [options.tolLen=0.001] 短边相对容差（相对短边长度）
  * @param {number} [options.offset=0] frames 分页起始下标（排序后）
  * @param {number} [options.limit=0] frames 每页条数，0 = 不分页

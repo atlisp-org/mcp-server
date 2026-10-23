@@ -169,7 +169,7 @@ describe('buildFramesCode', () => {
     expect(code).toContain("(setq @fr:ratios '(1.41429 1.76786 2.12143 2.475 2.82857 3.18214 3.53571))");
     expect(code).toContain('(setq @fr:marks \'("" "+1/4" "+1/2" "+3/4" "+1" "+5/4" "+3/2"))');
     expect(code).toContain('(setq @fr:scales \'(1 5 10 20 25 30 40 50 70 100 120 150 200 250 300 400 500 1000))');
-    expect(code).toContain('(setq @fr:tol-ratio 0.002 @fr:tol-len 0.001)');
+    expect(code).toContain('(setq @fr:tol-ratio 0.0035 @fr:tol-len 0.001)');
   });
 
   it('自定义比例表替换默认表；非法值回落默认值', () => {
@@ -179,12 +179,12 @@ describe('buildFramesCode', () => {
     // NaN/负数/指数记法都不能拼进 LISP（否则 CAD 侧读到的字面量非法）；0 是合法的（精确匹配）
     const bad = buildFramesCode({ minSize: -5, tolRatio: 'abc', tolLen: -1, offset: -3, limit: NaN });
     expect(bad).toContain('(setq @fr:min-size 0)');
-    expect(bad).toContain('(setq @fr:tol-ratio 0.002 @fr:tol-len 0.001)');
+    expect(bad).toContain('(setq @fr:tol-ratio 0.0035 @fr:tol-len 0.001)');
     expect(bad).toContain('(setq @fr:offset 0 @fr:limit 0)');
     expect(bad).not.toContain('NaN');
     // tolLen=0 表示精确匹配，应原样写入；但 1e-7 这种会输出指数记法的值必须回落
     expect(buildFramesCode({ tolLen: 0 })).toContain('@fr:tol-len 0)');
-    expect(buildFramesCode({ tolRatio: 1e-7 })).toContain('@fr:tol-ratio 0.002');
+    expect(buildFramesCode({ tolRatio: 1e-7 })).toContain('@fr:tol-ratio 0.0035');
   });
 
   it('includeInner / includeUnmatched 控制内框保留与 unmatched 收集', () => {
@@ -559,7 +559,7 @@ describe('FRAME_STANDARDS 冻结表', () => {
     expect(FRAME_STANDARDS.ratios).toHaveLength(7);
     expect(FRAME_STANDARDS.marks).toEqual(['', '+1/4', '+1/2', '+3/4', '+1', '+5/4', '+3/2']);
     expect(FRAME_STANDARDS.defaultScales).toHaveLength(18);
-    expect(FRAME_STANDARDS.defaultTolRatio).toBe(0.002);
+    expect(FRAME_STANDARDS.defaultTolRatio).toBe(0.0035);
     expect(FRAME_STANDARDS.defaultTolLen).toBe(0.001);
   });
 });
