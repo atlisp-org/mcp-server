@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.10] - 2026-10-23
+
+### 更新内容
+
+- build: 非 Windows 平台交叉编译 C#（cad-rothelper.dll / AtlispTray.exe） (207c725)
+- feat(frames): 图框识别改双路径，lib 可用时启用三条通道 (4447923)
+
 ## [1.11.9] - 2026-10-23
 
 ### 更新内容
