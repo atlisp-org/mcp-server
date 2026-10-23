@@ -262,7 +262,7 @@ function recordToObject(value) {
  * 保证 structuredContent 与 outputSchema 声明的必填字段一致。
  *
  * source/blockName/attributes/fields/alternatives 是属性块通道新增字段（契约，勿改名）：
- *  - source: "attr-block"（属性块）| "polyline"（几何）
+ *  - source: "attr-block"（属性块）| "block"（非属性块，仅 lib 路径）| "polyline"（几何）
  *  - blockName: 属性块块名（几何通道为 null）
  *  - attributes: 原始 tag→value 对象（完整保留，不做猜测）
  *  - fields: 归一化语义字段（只含命中项，别名表见 frame-aliases.js）
@@ -291,9 +291,10 @@ export function normalizeFrameRecord(value) {
   };
 }
 
-// 来源归一：只认 "attr-block"，其余（含历史记录缺字段）都当几何通道 "polyline"
+// 来源归一：只认 "attr-block"/"block"（lib 路径的非属性块通道），其余（含历史记录缺字段）当 "polyline"
 function normalizeSource(value) {
-  return String(value ?? '') === 'attr-block' ? 'attr-block' : 'polyline';
+  const s = String(value ?? '');
+  return s === 'attr-block' || s === 'block' ? s : 'polyline';
 }
 
 // tag→value alist（或 fields 的 语义字段→值 alist）→ 普通对象；空 → null
@@ -362,10 +363,12 @@ function payloadToObject(parsed) {
  * @param {unknown} parsed parseLispRecursive 的结果
  * @param {{offset:number, limit:number}} options 生效的 offset/limit（LISP 已切片，这里只回填）
  */
-/** 属性块通道与几何通道可能对同一图框各报一次；全量响应按 bbox 去重，属性块优先。 */
+/** 同一图框可能多通道各报一次；全量响应按 bbox 去重，权威级 attr-block > block > polyline。 */
 function dedupeFrameRecords(frames) {
   const out = [];
   const index = new Map();
+  // 通道权威级：属性块（图签属性）> 非属性块（块包围盒 + 图签文字指纹）> 纯几何推测
+  const rank = (s) => (s === 'attr-block' ? 2 : s === 'block' ? 1 : 0);
 
   for (const f of frames) {
     const key = Array.isArray(f.bbox) ? f.bbox.map((n) => Math.round(Number(n) || 0)).join(',') : `h:${f.handle || ''}`;
@@ -374,7 +377,7 @@ function dedupeFrameRecords(frames) {
     if (at === undefined) {
       index.set(key, out.length);
       out.push(f);
-    } else if (f.source === 'attr-block' && out[at].source !== 'attr-block') {
+    } else if (rank(f.source) > rank(out[at].source)) {
       out[at] = f;
     }
   }
@@ -396,10 +399,12 @@ export function normalizeFramesPayload(parsed, options = {}) {
   const frames = full ? dedupeFrameRecords(framesRaw) : framesRaw;
   const total = full ? frames.length : totalRaw;
   // sources 统计**本页** frames 的来源分布（与 frameCount 同口径）；
-  // 属性块通道优先，二者之和恒等于 frames.length。
-  const sources = { 'attr-block': 0, polyline: 0 };
+  // 属性块/块通道优先，三项之和恒等于 frames.length。
+  const sources = { 'attr-block': 0, block: 0, polyline: 0 };
   for (const f of frames) sources[f.source] += 1;
   return {
+    // 本次识别走的路径：true = 调用了 lib frame:*，false = 回落自包含内联实现
+    lib: toBool(raw.lib),
     total,
     totalRaw,
     deduped: framesRaw.length - frames.length,
@@ -416,12 +421,13 @@ export function normalizeFramesPayload(parsed, options = {}) {
 }
 
 const EMPTY_FRAMES = {
+  lib: false,
   total: 0,
   totalRaw: 0,
   deduped: 0,
   frameCount: 0,
   unmatchedCount: 0,
-  sources: { 'attr-block': 0, polyline: 0 },
+  sources: { 'attr-block': 0, block: 0, polyline: 0 },
   frames: [],
   unmatched: [],
 };

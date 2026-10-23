@@ -55,16 +55,28 @@ const lispList = (arr) => `(${arr.join(' ')})`;
 /**
  * 生成图框识别 LISP（atlisp://dwg/frames / list_frames）。
  *
- * **完全自包含**：只用 AutoLISP 内建 + 本函数内定义的 `@fr:` 辅助函数，
- * 不调用任何 @lisp lib / 包函数（实测目标 CAD 会话未加载 @lisp lib，
- * `require`、`string:parse-by-lst` 等都不存在，调用会直接报错）。
+ * **双路径**：CAD 端 @lisp lib 必装时（`atoms-family 1` 探测 `FRAME:MATCH-ALL` /
+ * `FRAME:REF-BOX` / `FRAME:TITLE-BLOCK-P` / `FRAME:TITLE-FIELDS` 四个符号全部存在，
+ * 探测按**字符串**比对）判定核心走 lib 的 `frame:*`，并启用三个增强：
+ *  1. 非属性块通道（source="block"）：图框画成无属性块时，用 `frame:ref-box` 包围盒 +
+ *     `frame:match-all` 判定（不调 frame:ref-p：旧版误用 let，真机报 no function definition）；
+ *  2. 包围盒回退：vla-getboundingbox 失败的 INSERT 用 `frame:ref-box`（BCS→WCS）补取；
+ *  3. 图签散文字补全：fields 缺的键用 `frame:title-fields` 从框内 TEXT 配对补。
+ * lib 缺失或任一 lib 调用报错时**回落内联实现**——只用 AutoLISP 内建 + 本函数内定义的
+ * `@fr:` 辅助函数 + 冻结标准表/别名表字面量，不调用任何 lib/包函数
+ * （实测目标 CAD 会话可能未加载 @lisp lib，`require`、`string:parse-by-lst` 等会直接报错）。
+ * 两条路径语义一致（match-all/fields 同规则，三处标准表同源，见单测守卫）。
  *
- * 识别有**两条通道**（属性块优先，因为图签属性比几何推测权威）：
+ * 识别有**三条通道**（属性块优先，因为图签属性比几何推测权威）：
  *  - 几何通道（source="polyline"）：闭合 4 顶点矩形多段线；
  *  - 属性块通道（source="attr-block"）：`INSERT` 中 `vla-get-HasAttributes` 为真的参照，
- *    bbox 用 vla-getboundingbox，比例优先从属性 `比例/出图比例/SCALE` 取（解析出分母），
+ *    bbox 用 vla-getboundingbox（失败时 lib 路径回退 frame:ref-box），
+ *    比例优先从属性 `比例/出图比例/SCALE` 取（解析出分母），
  *    图幅优先几何匹配、退化时按块名关键词（A0~A4）兜底。
- * 同一位置两者都命中时保留属性块那条，几何那条丢弃（见 @fr:covered）。
+ *  - 非属性块通道（source="block"，仅 lib 路径）：无属性 INSERT，按块名去重后用
+ *    `frame:ref-box` 包围盒 + `frame:match-all` 判定，准入要求短边 >= 2000 或块内含图签文字
+ *    （`frame:title-block-p`），防尺寸偶然命中。
+ * 同一位置多者都命中时保留属性块那条，几何那条丢弃（见 @fr:covered）。
  *
  * 识别流程：
  *  1. `ssget "_X"` 只按 DXF 组码 0（+ 可选图层）过滤候选——**必须带 (0 . ...) 过滤**，
@@ -120,6 +132,8 @@ export function buildFramesCode(options = {}) {
   }
   const polyFilter = `(list ${['(cons 0 "LWPOLYLINE,POLYLINE")', ...layerFilter].join(' ')})`;
   const insFilter = `(list ${['(cons 0 "INSERT")', ...layerFilter].join(' ')})`;
+  // 非属性块通道第二遍按命中块名精查（块名放运行时变量 @fr:bn）
+  const insNameFilter = `(list ${['(cons 0 "INSERT")', '(cons 2 @fr:bn)', ...layerFilter].join(' ')})`;
 
   // includeUnmatched=false 时连排序/截断都省掉，只留空数组，响应更小。
   const unmatchedTail = includeUnmatched
@@ -144,8 +158,16 @@ export function buildFramesCode(options = {}) {
 (setq @fr:min-size ${minSize})
 (setq @fr:offset ${offset} @fr:limit ${limit})
 (setq @fr:inner ${includeInner ? '1' : 'nil'} @fr:max-unmatched ${FRAME_STANDARDS.maxUnmatched})
-;; 属性块字段别名表：**必须与 lib frame:aliases 同步**（CAD 侧无 lib，写死一份）
+;; 属性块字段别名表：回落路径必须内联（缺失 lib 时不能调 frame:aliases）
 (setq @fr:aliases ${frameAliasesLisp()})
+
+;; ---- lib 探测（双路径开关）：五个 frame:* 函数齐全才走 lib 路径 ----
+;; atoms-family 的 format=1 返回**字符串**，必须按字符串比对（拿符号 'frame:match-all 比永远 nil）
+(setq @fr:lib (if (and (member "FRAME:MATCH-ALL" (atoms-family 1))
+                       (member "FRAME:REF-BOX" (atoms-family 1))
+                       (member "FRAME:TITLE-BLOCK-P" (atoms-family 1))
+                       (member "FRAME:TITLE-FIELDS" (atoms-family 1)))
+                  1 nil))
 
 ;; bbox：LWPOLYLINE/POLYLINE/INSERT 都可用 vla-getboundingbox；个别图元取不到（损坏/空对象）必须兜住。
 (defun @fr:bbox-o (obj / r mn mx)
@@ -157,6 +179,17 @@ export function buildFramesCode(options = {}) {
 (defun @fr:bbox (ent / obj)
   (setq obj (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
   (if (vl-catch-all-error-p obj) nil (@fr:bbox-o obj)))
+
+;; 块参照包围盒（双路径）：vla-getboundingbox 取不到时，lib 可用则回退 frame:ref-box
+;; （块内轮廓盒按插入点/旋转/缩放做 BCS→WCS 变换，任意旋转角度也成立）
+(defun @fr:bbox-ref (ent / r b)
+  (setq r (@fr:bbox ent))
+  (if (and (null r) @fr:lib)
+      (progn
+        (setq b (vl-catch-all-apply 'frame:ref-box (list ent)))
+        (if (or (vl-catch-all-error-p b) (null b)) nil
+          (list (car (car b)) (cadr (car b)) (car (cadr b)) (cadr (cadr b)))))
+    r))
 
 ;; 顶点数：轻量多段线看组码 90；旧式 POLYLINE 没有 90，
 ;; 靠实体表数 10 组码也不行（旧式多段线顶点是独立实体，entget 只回 1 个 header 组码 10），
@@ -197,7 +230,14 @@ export function buildFramesCode(options = {}) {
 ;; 其余进 alternatives，真实比例应以图签属性 fields.scale 或图内比例文字为准。
 ;; 语义与 lib frame:match-all 一致；这里手写全序排序（vl-sort 会删掉比较器判为相等的元素，
 ;; 加序号兜底保证备选解读不会被丢弃）。
-(defun @fr:match-all (w h / s l r i j k area res idx)
+;; lib 可用时分发给 frame:match-all（同表同容差同语义），出错/缺失回落下面的内联实现。
+(defun @fr:match-all (w h / r)
+  (if @fr:lib
+      (progn
+        (setq r (vl-catch-all-apply 'frame:match-all (list w h @fr:scales @fr:tol-ratio @fr:tol-len)))
+        (if (vl-catch-all-error-p r) (@fr:match-all-raw w h) r))
+    (@fr:match-all-raw w h)))
+(defun @fr:match-all-raw (w h / s l r i j k area res idx)
   (setq s (min w h) l (max w h) r (/ l (float s)) res nil idx 0 i 0)
   (while (< i (length @fr:ratios))
     (if (equal r (nth i @fr:ratios) @fr:tol-ratio)
@@ -241,7 +281,14 @@ export function buildFramesCode(options = {}) {
 
 ;; tag→value 归一化为语义字段 alist（只含命中字段；同字段取第一个非空命中）。
 ;; 与 lib frame:fields 同语义；别名表 @fr:aliases 与 frame:aliases 必须同步。
-(defun @fr:fields (attrs / res a tag val f al s)
+;; lib 可用时分发给 frame:fields（内部用 frame:aliases），出错/缺失回落内联实现。
+(defun @fr:fields (attrs / r)
+  (if @fr:lib
+      (progn
+        (setq r (vl-catch-all-apply 'frame:fields (list attrs nil)))
+        (if (vl-catch-all-error-p r) (@fr:fields-raw attrs) r))
+    (@fr:fields-raw attrs)))
+(defun @fr:fields-raw (attrs / res a tag val f al s)
   (setq res nil)
   (foreach a attrs
     (setq tag (car a) val (if (listp (cdr a)) (car (cdr a)) (cdr a)))
@@ -298,6 +345,64 @@ export function buildFramesCode(options = {}) {
       (not (null (vl-string-search "框" nm)))
       (not (null (vl-string-search "图签" nm)))
       (not (null (vl-string-search "TITLE" up)))))
+
+;; ---- 以下为 lib 路径专用辅助（只在 @fr:lib 为真时被调用，全部 vl-catch 兜错） ----
+
+;; INSERT 是否带属性（1b/1c 分流条件）。用 equal 不用 =：vl-catch 出错时返回 nil，
+;; (= :vlax-true nil) 会因参数类型报错
+(defun @fr:has-attrs (ent / o)
+  (setq o (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
+  (if (vl-catch-all-error-p o) nil
+    (equal :vlax-true (vl-catch-all-apply 'vla-get-HasAttributes (list o)))))
+
+;; frame:ref-p 封装 → 改为自组合：世界包围盒（vla 优先，lib 回退 frame:ref-box）+ 标准表匹配。
+;; 不直接调 frame:ref-p：某些版本里它误用了 AutoLISP 不存在的 let（报 no function definition），
+;; 调用会整个失效；ref-box + match-all 是同一套表/容差，且两个函数都经过真机验证。
+;; 返回 (bbox w h alternatives) 或 nil
+(defun @fr:ref-hit (ent / bb w h alts)
+  (setq bb (@fr:bbox-ref ent))
+  (if (null bb) nil
+    (progn
+      (setq w (abs (- (caddr bb) (car bb))) h (abs (- (cadddr bb) (cadr bb))))
+      (if (or (<= w 0) (<= h 0)) nil
+        (progn
+          (setq alts (@fr:match-all w h))
+          (if alts (list bb w h alts) nil))))))
+
+;; frame:title-block-p 封装：块内是否含图签类文字（有限公司/工程名称/图名/图号…）
+(defun @fr:title-p (ent / r)
+  (setq r (vl-catch-all-apply 'frame:title-block-p (list ent nil)))
+  (if (vl-catch-all-error-p r) nil r))
+
+;; 图框四点（bbox 角点）范围内取散文字，按「键→值同排配对」转语义字段。
+;; frame:title-fields 返回 ((键文本 值文本 值点) ...)：键文本按别名表归一化
+;; （与 @fr:fields 同规则），只留命中别名的字段
+(defun @fr:title-text-fields (rec / pts tf f al res)
+  (setq pts (list (list (nth 2 rec) (nth 3 rec) 0.0)
+                  (list (nth 4 rec) (nth 3 rec) 0.0)
+                  (list (nth 4 rec) (nth 5 rec) 0.0)
+                  (list (nth 2 rec) (nth 5 rec) 0.0)))
+  (setq tf (vl-catch-all-apply 'frame:title-fields (list pts nil)))
+  (if (or (vl-catch-all-error-p tf) (null tf)) nil
+    (progn
+      (setq res nil)
+      (foreach f tf
+        (setq al nil)
+        (foreach g @fr:aliases
+          (if (null al)
+              (foreach x (cdr g)
+                (if (equal (@fr:ntag (car f)) (@fr:ntag x)) (setq al (car g))))))
+        (if (and al (null (assoc al res)))
+            (setq res (append res (list (cons al (cadr f)))))))
+      res)))
+
+;; b 只补 a 缺失的键：属性优先，图签散文字兜底（同键不覆盖）
+(defun @fr:merge-fields (a b / res f)
+  (setq res (if a a nil))
+  (foreach f b
+    (if (and (car f) (null (assoc (car f) res)))
+        (setq res (append res (list f)))))
+  res)
 
 ;; 记录字段顺序（nth 下标）：
 ;;  0 handle 1 layer 2 x1 3 y1 4 x2 5 y2 6 w 7 h
@@ -391,7 +496,7 @@ export function buildFramesCode(options = {}) {
       (if (and (not (vl-catch-all-error-p @fr:o))
                (= :vlax-true (vl-catch-all-apply 'vla-get-HasAttributes (list @fr:o))))
         (progn
-          (setq @fr:bb (@fr:bbox-o @fr:o))
+          (setq @fr:bb (@fr:bbox-ref @fr:ent))
           (if @fr:bb
             (progn
               (setq @fr:w (abs (- (caddr @fr:bb) (car @fr:bb)))
@@ -417,10 +522,66 @@ export function buildFramesCode(options = {}) {
                                      @fr:cands)))))))
       (setq @fr:i (1+ @fr:i)))))
 
-;; ---- 2) 属性块优先去重：同位置的几何候选丢弃（属性块信息更权威）----
+;; ---- 1c) 非属性块通道（仅 lib 可用）：图框画成无属性块的情况 ----
+;; 与 at-plot 同思路两遍扫：第一遍按**块名**只判定一次（包围盒 + 标准表匹配，同 frame:ref-p 语义），
+;; 命中的块名第二遍再逐参照记录——块参照可能几千个而唯一块名只有几十个，逐参照重算是把 CAD 拖死的主因。
+;; 准入（防尺寸偶然命中的符号块）：短边 >= 2000 或块内含图签文字（frame:title-block-p），
+;; 与 at-plot 的 (or size>=2000 attributes title-block-p) 对齐（本通道定义即无属性）。
+;; 几何配不上标准表的无属性块不进 unmatched（匹配失败即不录，避免噪声；
+;; 属性块通道的 unmatched 兜底不受影响）。
+(if @fr:lib
+  (progn
+    (setq @fr:ss (ssget "_X" ${insFilter})
+          @fr:seen nil @fr:hits nil)
+    (if @fr:ss
+      (progn
+        (setq @fr:cnt (sslength @fr:ss) @fr:i 0)
+        (while (< @fr:i @fr:cnt)
+          (setq @fr:ent (ssname @fr:ss @fr:i)
+                @fr:bn (cdr (assoc 2 (entget @fr:ent))))
+          (if (and @fr:bn
+                   (not (member @fr:bn @fr:seen))
+                   (not (wcmatch @fr:bn "\`**")) ;; 匿名块（*U 动态块/*D 标注块）
+                   (not (@fr:has-attrs @fr:ent))) ;; 带属性的走 1b
+              (progn
+                (setq @fr:seen (cons @fr:bn @fr:seen))
+                (if (@fr:ref-hit @fr:ent) (setq @fr:hits (cons @fr:bn @fr:hits)))))
+          (setq @fr:i (1+ @fr:i)))
+        ;; 第二遍：只处理命中块名的所有参照
+        (foreach @fr:bn (reverse @fr:hits)
+          (if (setq @fr:ss2 (ssget "_X" ${insNameFilter}))
+              (progn
+                (setq @fr:j 0 @fr:c2 (sslength @fr:ss2))
+                (while (< @fr:j @fr:c2)
+                  (setq @fr:ent (ssname @fr:ss2 @fr:j))
+                  (if (and (not (@fr:has-attrs @fr:ent))
+                           (setq @fr:fi (@fr:ref-hit @fr:ent)))
+                      (progn
+                        (setq @fr:bl (nth 0 @fr:fi) @fr:w (nth 1 @fr:fi)
+                              @fr:h (nth 2 @fr:fi) @fr:alts (nth 3 @fr:fi))
+                        (if (and (> @fr:w 0) (> @fr:h 0)
+                                 (>= (min @fr:w @fr:h) @fr:min-size)
+                                 (or (>= (min @fr:w @fr:h) 2000) (@fr:title-p @fr:ent)))
+                          (setq @fr:cands
+                                (cons (list (cdr (assoc 5 (entget @fr:ent)))
+                                            (cdr (assoc 8 (entget @fr:ent)))
+                                            (nth 0 @fr:bl) (nth 1 @fr:bl)
+                                            (nth 2 @fr:bl) (nth 3 @fr:bl)
+                                            @fr:w @fr:h
+                                            (nth 0 (car @fr:alts))
+                                            (nth 1 (car @fr:alts))
+                                            (nth 2 (car @fr:alts))
+                                            nil (length @fr:cands)
+                                            "block" @fr:bn nil nil
+                                            (cdr @fr:alts))
+                                      @fr:cands)))))
+                  (setq @fr:j (1+ @fr:j))))))))))
+
+;; ---- 2) 图框块优先去重：同位置的几何候选丢弃（属性块/非属性块信息更权威）----
 (setq @fr:abf nil)
 (foreach @fr:rec @fr:cands
-  (if (and (equal (nth 13 @fr:rec) "attr-block") (nth 8 @fr:rec) (nth 10 @fr:rec))
+  (if (and (or (equal (nth 13 @fr:rec) "attr-block") (equal (nth 13 @fr:rec) "block"))
+           (nth 8 @fr:rec) (nth 10 @fr:rec))
     (setq @fr:abf (cons @fr:rec @fr:abf))))
 (setq @fr:keep nil)
 (foreach @fr:rec @fr:cands
@@ -439,6 +600,19 @@ export function buildFramesCode(options = {}) {
       (setq @fr:frames (cons @fr:rec @fr:frames))
       (setq @fr:unmatched (cons @fr:rec @fr:unmatched)))))
 
+;; ---- 3b) 图签散文字补全（仅 lib）：fields 缺的键从框内文字配对补 ----
+;; 属性/几何通道由此也能拿到 title/number/scale 等语义字段（属性优先，散文字只补缺）
+(if @fr:lib
+  (progn
+    (setq @fr:fr2 nil)
+    (foreach @fr:rec @fr:frames
+      (setq @fr:tf (@fr:title-text-fields @fr:rec))
+      (setq @fr:fr2 (cons (if @fr:tf
+                              (@fr:setidx @fr:rec 16 (@fr:merge-fields (nth 16 @fr:rec) @fr:tf))
+                            @fr:rec)
+                          @fr:fr2)))
+    (setq @fr:frames (reverse @fr:fr2))))
+
 ;; ---- 4) 排序（面积降序）+ unmatched 截断 ----
 ;; vl-sort 会删掉「比较器判为相等」的元素，所以比较器必须带序号兜底，保证是全序。
 (setq @fr:frames (vl-sort @fr:frames '(lambda (a b) (if (equal (* (nth 6 a) (nth 7 a)) (* (nth 6 b) (nth 7 b))) (< (nth 12 a) (nth 12 b)) (> (* (nth 6 a) (nth 7 a)) (* (nth 6 b) (nth 7 b)))))))
@@ -454,6 +628,8 @@ ${unmatchedTail}
 (vl-prin1-to-string
   (list (list "total" @fr:total) (list "offset" @fr:offset) (list "limit" @fr:limit)
         (list "nextOffset" (+ @fr:offset (length @fr:page)))
+        ;; 走了哪条路径（1 = lib，nil = 回落自包含），供调用方诊断
+        (list "lib" @fr:lib)
         (list "frames" (mapcar '@fr:emit-frame @fr:page))
         (list "unmatched" (mapcar '@fr:emit-unmatched @fr:unmatched)))))`;
 }

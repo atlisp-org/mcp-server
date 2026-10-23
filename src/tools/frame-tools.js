@@ -39,20 +39,21 @@ const FRAME_RECORD_SCHEMA = {
     scale: { type: ['number', 'null'], description: '出图比例分母（如 100 表示 1:100）' },
     source: {
       type: 'string',
-      enum: ['attr-block', 'polyline'],
-      description: '识别通道：attr-block=属性块（图签键值，权威）；polyline=闭合矩形多段线（几何推测）',
+      enum: ['attr-block', 'block', 'polyline'],
+      description: '识别通道：attr-block=属性块（图签键值，权威）；block=非属性块（lib 路径用 frame:ref-box + frame:match-all + 图签文字指纹判定）；'
+        + 'polyline=闭合矩形多段线（几何推测）',
     },
-    blockName: { type: ['string', 'null'], description: '属性块块名（几何通道为 null）' },
+    blockName: { type: ['string', 'null'], description: '块名（attr-block/block 通道为块名，几何通道为 null）' },
     attributes: {
       type: ['object', 'null'],
       additionalProperties: true,
-      description: '属性块原始 tag→value 对象（完整保留，不做猜测；几何通道为 null）',
+      description: '属性块原始 tag→value 对象（完整保留，不做猜测；非属性块与几何通道为 null）',
     },
     fields: {
       type: ['object', 'null'],
       additionalProperties: true,
       description: '属性归一化后的语义字段（只含命中项），如 {"title":"...","number":"...","scale":"1:200"}；'
-        + '真实出图比例应以此为准（几何只能给物理尺寸解读）',
+        + 'lib 路径会用图签散文字（frame:title-fields）补属性没给出的键；真实出图比例应以此为准',
     },
     alternatives: {
       type: 'array',
@@ -74,8 +75,8 @@ const UNMATCHED_RECORD_SCHEMA = {
     width: { type: 'number', description: '包围盒宽度' },
     height: { type: 'number', description: '包围盒高度' },
     ratio: { type: 'number', description: '长边/短边，保留 4 位小数（与比例表比对可看出差多少）' },
-    source: { type: 'string', enum: ['attr-block', 'polyline'], description: '候选来源通道' },
-    blockName: { type: ['string', 'null'], description: '属性块块名（多段线为 null）' },
+    source: { type: 'string', enum: ['attr-block', 'block', 'polyline'], description: '候选来源通道' },
+    blockName: { type: ['string', 'null'], description: '块名（多段线为 null）' },
   },
   required: ['handle', 'layer', 'width', 'height', 'ratio'],
 };
@@ -84,18 +85,23 @@ export const tools = [
   {
     name: 'list_frames',
     description: `识别图纸中的标准图框，回答「这张图有几张图纸、图幅与比例各是多少」（与资源 atlisp://dwg/frames 同源）。
-原理：两条通道并行识别——
+CAD 端装好 @lisp lib 时走 lib 路径（判定核心用 frame:*，响应 lib=true），否则自动回落自包含实现（lib=false），语义一致。
+原理：三条通道并行识别——
 ① 属性块通道（优先，source="attr-block"）：INSERT 且带属性（vla-get-HasAttributes）的参照，
-bbox 用 vla-getboundingbox，比例优先从属性（比例/出图比例/SCALE，如 "1:200"）解析，图幅优先几何匹配、退化时按块名（A0~A4）兜底；
+bbox 用 vla-getboundingbox（失败时 lib 路径回退 frame:ref-box），比例优先从属性（比例/出图比例/SCALE，如 "1:200"）解析，
+图幅优先几何匹配、退化时按块名（A0~A4）兜底；
 attributes 是原始 tag→value，fields 是归一化语义字段（title/number/scale/date/designer/checker/project/discipline）。
-② 几何通道（source="polyline"）：闭合且 4 顶点的多段线，按宽高比命中加长比例表（${FRAME_STANDARDS.ratios.join('/')}，对应 ${FRAME_STANDARDS.marks.filter(Boolean).join('/')}）、
+② 非属性块通道（source="block"，仅 lib 路径）：无属性 INSERT 按块名去重后用 frame:ref-box 包围盒 + frame:match-all 判定，
+准入要求短边≥2000 或块内含图签文字（frame:title-block-p），挡住尺寸偶然命中的符号块。
+③ 几何通道（source="polyline"）：闭合且 4 顶点的多段线，按宽高比命中加长比例表（${FRAME_STANDARDS.ratios.join('/')}，对应 ${FRAME_STANDARDS.marks.filter(Boolean).join('/')}）、
 短边命中「图幅短边(${FRAME_STANDARDS.heights.join(' ')}，A4→A0) × 比例表」→ 得出 paperSize/elongation/scale。
-同一位置两者都命中时保留属性块那条（图签比几何推测可靠）。
+lib 路径还会用 frame:title-fields 把框内散文字配对成图签字段，补 attributes 没给出的键。
+同一位置多通道都命中时按 attr-block > block > polyline 保留一条。
 几何只能给物理尺寸解读：A1@1:100 与 A3@1:200 是同一个矩形，无法区分，此时首项写 paperSize/scale，其余进 alternatives；
 真实出图比例应以图签属性 fields.scale 或图内比例文字为准，不要用 alternatives 去猜。
 默认丢弃被其它图框包含的内框（标题栏内框会被自动排除，只留外框）；配不上标准表的候选放在 unmatched
 （按面积降序最多 200 条），便于人工复核"很像但没命中"的加长图幅——图纸画得不精确时可用 tolRatio=0.0035 识别 0.1% 偏差的加长图幅（本图 336400×118800 属此类）。
-返回 frames 按面积降序、默认 limit=500（含 total/nextOffset 便于分页），sources 给出两条通道各自的条数。`,
+返回 frames 按面积降序、默认 limit=500（含 total/nextOffset 便于分页），sources 给出三条通道各自的条数。`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -125,6 +131,7 @@ attributes 是原始 tag→value，fields 是归一化语义字段（title/numbe
       properties: {
         connected: { type: 'boolean', description: 'CAD 是否已连接' },
         error: { type: 'string', description: '失败原因（仅出错时出现）' },
+        lib: { type: 'boolean', description: '本次识别是否走了 CAD 端 @lisp lib（frame:*）；false 表示回落自包含内联实现' },
         total: { type: 'number', description: '识别到的图框总数（不受 offset/limit 影响）' },
         offset: { type: 'number', description: '本次分页起始下标（frames 按面积降序）' },
         limit: { type: 'number', description: '本次分页条数上限（0 表示不分页）' },
@@ -135,10 +142,11 @@ attributes 是原始 tag→value，fields 是归一化语义字段（title/numbe
           type: 'object',
           properties: {
             'attr-block': { type: 'number', description: '属性块通道识别到的图框数（本页）' },
+            block: { type: 'number', description: '非属性块通道识别到的图框数（本页，仅 lib 路径）' },
             polyline: { type: 'number', description: '几何通道识别到的图框数（本页）' },
           },
-          required: ['attr-block', 'polyline'],
-          description: '本页 frames 的来源分布（两项之和 = frameCount）',
+          required: ['attr-block', 'block', 'polyline'],
+          description: '本页 frames 的来源分布（三项之和 = frameCount）',
         },
         frames: { type: 'array', items: FRAME_RECORD_SCHEMA, description: '标准图框列表（默认只含外框）' },
         unmatched: {

@@ -1,7 +1,9 @@
 // atlisp://dwg/frames 图框识别覆盖：
-//   - buildFramesCode：自包含（不依赖 @lisp lib）、括号平衡、图层过滤、ssget 必带组码过滤、
-//     参数回落、includeInner/includeUnmatched 分支
-//   - 归一化：规范/历史压平结构、ratio 4 位小数、elongation 空串保留、inner 布尔转换
+//   - buildFramesCode：双路径（lib 探测 → frame:* 优先，缺失/出错回落自包含内联实现）、括号平衡、
+//     图层过滤、ssget 必带组码过滤、参数回落、includeInner/includeUnmatched 分支、
+//     非属性块通道 / 包围盒回退 / 图签散文字补全（仅 lib 路径）
+//   - 归一化：规范/历史压平结构、ratio 4 位小数、elongation 空串保留、inner 布尔转换、
+//     source 三通道（attr-block/block/polyline）与去重优先级、lib 路径标记
 //   - getFrames：分页回填、缓存、CAD 未连接、解析失败
 //   - listFrames：content(JSON) + structuredContent 双输出
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -85,16 +87,46 @@ beforeEach(() => {
 });
 
 describe('buildFramesCode', () => {
-  it('生成自包含 LISP：只用内建 + @fr: 辅助函数，不调用任何 lib/包函数', () => {
+  it('双路径：探测 lib（字符串比对）后优先调 frame:*，缺失/出错回落自包含内联实现', () => {
     const code = buildFramesCode({ layer: 'PUB_TITLE' });
     expect(code.startsWith('(progn')).toBe(true);
     expect(code).toContain('(vl-load-com)');
     expect(code).toContain('(defun @fr:bbox');
-    expect(code).toContain('(defun @fr:match');
-    // 目标 CAD 会话未加载 @lisp lib，任何命名空间调用都会直接报错
-    for (const libCall of ['(require', 'string:parse-by-lst', 'pickset:', 'entity:getdxf', 'layer:', 'ui:']) {
-      expect(code).not.toContain(libCall);
+    expect(code).toContain('(defun @fr:match-all');
+    // lib 探测：atoms-family 的 format=1 返回**字符串**，必须按字符串比对（符号比对恒 nil）
+    expect(code).toContain('(member "FRAME:MATCH-ALL" (atoms-family 1))');
+    expect(code).toContain('(member "FRAME:REF-BOX" (atoms-family 1))');
+    expect(code).toContain('(member "FRAME:TITLE-FIELDS" (atoms-family 1))');
+    // 不调 frame:ref-p：旧版实现误用 AutoLISP 不存在的 let（真机报 no function definition）
+    expect(code).not.toContain("'frame:ref-p");
+    // 优先 lib：match-all/fields 分发到 frame:*，出错/缺失回落 *-raw 内联实现
+    expect(code).toContain("'frame:match-all");
+    expect(code).toContain('(@fr:match-all-raw w h)');
+    expect(code).toContain("'frame:fields");
+    expect(code).toContain('(@fr:fields-raw attrs)');
+    // 回落路径的自包含约束：不出现 require / 字符串解析等硬依赖（lib 调用都在 @fr:lib 守卫内）
+    for (const hardDep of ['(require', 'string:parse-by-lst', 'pickset:', 'entity:getdxf', 'layer:', 'ui:']) {
+      expect(code).not.toContain(hardDep);
     }
+  });
+
+  it('lib 路径增强：非属性块通道 / 包围盒回退 / 图签散文字补全（全部受 @fr:lib 守卫）', () => {
+    const code = buildFramesCode({ layer: 'PUB_TITLE' });
+    // 1c 非属性块通道：块名去重 + 包围盒/match-all 判定 + 准入（短边>=2000 或图签文字指纹）
+    expect(code).toContain('"block" @fr:bn');
+    expect(code).toContain("'frame:ref-box");
+    expect(code).toContain("'frame:title-block-p");
+    expect(code).toContain('(>= (min @fr:w @fr:h) 2000)');
+    expect(code).toContain('(not (wcmatch @fr:bn');
+    expect(code.indexOf('"block" @fr:bn')).toBeGreaterThan(code.indexOf('(if @fr:lib'));
+    // 包围盒回退：vla-getboundingbox 失败时用 frame:ref-box（BCS→WCS）
+    expect(code).toContain('(defun @fr:bbox-ref');
+    expect(code).toContain("'frame:ref-box");
+    // 图签散文字补全：frame:title-fields 配对 + 属性优先合并（只补缺失键）
+    expect(code).toContain("'frame:title-fields");
+    expect(code).toContain('(defun @fr:title-text-fields');
+    expect(code).toContain('(defun @fr:merge-fields');
+    expect(code).toContain('(@fr:setidx @fr:rec 16');
   });
 
   it('括号平衡（CAD 侧按括号数解析，缺一个就是"括号错误"）', () => {
@@ -285,7 +317,7 @@ describe('归一化（normalizeFramesPayload / normalizeFrameRecord）', () => {
     expect(res.nextOffset).toBe(2);
     expect(res.frameCount).toBe(2);
     expect(res.unmatchedCount).toBe(1);
-    expect(res.sources).toEqual({ 'attr-block': 0, polyline: 2 });
+    expect(res.sources).toEqual({ 'attr-block': 0, block: 0, polyline: 2 });
     expect(res.frames[0]).toMatchObject({
       handle: '51EB', layer: 'PUB_TITLE', width: 84100, height: 59400,
       ratio: 1.4158, paperSize: 'A1', elongation: '', scale: 100, inner: false,
@@ -317,7 +349,7 @@ describe('归一化（normalizeFramesPayload / normalizeFrameRecord）', () => {
       + ' ("unmatched" nil))';
     const res = normalizeFramesPayload(parseLispRecursive(payload), { offset: 0, limit: 500 });
     expect(res.frameCount).toBe(3);
-    expect(res.sources).toEqual({ 'attr-block': 1, polyline: 2 });
+    expect(res.sources).toEqual({ 'attr-block': 1, block: 0, polyline: 2 });
     const ab = res.frames.find(f => f.source === 'attr-block');
     expect(ab).toMatchObject({
       handle: 'A9', blockName: 'TK_A3',
@@ -382,14 +414,57 @@ describe('归一化（normalizeFramesPayload / normalizeFrameRecord）', () => {
     expect(res.total).toBe(1);
     expect(res.totalRaw).toBe(2);
     expect(res.frames[0].source).toBe('attr-block');
-    expect(res.sources).toEqual({ 'attr-block': 1, polyline: 0 });
+    expect(res.sources).toEqual({ 'attr-block': 1, block: 0, polyline: 0 });
+  });
+
+  it('source="block"（lib 路径非属性块）：归一化并计入 sources.block', () => {
+    const res = normalizeFramesPayload([
+      ['total', 1],
+      ['frames', [[
+        ['handle', 'B1'], ['layer', 'PUB_TITLE'], ['bbox', [0, 0, 84000, 59400]],
+        ['width', 84000], ['height', 59400], ['ratio', 1.4141],
+        ['paperSize', 'A1'], ['elongation', ''], ['scale', 100], ['inner', null],
+        ['source', 'block'], ['blockName', 'TK_A1'], ['attributes', null],
+        ['fields', [['title', '总平面图']]], ['alternatives', []],
+      ]]],
+      ['unmatched', null],
+    ], { offset: 0, limit: 500 });
+    expect(res.frames[0]).toMatchObject({
+      source: 'block', blockName: 'TK_A1', attributes: null, fields: { title: '总平面图' },
+    });
+    expect(res.sources).toEqual({ 'attr-block': 0, block: 1, polyline: 0 });
+  });
+
+  it('全量去重优先级：attr-block > block > polyline', () => {
+    const rec = (handle, source) => [
+      ['handle', handle], ['bbox', [0, 0, 100, 100]], ['source', source],
+      ['width', 100], ['height', 100], ['paperSize', 'A2'], ['scale', 100],
+    ];
+    const res = normalizeFramesPayload([
+      ['total', 3],
+      ['frames', [rec('P', 'polyline'), rec('B', 'block'), rec('A', 'attr-block')]],
+      ['unmatched', null],
+    ], { offset: 0, limit: 500 });
+    expect(res.frameCount).toBe(1);
+    expect(res.frames[0].handle).toBe('A');
+    const res2 = normalizeFramesPayload([
+      ['total', 2],
+      ['frames', [rec('P', 'polyline'), rec('B', 'block')]],
+      ['unmatched', null],
+    ], { offset: 0, limit: 500 });
+    expect(res2.frames[0].handle).toBe('B');
+  });
+
+  it('lib 标记透传：LISP 返回 1 → true；缺失 → false', () => {
+    expect(normalizeFramesPayload([['lib', 1], ['total', 0], ['frames', null], ['unmatched', null]]).lib).toBe(true);
+    expect(normalizeFramesPayload([['total', 0], ['frames', null], ['unmatched', null]]).lib).toBe(false);
   });
 
   it('空结果/缺字段不炸：frames=null → 空数组，计数为 0', () => {
     const res = normalizeFramesPayload([['total', 0], ['frames', null], ['unmatched', null]], { offset: 0, limit: 500 });
     expect(res).toMatchObject({
       total: 0, frameCount: 0, unmatchedCount: 0,
-      sources: { 'attr-block': 0, polyline: 0 }, frames: [], unmatched: [],
+      sources: { 'attr-block': 0, block: 0, polyline: 0 }, frames: [], unmatched: [],
     });
     expect(normalizeFramesPayload(null)).toMatchObject({ total: 0, frames: [], unmatched: [] });
     expect(normalizeFrameRecord(null)).toBeNull();
@@ -413,7 +488,7 @@ describe('getFrames', () => {
     const res = await getFrames({ layer: 'PUB_TITLE' });
     expect(res.connected).toBe(true);
     expect(res).toMatchObject({ total: 2, offset: 0, limit: 500, nextOffset: 2, frameCount: 2, unmatchedCount: 1 });
-    expect(res.sources).toEqual({ 'attr-block': 0, polyline: 2 });
+    expect(res.sources).toEqual({ 'attr-block': 0, block: 0, polyline: 2 });
     expect(sentCodes[0]).toContain('(cons 8 "PUB_TITLE")');
     // 内框去重、unmatched 上限、比例/短边容差都写进了 LISP
     expect(sentCodes[0]).toContain('(defun @fr:contained-p');

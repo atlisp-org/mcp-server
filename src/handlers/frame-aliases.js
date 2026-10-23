@@ -5,9 +5,9 @@
 //   8 组语义字段；匹配规则 = `strcase` 统一大小写 + 去首尾空白后**精确匹配**；
 //   同一字段命中多个 tag 时取第一个非空值。任一处理改动都要两处同步。
 //
-// 为什么在这里再实现一份：目标 CAD 会话**没有加载 @lisp lib**
-// （`(member 'require (atoms-family 1))` → nil），CAD 侧 LISP 必须自包含，
-// 不能调用 `frame:aliases`/`frame:fields`，只能用 JS 生成等价的 LISP 字面量。
+// 为什么在这里再实现一份：lib 缺失时 CAD 侧 LISP 只能用 JS 生成等价的字面量
+// （不能假设会话一定加载了 @lisp lib）；lib 可用时判定核心改调 frame:fields/aliases，
+// 因此这张表仍需与 lib 侧保持完全一致（单测有跨仓守卫）。
 //
 // 这是**纯常量叶子模块（零 import）**：`lisp-code-builders.js` 用它生成 LISP 字面量，
 // `frame-tools.js` 用它写描述。放在叶子模块（同 frame-standards.js 的思路）是为了避免

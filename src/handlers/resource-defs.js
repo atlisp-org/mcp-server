@@ -29,16 +29,19 @@ export const RESOURCES = [
   {
     uri: 'atlisp://dwg/frames',
     name: 'Drawing Frames',
-    description: '图框识别：列出图纸中的标准图框及其图幅/加长/比例，两条通道——属性块（source="attr-block"，'
-      + '优先：INSERT 带属性，比例从图签 比例/出图比例/SCALE 解析，attributes/fields 给原始与归一化键值）与'
-      + '几何（source="polyline"：闭合 4 顶点矩形多段线）。同位置保留属性块那条。'
+    description: '图框识别：列出图纸中的标准图框及其图幅/加长/比例，三条通道——属性块（source="attr-block"，'
+      + '优先：INSERT 带属性，比例从图签 比例/出图比例/SCALE 解析，attributes/fields 给原始与归一化键值）、'
+      + '非属性块（source="block"，仅 CAD 端 lib 可用时：frame:ref-box 包围盒 + frame:match-all + 图签文字指纹判定）、'
+      + '几何（source="polyline"：闭合 4 顶点矩形多段线）。同位置按 attr-block > block > polyline 保留一条。'
+      + 'CAD 端装好 @lisp lib 时判定核心调 lib 的 frame:*（多出非属性块通道、包围盒回退、图签散文字补全），'
+      + '缺失时回落自包含实现，响应 lib 字段标明本次走的路径。'
       + '支持 ?layer=PUB_TITLE（可逗号分隔多图层，内部按 <OR> 组合）、?minSize=0（最小短边长度，小于此值的候选忽略）、'
       + '?scales=1,50,100（覆盖默认比例表 1/5/10/20/25/30/40/50/70/100/120/150/200/250/300/400/500/1000）、'
       + '?tolRatio=0.002（宽高比容差；图纸画得不精确时可用 0.0035 识别 0.1% 偏差的加长图幅，本图 336400×118800 属此类）、'
       + '?tolLen=0.001（短边相对容差）、?includeInner=false（true 则保留并标注内框）、'
       + '?includeUnmatched=true（返回配不上标准表的候选，按面积降序最多 200 条，便于人工复核"很像但没命中"的加长图幅）、'
       + '?offset=0&limit=500（frames 按面积降序后分页，响应含 total/offset/limit/nextOffset，nextOffset>=total 表示没有下一页）。'
-      + '响应含 frameCount/unmatchedCount/sources（两条通道条数）。注意：几何只能给物理尺寸解读（A1@1:100 与 A3@1:200 是同一矩形，'
+      + '响应含 frameCount/unmatchedCount/sources（三条通道条数）与 lib（是否走了 lib 路径）。注意：几何只能给物理尺寸解读（A1@1:100 与 A3@1:200 是同一矩形，'
       + '其余解读在 alternatives），真实出图比例应以图签属性 fields.scale 或图内比例文字为准',
     mimeType: 'application/json',
     subscribable: true,
