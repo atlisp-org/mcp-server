@@ -15,7 +15,7 @@ npm start            # node src/atlisp-mcp.js 开发模式
 npm run build:tray   # 构建 Windows 托盘程序 → dist/AtlispTray.exe（跨平台，见 tray/README.md）
 ```
 
-- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows only，需要 csc.exe）
+- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows 用系统 csc.exe；非 Windows 用 dotnet Roslyn + net48 参考程序集交叉编译，缺 dotnet 时告警跳过——发布机需装 .NET SDK，否则 npm 包内缺 dll，Windows 端 CAD 实例发现不可用）
 - CI 在 `tools/mcp-server` 目录下运行（本仓库在 monorepo 中位于 `tools/mcp-server/`，但当前检出已为根目录）
 
 ## 架构要点
@@ -234,4 +234,6 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、托盘自迁移与自我更新、从 npmmirror 安装 Node.js、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
+| `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |
+| `scripts/net48-refs.mjs` | net48 交叉编译公共辅助：Roslyn csc 定位 + 参考程序集下载/缓存 |
 | `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：Windows 上启动 `dist/AtlispTray.exe` |

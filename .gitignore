@@ -48,7 +48,7 @@ Thumbs.db
 node_modules/
 dist/
 coverage/
-tray/.cache/
+.cache/
 __pycache__/
 
 nul
