@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.11.9] - 2026-10-23
+
+### 更新内容
+
+- fix(install): 修复无 .NET SDK 时 npm 安装失败（spawn dotnet ENOENT） (efd203b)
+
 ## [1.11.8] - 2026-10-21
 
 ### 更新内容
