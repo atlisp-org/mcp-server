@@ -3577,6 +3577,55 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
+        /// 清理 pip 卸载中断留下的「~包名」残留目录。
+        /// pip 卸载时先把包目录改名成 "~&lt;包名&gt;" 再删；删除失败（.pyd/.dll 被正在运行的
+        /// 进程占用）就把改名后的目录留在 site-packages 里，之后**每条 pip 命令**都会刷
+        /// "WARNING: Ignoring invalid distribution ~tlisp-dwg-kb"。
+        /// 返回值：删除的目录数。
+        /// </summary>
+        public static int CleanBrokenDistributions(string pythonPath, string package)
+        {
+            int removed = 0;
+            try
+            {
+                if (string.IsNullOrEmpty(pythonPath) || string.IsNullOrEmpty(package) ||
+                    package.Length < 2)
+                {
+                    return 0;
+                }
+                string root = Path.GetDirectoryName(pythonPath);
+                if (string.IsNullOrEmpty(root)) return 0;
+                string sitePackages = Path.Combine(root, "Lib", "site-packages");
+                if (!Directory.Exists(sitePackages)) return 0;
+
+                // pip 的改名规则是把首字符换成 '~'；.dist-info 目录还会把 '-' 换成 '_'
+                string dashed = "~" + package.Substring(1).ToLowerInvariant();
+                string underscored = "~" + package.Replace('-', '_')
+                    .Substring(1).ToLowerInvariant();
+                foreach (string dir in Directory.GetDirectories(sitePackages, "~*"))
+                {
+                    string name = Path.GetFileName(dir).ToLowerInvariant();
+                    if (!name.StartsWith(dashed) && !name.StartsWith(underscored)) continue;
+                    try
+                    {
+                        Directory.Delete(dir, true);
+                        removed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        // 又被占用就留着，下次 pip 任务前再试
+                        AppLog.Write("pip cleanup: 删除 " + dir + " 失败: " + ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("pip cleanup: " + ex.Message);
+            }
+            return removed;
+        }
+
+        /// <summary>
         /// 查询 PyPI 上某个包的最新版本，不安装任何东西。
         /// 先走 PyPI JSON（一次 HTTP，快）；失败再回退 `pip index versions`
         /// （会走用户配置的镜像/代理，也能兼容公司内网源）。
@@ -4306,6 +4355,8 @@ namespace Atlisp.Tray
         private bool _dwgKbAutoStartAfterInstall;
         private bool _dwgKbRestartAfterUpgrade;
         private string _dwgKbLatestVersion;
+        /// <summary>本次 pip 任务开始前已安装的知识库版本，用于判断是否真的升级了。</summary>
+        private string _dwgKbVersionBefore;
         private string _dwgKbPendingUpgrade;
         private DateTime _nextDwgKbCheckAt = DateTime.MinValue;
         private DateTime _dwgKbTaskRetryAt = DateTime.MinValue;
@@ -6038,6 +6089,14 @@ namespace Atlisp.Tray
             task.AppendLine("Python: " + info.PythonPath);
             task.AppendLine("命令: " + info.PythonPath +
                 " -m pip install --upgrade atlisp-dwg-kb");
+            // 上一次升级被中断时 pip 会留下 "~tlisp-dwg-kb" 目录，之后每条 pip 命令都刷
+            // "Ignoring invalid distribution" 警告，这里先清掉（纯文件操作，不额外起进程）。
+            int cleaned = PythonRunner.CleanBrokenDistributions(info.PythonPath, "atlisp-dwg-kb");
+            if (cleaned > 0)
+            {
+                task.AppendLine("已清理 " + cleaned + " 个 pip 残留目录（~ 开头的无效分发包）");
+            }
+            _dwgKbVersionBefore = info.PackageVersion;
             task.AppendLine("");
 
             Process process = PythonRunner.CreatePipInstall(info.PythonPath, "atlisp-dwg-kb",
@@ -6949,16 +7008,49 @@ namespace Atlisp.Tray
                 bool startFresh = _dwgKbAutoStartAfterInstall;
                 _dwgKbRestartAfterUpgrade = false;
                 _dwgKbAutoStartAfterInstall = false;
+                string versionBefore = _dwgKbVersionBefore;
+                _dwgKbVersionBefore = null;
+                bool changed = upgraded && after.HasPackage &&
+                    !string.Equals(after.PackageVersion, versionBefore,
+                        StringComparison.OrdinalIgnoreCase);
 
                 if (auto)
                 {
-                    AppLog.Write("dwg-kb auto: " + (upgraded ? "升级" : "安装") +
-                        "完成 " + (after.HasPackage ? after.PackageVersion : "?"));
+                    if (upgraded && !changed)
+                    {
+                        AppLog.Write("dwg-kb auto: 已是最新 " +
+                            (after.HasPackage ? after.PackageVersion : "?"));
+                    }
+                    else
+                    {
+                        AppLog.Write("dwg-kb auto: " + (upgraded ? "升级" : "安装") +
+                            "完成 " + (after.HasPackage ? after.PackageVersion : "?"));
+                    }
                 }
                 else
                 {
-                    Balloon(upgraded ? "知识库已升级" : "知识库已安装",
-                        (after.HasPackage ? "atlisp-dwg-kb " + after.PackageVersion : "安装完成") +
+                    string title;
+                    string body;
+                    if (!upgraded)
+                    {
+                        title = "知识库已安装";
+                        body = (after.HasPackage ? "atlisp-dwg-kb " + after.PackageVersion
+                            : "安装完成");
+                    }
+                    else if (changed)
+                    {
+                        title = "知识库已升级";
+                        body = "atlisp-dwg-kb " + after.PackageVersion;
+                    }
+                    else
+                    {
+                        // pip 说 "Requirement already satisfied" 时不要把「没变」说成升级成功
+                        title = "知识库已是最新";
+                        body = "atlisp-dwg-kb " +
+                            (after.HasPackage ? after.PackageVersion : versionBefore) +
+                            " 已是 PyPI 上的最新版本";
+                    }
+                    Balloon(title, body +
                         "。\r\n本地启动：atlisp-dwg-kb serve（或在「设置知识库地址」里指向已有的知识库服务）。",
                         ToolTipIcon.Info);
                 }

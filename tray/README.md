@@ -106,7 +106,7 @@ npm pack --dry-run
     - 安装 / 升级知识库…（`pip install --upgrade atlisp-dwg-kb`；没有 Python 3.10+ 时**自动下载并安装**到用户目录，免管理员权限）
     - 重建索引…（服务端后台重建，管理员操作，需要与该服务一致的 API Key）
     - ☑ 随托盘自动启动（默认开启；未安装时自动补齐 Python + 包，然后拉起；仅本机地址生效）
-    - ☑ 自动检查新版本（默认开启；每小时查 PyPI，发现新版本静默 `pip install --upgrade`）
+    - ☑ 自动检查新版本（默认开启；按 `AutoUpgradeHours`（默认 24 小时）查 PyPI，发现新版本静默 `pip install --upgrade`）
     - 设置地址与 API Key…（默认 `http://127.0.0.1:8322`，可填局域网服务器地址）
   - **日志与诊断** ▸
     - 查看服务器日志 / 打开日志目录
@@ -121,7 +121,7 @@ npm pack --dry-run
     - ☑ 随 Windows 启动托盘
     - ☑ 启动托盘时自动启动 MCP
     - ☑ 启动时自动补齐运行环境
-    - ☑ 自动升级 @lisp/mcp（每 1 小时）
+    - ☐ 自动升级 @lisp/mcp（默认关闭；开启后按 `AutoUpgradeHours`（默认 24 小时）检查并升级）
     - ☐ 使用 npmmirror 国内镜像
     - 重新加载配置
     - 打开配置文件
@@ -245,14 +245,20 @@ Node.js 探测顺序：`tray.json` 的 `NodePath` → `%ProgramFiles%\nodejs` / 
 
 **自动升级（PyPI）**
 
-`DwgKbAutoUpgrade` 默认开启，间隔与 `AutoUpgradeHours` 一致（默认 1 小时）：
+`DwgKbAutoUpgrade` 默认开启，间隔与 `AutoUpgradeHours` 一致（默认 24 小时）：
 
 1. 先用 PyPI JSON（`https://pypi.org/pypi/atlisp-dwg-kb/json`）查最新版本；
    失败时回退 `python -m pip index versions atlisp-dwg-kb`（会走你配置的 pip 镜像/代理）
 2. 发现比本机新 → 若知识库由托盘启动则先停止（Windows 会锁 Python 扩展）
 3. `python -m pip install --upgrade atlisp-dwg-kb`（静默执行，输出写 `logs/pip-*.log`）
+   - 每次 pip 任务前会先清理 site-packages 里以 `~` 开头的无效分发包目录。pip 卸载时
+     会先把包目录改名成 `~<包名>` 再删，若 `.pyd` 被运行中的知识库进程占用就会留下
+     `~tlisp-dwg-kb`，之后每条 pip 命令都刷
+     `WARNING: Ignoring invalid distribution ~tlisp-dwg-kb`。托盘现在自动清掉，
+     不清理也不影响功能，只是告警噪音
 4. 成功后自动恢复知识库服务；失败则按旧版本恢复服务，并在 5/30/180 分钟后重试
 5. 只在 `DwgKbUrl` 是本机地址时生效（配了局域网服务器时本机包用不上）
+6. pip 报 `Requirement already satisfied` 时不会再说「已升级」，气泡显示「知识库已是最新」
 
 **版本号怎么读**
 
