@@ -394,6 +394,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 安装失败：`'node' 不是内部或外部命令` | 托盘进程继承的 `PATH` 不含 Node.js 目录（常见于「用托盘装完 Node.js 后没重启 Explorer/注销」）。新版托盘会在执行 npm 前自动把 Node.js 目录补进 `PATH`；若仍失败请重启托盘或注销后重新登录，也可在 `tray.json` 显式配置 `NodePath` |
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
+| 升级报 `EBUSY: ... rename ... node_modules\@atlisp\mcp` | npm 升级要把**整个包目录**改名，任何在用该目录的进程都会挡住它：MCP 客户端（Claude Desktop / VSCode / opencode 等）拉起的服务、从 npm 包目录直接跑的旧托盘、残留的 `cad-worker`。托盘自己启动的服务会在失败后自动停掉并重试一次；仍失败说明有托盘管不到的进程，关掉它们后重试，或关掉托盘后手动 `npm install -g @atlisp/mcp@latest` |
 | 升级后托盘还是旧版本 | 在托盘日志 `%APPDATA%\atlisp-mcp\logs\tray.log` 里搜 `tray-selfupdate`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
 | 首次运行被 SmartScreen 拦截 / 被杀软报毒 | exe 未做代码签名（见「杀软误报」）。临时处理：点“更多信息 → 仍要运行”，或把安装目录加入排除项；根治靠代码签名 + 提交误报 |

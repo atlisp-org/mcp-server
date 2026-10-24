@@ -6655,6 +6655,8 @@ namespace Atlisp.Tray
             }
             ServerInfo info = ServerLocator.Resolve(_config, true);
             bool shouldRunAfter = !info.IsInstalled || IsServerBusy();
+            // 新的一轮安装：重置「文件被占用」重试计数（否则上一轮的失败会影响本轮）
+            _installStopRetries = 0;
             // 不在开始时停服务：npm 先下载，真正替换文件时若被占用，失败处理里会停服务重试
             RunNpmTask("安装 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
@@ -6675,6 +6677,8 @@ namespace Atlisp.Tray
                 return;
             }
             bool shouldRunAfter = IsServerBusy();
+            // 新的一轮升级：重置「文件被占用」重试计数
+            _installStopRetries = 0;
             // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
             RunNpmTask("升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
@@ -6751,6 +6755,7 @@ namespace Atlisp.Tray
             ServerInfo info = ServerLocator.Resolve(_config, true);
             if (!info.IsInstalled) return;
             bool shouldRunAfter = IsServerBusy();
+            _installStopRetries = 0;
             // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
             RunNpmTask("自动升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
@@ -7309,6 +7314,49 @@ namespace Atlisp.Tray
                 AppLog.Write("upgrade: 替换文件被占用，停止服务后重试安装");
                 RunNpmTask(action == "upgrade-auto" ? "自动升级 @lisp MCP Server" : "升级 @lisp MCP Server",
                     NpmRunner.InstallServerArgs(_config), action, showWindow, wasRunning);
+                return;
+            }
+
+            // 重试后仍被占用：npm 换包目录（rename 整个 @atlisp/mcp → .mcp-XXXX）时，
+            // 只要目录里有进程在用就会 EBUSY。托盘只能停掉自己启动的服务，停不掉
+            // MCP 客户端拉起的实例、从包目录运行的旧托盘、残留的 cad-worker。
+            if (_installStopRetries >= 1 && LooksLikeFileLock(text) &&
+                (action == "install" || action == "upgrade" || action == "upgrade-auto"))
+            {
+                ServerInfo pkgInfo = ServerLocator.Resolve(_config, false);
+                string pkgDir = pkgInfo == null ? "" : pkgInfo.PackageDir;
+                AppLog.Write("upgrade: 停服务后重试仍被占用 dir=" + pkgDir +
+                    " exitCode=" + exitCode);
+                string message =
+                    "npm 无法替换包目录（EBUSY / 文件被占用）。\r\n\r\n" +
+                    (string.IsNullOrEmpty(pkgDir) ? "" : "目录：" + pkgDir + "\r\n\r\n") +
+                    "托盘已经停掉自己启动的服务并重试过一次，仍被占用，说明还有托盘管不到的进程在用该目录：\r\n" +
+                    "  · MCP 客户端拉起的服务（Claude Desktop / VSCode / opencode 等）\r\n" +
+                    "  · 从 npm 包目录直接运行的旧版托盘（...\\node_modules\\@atlisp\\mcp\\dist\\AtlispTray.exe）\r\n" +
+                    "  · 残留的 node.exe（cad-worker 子进程）\r\n\r\n" +
+                    "处理办法（任选其一）：\r\n" +
+                    "1) 关闭上述程序 / MCP 客户端后，在托盘菜单里重试升级；\r\n" +
+                    "2) 或关掉托盘后在命令行执行：\r\n" +
+                    "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
+                    "查看谁在占用（PowerShell）：\r\n" +
+                    "  Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" |\r\n" +
+                    "    Select-Object ProcessId, CommandLine | Format-List\r\n" +
+                    "  Get-Process AtlispTray | Select-Object Id, Path";
+                if (!_silent && action != "upgrade-auto")
+                {
+                    ShowError("升级失败：包目录被占用", message);
+                }
+                else
+                {
+                    AppLog.Write("upgrade: 包目录被占用，稍后重试");
+                    Balloon("升级失败：包目录被占用",
+                        "有进程在用 @atlisp/mcp 目录，关闭 MCP 客户端或托盘后重试。",
+                        ToolTipIcon.Warning);
+                }
+                if (restartAfter)
+                {
+                    _server.RestartAsync();
+                }
                 return;
             }
 
