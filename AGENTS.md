@@ -12,7 +12,7 @@ npm run build        # esbuild 打包 dist/atlisp-mcp.js + 复制 worker/handler
 npm test             # 运行全部测试 (vitest)
 npm run test:watch   # 监视模式测试
 npm start            # node src/atlisp-mcp.js 开发模式
-npm run build:tray   # 构建 Windows 托盘程序 → dist/AtlispTray.exe（跨平台，见 tray/README.md）
+npm run build:tray   # 构建 Windows 托盘程序 → dist/AtlispTray.exe + dist/AtlispUpdater.exe（跨平台，见 tray/README.md）
 ```
 
 - 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows 用系统 csc.exe；非 Windows 用 dotnet Roslyn + net48 参考程序集交叉编译，缺 dotnet 时告警跳过——发布机需装 .NET SDK，否则 npm 包内缺 dll，Windows 端 CAD 实例发现不可用）
@@ -241,7 +241,9 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
-| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、托盘自迁移与自我更新、知识库（Python）自动安装/升级/自愈、从 npmmirror 安装 Node.js、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
+| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、托盘自迁移（交给更新器替换自身）、知识库（Python）自动安装/升级/自愈、Node.js 安装（zip 校 SHA256 / MSI 校签名 / 手动优先 winget）、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
+| `tray/AtlispUpdater.cs` | 独立更新器 `AtlispUpdater.exe`：等旧托盘退出 → 校验 SHA256 + Authenticode → 覆盖 → 启动。**刻意几乎不修改**，hash 长期稳定以积累杀软信誉；不自更新、不联网、不写注册表 |
+| `tray/CodeSign.cs` | `WinVerifyTrust` 封装（托盘与更新器共用）：校验下载的安装包/待替换的 exe 的 Authenticode 签名 |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
 | `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |

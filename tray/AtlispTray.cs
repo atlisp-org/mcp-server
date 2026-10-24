@@ -32,12 +32,15 @@ namespace Atlisp.Tray
 {
     internal static class Program
     {
-#if TRAY_VERSION_STAMPED
-        // 构建时由 build.ps1 / scripts/build-tray.mjs 注入（取自 package.json 版本）
-        internal const string AppVersion = BuildInfo.TrayVersion;
-#else
-        internal const string AppVersion = "1.0.0";
-#endif
+        /// <summary>
+        /// 托盘真实版本号。exe 的版本资源固定为 1.0.0.0（为了让 hash 跨版本稳定，
+        /// 见 build.ps1 / scripts/build-tray.mjs 里的说明），真实版本按下面顺序解析：
+        ///   1. 同目录的 AtlispTray.version（安装器 / 更新器写入）；
+        ///   2. 向上找 package.json（从 npm 包目录直接运行时）；
+        ///   3. "dev"。
+        /// </summary>
+        internal static readonly string AppVersion = ResolveAppVersion();
+
         private const string MutexName = "Local\\atlisp-mcp-tray";
 
         /// <summary>本次启动是否为 --silent（托盘重启/自我更新时保留）。</summary>
@@ -165,6 +168,77 @@ namespace Atlisp.Tray
                 }
 
                 GC.KeepAlive(mutex);
+            }
+        }
+
+        internal const string VersionFileName = "AtlispTray.version";
+
+        /// <summary>
+        /// 解析托盘真实版本号，见 <see cref="AppVersion"/> 的注释。
+        /// </summary>
+        private static string ResolveAppVersion()
+        {
+            try
+            {
+                string exe = Application.ExecutablePath;
+                string dir = string.IsNullOrEmpty(exe) ? null : Path.GetDirectoryName(exe);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    string sidecar = Path.Combine(dir, VersionFileName);
+                    if (File.Exists(sidecar))
+                    {
+                        string text = File.ReadAllText(sidecar).Trim();
+                        if (text.Length > 0) return text;
+                    }
+                }
+                // 从 npm 包目录直接运行时用包里的 package.json
+                for (int i = 0; i < 5 && !string.IsNullOrEmpty(dir); i++)
+                {
+                    string pkg = Path.Combine(dir, "package.json");
+                    if (File.Exists(pkg))
+                    {
+                        string content = File.ReadAllText(pkg);
+                        Match name = Regex.Match(content, "\"name\"\\s*:\\s*\"@atlisp/mcp\"");
+                        Match version = Regex.Match(content, "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                        if (name.Success && version.Success)
+                        {
+                            return version.Groups[1].Value;
+                        }
+                    }
+                    dir = Path.GetDirectoryName(dir);
+                }
+
+                // 兜底：全局 npm 前缀里的包（托盘已迁到 %LOCALAPPDATA% 时靠这个）
+                string npmPkg = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "npm", "node_modules", "@atlisp", "mcp", "package.json");
+                if (File.Exists(npmPkg))
+                {
+                    string content = File.ReadAllText(npmPkg);
+                    Match version = Regex.Match(content, "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                    if (version.Success) return version.Groups[1].Value;
+                }
+            }
+            catch (Exception)
+            {
+                // 版本号读不出来不影响运行
+            }
+            return "dev";
+        }
+
+        /// <summary>把版本号写到 exe 同目录（自迁移后新位置的托盘要能显示版本）。</summary>
+        internal static void WriteVersionFile(string directory)
+        {
+            if (string.IsNullOrEmpty(directory)) return;
+            try
+            {
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, VersionFileName), AppVersion,
+                    new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("写版本文件失败: " + ex.Message);
             }
         }
     }
@@ -296,6 +370,100 @@ namespace Atlisp.Tray
                     // 忽略日志写入失败
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 下载物校验。托盘**不执行来源无法验证的二进制**——「下载后静默执行」正是杀软
+    /// 判定 dropper 的核心特征，所以这里宁可失败也不放过：
+    ///   · Node.js zip：比对官方 SHASUMS256.txt（镜像优先，退回 nodejs.org）；
+    ///   · 安装包（Node MSI / Python exe）：校验 Authenticode 签名是否有效。
+    /// </summary>
+    internal static class DownloadVerifier
+    {
+        public static string Sha256(string path)
+        {
+            using (FileStream stream = File.OpenRead(path))
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(stream);
+                StringBuilder sb = new StringBuilder(hash.Length * 2);
+                for (int i = 0; i < hash.Length; i++) sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>按官方 SHASUMS256.txt 校验 Node.js zip。拿不到清单时返回 false（fail-closed）。</summary>
+        public static bool VerifyNodeZip(string zipPath, string version, string mirror,
+            out string error)
+        {
+            error = null;
+            string fileName = Path.GetFileName(zipPath);
+            string expected = FetchShasum(version, mirror, fileName, out error);
+            if (string.IsNullOrEmpty(expected)) return false;
+
+            string actual;
+            try
+            {
+                actual = Sha256(zipPath);
+            }
+            catch (Exception ex)
+            {
+                error = "计算 SHA256 失败: " + ex.Message;
+                return false;
+            }
+            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "SHA256 与官方清单不一致（期望 " + Short(expected) +
+                    "，实际 " + Short(actual) + "）";
+                return false;
+            }
+            return true;
+        }
+
+        private static string Short(string hash)
+        {
+            if (string.IsNullOrEmpty(hash)) return "?";
+            return hash.Length > 12 ? hash.Substring(0, 12) + "…" : hash;
+        }
+
+        private static string FetchShasum(string version, string mirror, string fileName,
+            out string error)
+        {
+            error = null;
+            List<string> bases = new List<string>();
+            if (!string.IsNullOrEmpty(mirror)) bases.Add(mirror.TrimEnd('/'));
+            bases.Add("https://nodejs.org/dist");
+
+            foreach (string baseUrl in bases)
+            {
+                string url = baseUrl + "/v" + version + "/SHASUMS256.txt";
+                try
+                {
+                    using (WebClient client = new WebClient())
+                    {
+                        client.Headers.Add("User-Agent", "atlisp-tray/" + Program.AppVersion);
+                        string text = client.DownloadString(url);
+                        foreach (string line in text.Split('\n'))
+                        {
+                            string trimmed = line.Trim();
+                            if (!trimmed.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+                            string[] parts = trimmed.Split(new char[] { ' ', '\t' },
+                                StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length >= 1 && parts[0].Length == 64) return parts[0];
+                        }
+                        error = url + " 里没有 " + fileName;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    error = url + ": " + ex.Message;
+                }
+            }
+            return null;
         }
     }
 
@@ -2387,6 +2555,9 @@ namespace Atlisp.Tray
         /// <summary>自替换模式开关：由上一版托盘启动本副本时传入。</summary>
         public const string ApplyUpdateSwitch = "--apply-update";
 
+        /// <summary>独立更新器文件名（随包发布，刻意极少修改）。</summary>
+        public const string UpdaterName = "AtlispUpdater.exe";
+
         public static string StablePath
         {
             get
@@ -2436,6 +2607,9 @@ namespace Atlisp.Tray
             {
                 AppLog.Write("tray-selfupdate: 更新自启路径失败: " + ex.Message);
             }
+
+            // 副本的版本资源是固定的（1.0.0.0），真实版本靠这个 sidecar 显示
+            Program.WriteVersionFile(Path.GetDirectoryName(StablePath));
 
             string error;
             if (!StartDetached(StablePath, BuildLaunchArgs(Program.StartServerRequested), out error))
@@ -2503,7 +2677,43 @@ namespace Atlisp.Tray
                 return false;
             }
 
+            // 优先用独立更新器：它的 hash 跨版本稳定（详见 tray/AtlispUpdater.cs 顶部说明），
+            // 由它来覆盖 exe 比「新版本副本自己覆盖自己」干净得多。
+            string updater = FindUpdater(info);
+            // 版本号取**新包**的版本（info.Version 是升级后重新探测到的），
+            // 更新器把它写进 AtlispTray.version，重启后的托盘据此显示版本
+            string newVersion = info != null && !string.IsNullOrEmpty(info.Version)
+                ? info.Version
+                : Program.AppVersion;
+            string stagedHash;
+            try
+            {
+                stagedHash = FileHash(staged);
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(staged); } catch { }
+                message = "计算暂存文件哈希失败: " + ex.Message;
+                return false;
+            }
+
             string error;
+            if (!string.IsNullOrEmpty(updater))
+            {
+                if (!StartDetached(updater,
+                    BuildUpdaterArgs(staged, current, startServer, newVersion, stagedHash),
+                    out error))
+                {
+                    try { File.Delete(staged); } catch { }
+                    message = "无法启动托盘更新器: " + error;
+                    return false;
+                }
+                message = "托盘更新器已启动，退出后自动替换并重启";
+                return true;
+            }
+
+            // 兼容旧包（还没有 dist\AtlispUpdater.exe）：退回副本自替换（--apply-update）
+            AppLog.Write("tray-selfupdate: 包内没有 AtlispUpdater.exe，退回自替换模式");
             if (!StartDetached(staged, BuildApplyUpdateArgs(staged, current, startServer),
                 out error))
             {
@@ -2514,6 +2724,50 @@ namespace Atlisp.Tray
 
             message = "托盘程序已就绪，退出后自动替换并重启";
             return true;
+        }
+
+        /// <summary>找更新器：优先包内（随 npm 一起发布），其次托盘同目录（安装版）。</summary>
+        private static string FindUpdater(ServerInfo info)
+        {
+            if (info != null && !string.IsNullOrEmpty(info.PackageDir))
+            {
+                string packaged = Path.Combine(info.PackageDir, "dist", UpdaterName);
+                if (File.Exists(packaged)) return packaged;
+            }
+            string local = Path.Combine(
+                Path.GetDirectoryName(Application.ExecutablePath) ?? "", UpdaterName);
+            return File.Exists(local) ? local : null;
+        }
+
+        private static string BuildUpdaterArgs(string staged, string target,
+            bool startServer, string version, string stagedHash)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("--target ");
+            sb.Append(ProcessRunner.Quote(target));
+            sb.Append(" --staged ");
+            sb.Append(ProcessRunner.Quote(staged));
+            sb.Append(" --sha256 ");
+            sb.Append(stagedHash);
+            sb.Append(" --pid ");
+            sb.Append(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+            sb.Append(" --restart ");
+            sb.Append(ProcessRunner.Quote(target));
+            sb.Append(" --restart-args ");
+            sb.Append(ProcessRunner.Quote(BuildApplyFlags(startServer)));
+            sb.Append(" --version ");
+            sb.Append(ProcessRunner.Quote(version ?? Program.AppVersion));
+            sb.Append(" --log ");
+            sb.Append(ProcessRunner.Quote(Paths.LogDir));
+            return sb.ToString();
+        }
+
+        private static string BuildApplyFlags(bool startServer)
+        {
+            string flags = "";
+            if (Program.SilentMode) flags += " --silent";
+            if (startServer) flags += " --start-server";
+            return flags.Trim();
         }
 
         /// <summary>
@@ -4483,7 +4737,7 @@ namespace Atlisp.Tray
 
             _nodeItem = new ToolStripMenuItem("安装 Node.js…");
             _nodeItem.ToolTipText = "自动下载安装 Node.js（国内走 npmmirror 镜像）";
-            _nodeItem.Click += delegate { InstallNodeFromMirror(); };
+            _nodeItem.Click += delegate { InstallNodeFromMirror(true); };
 
             _trayAutoItem = new ToolStripMenuItem("随 Windows 启动托盘");
             _trayAutoItem.ToolTipText = "开机后自动启动托盘，由托盘拉起各服务";
@@ -6020,8 +6274,45 @@ namespace Atlisp.Tray
         /// 下载完成后的静默安装 + 接着装知识库。安装器是 GUI 程序（/quiet 静默），
         /// 用后台线程等它退出，避免卡住 UI 定时器。
         /// </summary>
+        /// <summary>配置的 PythonVersion 的 major.minor（如 3.12），用于 winget 包名。</summary>
+        private string PythonMinorVersion()
+        {
+            string version = _config.PythonVersion ?? "";
+            string[] parts = version.Split('.');
+            if (parts.Length >= 2) return parts[0] + "." + parts[1];
+            return "3.12";
+        }
+
         private void StartPythonInstall(string installerPath)
         {
+            // 校验 Authenticode：只执行能确认来源的安装包（这是「不把自己变成 dropper」的关键）
+            string signer;
+            string sigError;
+            if (!CodeSignature.Verify(installerPath, out signer, out sigError))
+            {
+                AppLog.Write("python: 安装包签名校验失败 " + sigError + "（" + installerPath + "）");
+                try { File.Delete(installerPath); } catch { }
+                if (_dwgKbAutoFlow)
+                {
+                    ScheduleDwgKbRetry("Python 安装包签名校验失败：" + sigError);
+                }
+                else
+                {
+                    ShowError("Python 安装包未通过校验",
+                        "已拒绝执行签名校验失败的安装包：\r\n" + sigError + "\r\n\r\n" +
+                        "安装包：" + installerPath + "\r\n\r\n" +
+                        "可改用 winget 安装 Python：\r\n" +
+                        "  winget install Python.Python." + PythonMinorVersion() + "\r\n" +
+                        "装好后托盘会自动检测到。");
+                }
+                return;
+            }
+            if (string.IsNullOrEmpty(signer) ||
+                signer.IndexOf("Python Software Foundation", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                AppLog.Write("python: 签名主体不是 PSF（仍放行，签名本身有效）：" + signer);
+            }
+
             _pythonInstalling = true;
             string targetDir = Paths.PythonDir;
             if (_taskWindow != null && !_taskWindow.IsDisposed)
@@ -6312,8 +6603,29 @@ namespace Atlisp.Tray
             return mirror.TrimEnd('/') + "/v" + version + "/node-v" + version + "-" + arch + ".msi";
         }
 
+        /// <summary>
+        /// 下载并安装 Node.js。preferWinget=true（菜单手动触发）时先试 winget：
+        /// winget 的清单带哈希校验、安装包直接来自官方，比托盘自己下载更干净。
+        /// 自动补齐流程仍走 portable zip（免 UAC），失败才降级。
+        /// </summary>
         private void InstallNodeFromMirror()
         {
+            InstallNodeFromMirror(false);
+        }
+
+        private void InstallNodeFromMirror(bool preferWinget)
+        {
+            if (preferWinget)
+            {
+                string wingetPath = ProcessRunner.Where("winget.exe");
+                if (!string.IsNullOrEmpty(wingetPath))
+                {
+                    AppLog.Write("node: 手动安装优先使用 winget");
+                    InstallNodeWithWinget();
+                    return;
+                }
+                AppLog.Write("node: 未找到 winget，回退到镜像 MSI");
+            }
             if (TaskBusy())
             {
                 Balloon("请稍候", "已有下载/安装任务正在进行。", ToolTipIcon.Info);
@@ -6447,6 +6759,16 @@ namespace Atlisp.Tray
 
             if (_downloadKind == "portable")
             {
+                string verifyError;
+                if (!DownloadVerifier.VerifyNodeZip(path, _downloadVersion,
+                    _config.NodeMirror, out verifyError))
+                {
+                    AppLog.Write("portable: Node.js 压缩包校验失败 " + verifyError);
+                    try { File.Delete(path); } catch { }
+                    _downloadKind = null;
+                    OnNodeDownloadFailed("下载包校验失败：" + verifyError);
+                    return;
+                }
                 AppLog.Write("portable Node.js downloaded: " + path);
                 _downloadKind = null;
                 _portableJob = new PortableInstallJob(path, Paths.PortableNodeDir);
@@ -6536,6 +6858,36 @@ namespace Atlisp.Tray
             {
                 ShowError("安装 Node.js 失败", "安装包不存在：" + msiPath);
                 return;
+            }
+
+            // 只执行签名有效的 MSI（来源可验证），校验失败就别把它变成 dropper
+            string signer;
+            string sigError;
+            if (!CodeSignature.Verify(msiPath, out signer, out sigError))
+            {
+                AppLog.Write("node-msi: 签名校验失败 " + sigError + "（" + msiPath + "）");
+                try { File.Delete(msiPath); } catch { }
+                if (_bootstrapMode)
+                {
+                    ScheduleAutoInstallRetry();
+                    Balloon("Node.js 安装包未通过校验",
+                        sigError + "\r\n\r\n稍后自动重试，或改用 winget 安装。",
+                        ToolTipIcon.Warning);
+                }
+                else
+                {
+                    ShowError("Node.js 安装包未通过校验",
+                        "已拒绝执行签名校验失败的安装包：\r\n" + sigError + "\r\n\r\n" +
+                        "安装包：" + msiPath + "\r\n\r\n" +
+                        "可改用 winget（微软会校验清单哈希）：\r\n" +
+                        "  winget install OpenJS.NodeJS.LTS");
+                }
+                return;
+            }
+            if (string.IsNullOrEmpty(signer) ||
+                signer.IndexOf("OpenJS", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                AppLog.Write("node-msi: 签名主体不是 OpenJS（仍放行，签名本身有效）：" + signer);
             }
 
             // 覆盖安装 node.exe 前必须先停止服务，否则 Windows 会锁定正在运行的可执行文件

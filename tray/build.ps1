@@ -55,82 +55,83 @@ if ($outputDir -and -not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 }
 
-$compilerArgs = @(
-    '/nologo',
-    '/target:winexe',
-    '/platform:anycpu',
-    '/codepage:65001',
-    ('/out:"' + $Output + '"'),
-    '/r:System.dll',
-    '/r:System.Core.dll',
-    '/r:System.Drawing.dll',
-    '/r:System.Windows.Forms.dll',
-    '/r:System.Web.Extensions.dll',
-    '/r:System.Xml.dll',
-    '/r:System.IO.Compression.dll'
-)
-if (-not $NoOptimize) {
-    $compilerArgs += '/optimize+'
-}
-
 $icon = Join-Path $PSScriptRoot 'atlisp.ico'
-if (Test-Path $icon) {
-    $compilerArgs += ('/win32icon:"' + $icon + '"')
-}
+$manifestPath = Join-Path $PSScriptRoot 'AtlispTray.manifest'
+$updaterSource = Join-Path $PSScriptRoot 'AtlispUpdater.cs'
+$codeSignSource = Join-Path $PSScriptRoot 'CodeSign.cs'
+$updaterOutput = Join-Path $outputDir 'AtlispUpdater.exe'
 
-$manifest = Join-Path $PSScriptRoot 'AtlispTray.manifest'
-if (Test-Path $manifest) {
-    $compilerArgs += ('/win32manifest:"' + $manifest + '"')
-}
-
-# 把 package.json 的版本写进 exe（程序集版本 + BuildInfo.TrayVersion）：
-# 托盘“关于/诊断”显示真实版本，升级 @lisp/mcp 后也能据此判断托盘是否需要更新。
+# 托盘的真实版本号（只写进同目录的 AtlispTray.version，**不烧进 exe**）。
+# 把版本号编译进 exe 会让每次发版都产出新 hash，Defender/SmartScreen 对每个
+# 新 hash 都从 0 开始攒信誉；固定版本资源 + 运行时读版本号可以让 exe 的 hash
+# 跨版本保持不变。更新器替换 exe 时会写这个文件（见 AtlispUpdater.cs）。
 $packageJson = Get-Content (Join-Path $PSScriptRoot '..\package.json') -Raw -Encoding UTF8
 $versionMatch = [regex]::Match($packageJson, '"version"\s*:\s*"([^"]+)"')
 $trayVersion = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { '0.0.0' }
-$versionParts = @(($trayVersion -split '-')[0].Split('.'))
-while ($versionParts.Count -lt 4) { $versionParts += '0' }
-$fileVersion = ($versionParts[0..3] -join '.')
-$buildInfo = @"
-[assembly: System.Reflection.AssemblyVersion("$fileVersion")]
-[assembly: System.Reflection.AssemblyFileVersion("$fileVersion")]
-[assembly: System.Reflection.AssemblyInformationalVersion("$trayVersion")]
-[assembly: System.Reflection.AssemblyTitle("AtlispTray")]
-[assembly: System.Reflection.AssemblyDescription("@lisp MCP Server 托盘管理")]
-[assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
-[assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
-[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
-[assembly: System.Reflection.AssemblyTrademark("atlisp")]
 
-namespace Atlisp.Tray
-{
-    internal static class BuildInfo
-    {
-        internal const string TrayVersion = "$trayVersion";
-    }
-}
-"@
 $buildInfoDir = Join-Path $PSScriptRoot '.cache'
 if (-not (Test-Path $buildInfoDir)) {
     New-Item -ItemType Directory -Path $buildInfoDir -Force | Out-Null
 }
-$buildInfoPath = Join-Path $buildInfoDir 'TrayBuildInfo.g.cs'
-[System.IO.File]::WriteAllText($buildInfoPath, $buildInfo, (New-Object System.Text.UTF8Encoding($false)))
-$compilerArgs += '/define:TRAY_VERSION_STAMPED'
-$compilerArgs += ('"' + $buildInfoPath + '"')
 
-$compilerArgs += ('"' + $source + '"')
+function Write-Stamp([string]$path, [string]$title, [string]$description) {
+    $content = @"
+[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyTitle("$title")]
+[assembly: System.Reflection.AssemblyDescription("$description")]
+[assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
+[assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
+[assembly: System.Reflection.AssemblyTrademark("atlisp")]
+"@
+    [System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+$trayStamp = Join-Path $buildInfoDir 'TrayStamp.g.cs'
+$updaterStamp = Join-Path $buildInfoDir 'UpdaterStamp.g.cs'
+Write-Stamp $trayStamp 'AtlispTray' '@lisp MCP Server 托盘管理'
+# 更新器刻意固定标题：它的 hash 要长期稳定，才能积累杀软信誉
+Write-Stamp $updaterStamp 'AtlispUpdater' '@lisp MCP Server 托盘更新器'
+
+function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManifest) {
+    $compileArgs = @(
+        '/nologo',
+        '/target:winexe',
+        '/platform:anycpu',
+        '/codepage:65001',
+        ('/out:"' + $target + '"'),
+        '/r:System.dll',
+        '/r:System.Core.dll',
+        '/r:System.Drawing.dll',
+        '/r:System.Windows.Forms.dll',
+        '/r:System.Web.Extensions.dll',
+        '/r:System.Xml.dll',
+        '/r:System.IO.Compression.dll'
+    )
+    if (-not $NoOptimize) { $compileArgs += '/optimize+' }
+    if (Test-Path $icon) { $compileArgs += ('/win32icon:"' + $icon + '"') }
+    if ($WithManifest -and (Test-Path $manifestPath)) {
+        $compileArgs += ('/win32manifest:"' + $manifestPath + '"')
+    }
+    foreach ($item in $sources) { $compileArgs += ('"' + $item + '"') }
+    & $csc @compileArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "编译失败：$target（csc 退出码 $LASTEXITCODE）"
+    }
+    if (-not (Test-Path $target)) {
+        throw "编译结束但未找到输出文件：$target"
+    }
+}
 
 Write-Host "编译 $source ..." -ForegroundColor Cyan
-& $csc @compilerArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "编译失败（csc 退出码 $LASTEXITCODE）。"
-}
+Invoke-Compile -sources @($codeSignSource, $trayStamp, $source) -target $Output -WithManifest
 
-if (-not (Test-Path $Output)) {
-    throw "编译结束但未找到输出文件：$Output"
-}
+Write-Host "编译 $updaterSource ..." -ForegroundColor Cyan
+Invoke-Compile -sources @($codeSignSource, $updaterStamp, $updaterSource) -target $updaterOutput
+
 Write-Host "构建完成：$Output" -ForegroundColor Green
+Write-Host "构建完成：$updaterOutput" -ForegroundColor Green
 
 # Authenticode 签名：未签名的 exe 在 Defender/SmartScreen 眼里永远是「未知发布者」，
 # 每个新构建的 hash 都没有信誉，这是托盘被杀软误报的根因之一。
@@ -158,12 +159,16 @@ if ($SignThumbprint) {
     if (-not $signtool) {
         throw "找不到 signtool.exe（需要 Windows 10/11 SDK）。可先不签名：去掉 -SignThumbprint。"
     }
-    Write-Host "签名 $Output ..." -ForegroundColor Cyan
-    & $signtool sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $Output
-    if ($LASTEXITCODE -ne 0) {
-        throw "签名失败（signtool 退出码 $LASTEXITCODE）。请确认证书已插入/解锁且指纹正确。"
+    # 托盘和更新器都要签：更新器是真正执行「替换 exe」动作的那个二进制，
+    # 它被签名才有意义（否则等于让未签名程序改可执行文件）。
+    foreach ($artifact in @($Output, $updaterOutput)) {
+        Write-Host "签名 $artifact ..." -ForegroundColor Cyan
+        & $signtool sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $artifact
+        if ($LASTEXITCODE -ne 0) {
+            throw "签名失败：$artifact（signtool 退出码 $LASTEXITCODE）。请确认证书已插入/解锁且指纹正确。"
+        }
+        Write-Host "已签名：$artifact" -ForegroundColor Green
     }
-    Write-Host "已签名：$Output" -ForegroundColor Green
 }
 
 if ($Install) {
@@ -173,7 +178,13 @@ if ($Install) {
     }
     $target = Join-Path $installDir 'AtlispTray.exe'
     Copy-Item $Output $target -Force
-    Write-Host "已安装到：$target" -ForegroundColor Green
+    Copy-Item $updaterOutput (Join-Path $installDir 'AtlispUpdater.exe') -Force
+    # 托盘真实版本号（exe 的版本资源固定为 1.0.0.0，见上面的 Write-Stamp 说明）
+    [System.IO.File]::WriteAllText(
+        (Join-Path $installDir 'AtlispTray.version'),
+        $trayVersion,
+        (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "已安装到：$target（v$trayVersion）" -ForegroundColor Green
 
     $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
     if (Test-Path $startMenu) {

@@ -20,6 +20,10 @@ const manifest = path.join(root, 'tray', 'AtlispTray.manifest');
 const icon = path.join(root, 'tray', 'atlisp.ico');
 const outDir = path.join(root, 'dist');
 const output = path.join(outDir, 'AtlispTray.exe');
+const updaterSource = path.join(root, 'tray', 'AtlispUpdater.cs');
+const codeSignSource = path.join(root, 'tray', 'CodeSign.cs');
+// 更新器独立编译：它刻意保持「几乎不改」，hash 长期稳定才能积累杀软信誉
+const updaterOutput = path.join(outDir, 'AtlispUpdater.exe');
 const packageVersion = JSON.parse(
   fs.readFileSync(path.join(root, 'package.json'), 'utf8')
 ).version;
@@ -58,11 +62,13 @@ if (process.platform === 'win32') {
 if (!fs.existsSync(output)) {
   fail(`构建结束但未找到 ${output}`);
 }
-const size = fs.statSync(output).size;
-if (size <= 0) {
-  fail('生成的 exe 为空。');
+for (const artifact of [output, updaterOutput]) {
+  const size = fs.existsSync(artifact) ? fs.statSync(artifact).size : 0;
+  if (size <= 0) {
+    fail(`生成的 ${path.basename(artifact)} 为空。`);
+  }
+  log(`已生成 ${path.relative(root, artifact)}（${(size / 1024).toFixed(1)} KB）`);
 }
-log(`已生成 ${path.relative(root, output)}（${(size / 1024).toFixed(1)} KB）`);
 
 async function buildWithDotnet() {
   const tool = findRoslynCsc();
@@ -82,6 +88,26 @@ async function buildWithDotnet() {
     'System.IO.Compression.dll'
   ];
 
+  log(`使用 .NET SDK ${tool.version} 的 Roslyn 编译器编译（v${packageVersion}）...`);
+  compile({
+    tool,
+    referenceDir,
+    references,
+    sources: [codeSignSource, writeStamp('tray'), source],
+    out: output,
+    manifest,
+  });
+  compile({
+    tool,
+    referenceDir,
+    references,
+    sources: [codeSignSource, writeStamp('updater'), updaterSource],
+    out: updaterOutput,
+    manifest: null,
+  });
+}
+
+function compile({ tool, referenceDir, references, sources, out, manifest: manifestPath }) {
   const args = [
     tool.csc,
     '-nologo',
@@ -91,11 +117,14 @@ async function buildWithDotnet() {
     '-codepage:65001',
     '-optimize+',
     '-warn:4',
-    `-win32manifest:${manifest}`,
+    // 关键：源码不变时产出字节一致（hash 稳定，杀软信誉能累积）。
+    // 同时把源码路径映射掉，避免构建机路径进入二进制。
+    '-deterministic',
+    `-pathmap:${root}=/atlisp-mcp`,
     `-win32icon:${icon}`,
-    '-define:TRAY_VERSION_STAMPED',
-    `-out:${output}`
+    `-out:${out}`
   ];
+  if (manifestPath) args.push(`-win32manifest:${manifestPath}`);
   for (const name of references) {
     const reference = path.join(referenceDir, name);
     if (!fs.existsSync(reference)) {
@@ -103,49 +132,38 @@ async function buildWithDotnet() {
     }
     args.push(`-r:${reference}`);
   }
-  args.push(source, writeBuildInfo());
+  args.push(...sources);
 
-  log(`使用 .NET SDK ${tool.version} 的 Roslyn 编译器编译...`);
   try {
     execFileSync(tool.dotnet, args, { stdio: 'inherit' });
   } catch (error) {
-    fail(`编译失败：${error.message}`);
+    fail(`编译失败：${path.basename(out)}：${error.message}`);
   }
 }
 
 /**
- * 把 npm 包版本写进托盘 exe（程序集版本 + BuildInfo.TrayVersion），
- * 供“关于/诊断”显示，也让托盘能和新包内的 exe 对比。
+ * 生成固定版本的程序集属性文件。
+ *
+ * 刻意**不把 npm 包版本写进 exe**：版本烧进二进制会让每次发版都产出新 hash，
+ * Defender/SmartScreen 对每个新 hash 都从 0 开始攒信誉。这里固定 1.0.0.0，
+ * 真实版本号由更新器写到同目录的 AtlispTray.version（见 tray/AtlispUpdater.cs），
+ * 托盘启动时读它显示（见 Program.ResolveAppVersion）。
+ * 只有真的改动托盘源码时产物才会变，hash 得以跨版本保持稳定。
  */
-function writeBuildInfo() {
-  const numeric = packageVersion.split('-')[0].split('.').map(part => {
-    const value = parseInt(part, 10);
-    return Number.isFinite(value) ? value : 0;
-  });
-  while (numeric.length < 4) numeric.push(0);
-  const fileVersion = numeric.slice(0, 4).join('.');
-
-  const content = `[assembly: System.Reflection.AssemblyVersion("${fileVersion}")]
-[assembly: System.Reflection.AssemblyFileVersion("${fileVersion}")]
-[assembly: System.Reflection.AssemblyInformationalVersion("${packageVersion}")]
-[assembly: System.Reflection.AssemblyTitle("AtlispTray")]
-[assembly: System.Reflection.AssemblyDescription("@lisp MCP Server 托盘管理")]
+function writeStamp(kind) {
+  const isUpdater = kind === 'updater';
+  const content = `[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyTitle("${isUpdater ? 'AtlispUpdater' : 'AtlispTray'}")]
+[assembly: System.Reflection.AssemblyDescription("${isUpdater ? '@lisp MCP Server 托盘更新器' : '@lisp MCP Server 托盘管理'}")]
 [assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
 [assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
 [assembly: System.Reflection.AssemblyTrademark("atlisp")]
-
-namespace Atlisp.Tray
-{
-    internal static class BuildInfo
-    {
-        internal const string TrayVersion = "${packageVersion}";
-    }
-}
 `;
   const dir = path.join(root, '.cache');
   fs.mkdirSync(dir, { recursive: true });
-  const target = path.join(dir, 'TrayBuildInfo.g.cs');
-  fs.writeFileSync(target, content, 'utf8');
-  return target;
+  const file = path.join(dir, isUpdater ? 'UpdaterStamp.g.cs' : 'TrayStamp.g.cs');
+  fs.writeFileSync(file, content, 'utf8');
+  return file;
 }
