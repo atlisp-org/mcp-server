@@ -128,6 +128,12 @@ function writeBuildInfo() {
   const content = `[assembly: System.Reflection.AssemblyVersion("${fileVersion}")]
 [assembly: System.Reflection.AssemblyFileVersion("${fileVersion}")]
 [assembly: System.Reflection.AssemblyInformationalVersion("${packageVersion}")]
+[assembly: System.Reflection.AssemblyTitle("AtlispTray")]
+[assembly: System.Reflection.AssemblyDescription("@lisp MCP Server 托盘管理")]
+[assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
+[assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
+[assembly: System.Reflection.AssemblyTrademark("atlisp")]
 
 namespace Atlisp.Tray
 {

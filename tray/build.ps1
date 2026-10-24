@@ -10,11 +10,18 @@
 # 默认输出 dist\AtlispTray.exe（会随 npm 包发布）。
 # -Install 会把生成的 exe 复制到 %LOCALAPPDATA%\Programs\atlisp-mcp，
 # 并在开始菜单创建快捷方式（不会自动写入开机启动项，可在托盘菜单里开启）。
+#
+# 代码签名（降低杀软误报、消掉 SmartScreen「未知发布者」）：
+#   powershell -File tray\build.ps1 -SignThumbprint <证书指纹>
+#   或设环境变量 ATLISP_TRAY_SIGN_THUMBPRINT 后直接 npm run build:tray
+# 需要 Windows SDK 的 signtool.exe，以及带私钥的代码签名证书（OV/EV）。
 
 param(
     [string]$Output = '',
     [switch]$Install,
-    [switch]$NoOptimize
+    [switch]$NoOptimize,
+    [string]$SignThumbprint = $env:ATLISP_TRAY_SIGN_THUMBPRINT,
+    [string]$TimestampUrl = $(if ($env:ATLISP_TRAY_TIMESTAMP_URL) { $env:ATLISP_TRAY_TIMESTAMP_URL } else { 'http://timestamp.digicert.com' })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,6 +95,12 @@ $buildInfo = @"
 [assembly: System.Reflection.AssemblyVersion("$fileVersion")]
 [assembly: System.Reflection.AssemblyFileVersion("$fileVersion")]
 [assembly: System.Reflection.AssemblyInformationalVersion("$trayVersion")]
+[assembly: System.Reflection.AssemblyTitle("AtlispTray")]
+[assembly: System.Reflection.AssemblyDescription("@lisp MCP Server 托盘管理")]
+[assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
+[assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
+[assembly: System.Reflection.AssemblyTrademark("atlisp")]
 
 namespace Atlisp.Tray
 {
@@ -118,6 +131,40 @@ if (-not (Test-Path $Output)) {
     throw "编译结束但未找到输出文件：$Output"
 }
 Write-Host "构建完成：$Output" -ForegroundColor Green
+
+# Authenticode 签名：未签名的 exe 在 Defender/SmartScreen 眼里永远是「未知发布者」，
+# 每个新构建的 hash 都没有信誉，这是托盘被杀软误报的根因之一。
+if ($SignThumbprint) {
+    $signtool = $null
+    $kitsRoot = @(
+        "${env:ProgramFiles(x86)}\Windows Kits\10\bin",
+        "$env:ProgramFiles\Windows Kits\10\bin"
+    )
+    foreach ($root in $kitsRoot) {
+        if (-not (Test-Path $root)) { continue }
+        $found = Get-ChildItem -Path $root -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+        if ($found) {
+            $signtool = $found.FullName
+            break
+        }
+    }
+    if (-not $signtool) {
+        $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+        if ($cmd) { $signtool = $cmd.Source }
+    }
+    if (-not $signtool) {
+        throw "找不到 signtool.exe（需要 Windows 10/11 SDK）。可先不签名：去掉 -SignThumbprint。"
+    }
+    Write-Host "签名 $Output ..." -ForegroundColor Cyan
+    & $signtool sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $Output
+    if ($LASTEXITCODE -ne 0) {
+        throw "签名失败（signtool 退出码 $LASTEXITCODE）。请确认证书已插入/解锁且指纹正确。"
+    }
+    Write-Host "已签名：$Output" -ForegroundColor Green
+}
 
 if ($Install) {
     $installDir = Join-Path $env:LOCALAPPDATA 'Programs\atlisp-mcp'

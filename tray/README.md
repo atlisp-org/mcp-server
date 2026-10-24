@@ -5,10 +5,10 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **启动 / 停止 / 重启** 本机 `atlisp-mcp` 服务（自动识别 Windows 服务模式）
 - **下载 / 安装 / 升级**：通过 npm 安装或升级到 `@atlisp/mcp@latest`
 - **自动安装 Node.js**：检测不到 Node.js 时，默认下载免 UAC 的 portable zip 解压到用户目录；失败才降级 MSI（需 UAC 授权）
-- **检查更新 / 自动升级**：对比本机版本与 npm 上的最新版本；默认每 1 小时检查一次，发现新版本自动静默升级（运行中的服务会先停止再重启）
+- **检查更新**：对比本机版本与 npm 上的最新版本，默认启动后检查一次并**只提示、不自动安装**；可在设置里开启定时自动升级（默认间隔 24 小时，用户确认后才执行 npm 安装）
 - **知识库全自动**：默认随托盘启动本地知识库，缺 Python / `atlisp-dwg-kb` 时自动下载安装；定时查 PyPI 新版本并静默升级（升级前停服务、完成后自动拉起）
 - **异常自愈**：MCP 或知识库进程异常退出后自动拉起（带退避，最多 5 次），用户主动停止的不会被拉起
-- **托盘自我更新**：从 npm 包目录启动时先迁移到用户目录（避免升级时 exe 被锁），每次升级 @lisp/mcp 后自动替换托盘自身并重启
+- **托盘自我更新**：从 npm 包目录启动时先迁移到用户目录（避免升级时 exe 被锁），每次升级 @lisp/mcp 后自动替换托盘自身并重启（由 exe 自身完成替换，**不生成 cmd 脚本**，见下方「杀软误报」）
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
 - **开机自启**：首次启动自动加入 Windows 启动项（之后尊重手动开关）；可选托盘启动时自动启动服务
@@ -154,9 +154,9 @@ npm pack --dry-run
 | `NodeVersion` | `22.12.0` | 从 npmmirror 安装的 Node.js 版本（自动带 `v` 前缀） |
 | `NodeMirror` | `https://npmmirror.com/mirrors/node` | Node.js 安装包镜像地址 |
 | `AutoStartServer` | `true` | 托盘启动时自动启动服务 |
-| `CheckUpdateOnStart` | `true` | 托盘启动 20 秒后自动检查更新（`AutoUpgrade=true` 时由定时检查接管） |
-| `AutoUpgrade` | `true` | 定时检查 @lisp/mcp 新版本并自动升级；服务运行中会先停止再重启 |
-| `AutoUpgradeHours` | `1` | 自动检查间隔（小时，1–168） |
+| `CheckUpdateOnStart` | `true` | 托盘启动 20 秒后自动检查更新，仅提示新版本（`AutoUpgrade=true` 时由定时检查接管） |
+| `AutoUpgrade` | `false` | 定时检查 @lisp/mcp 新版本并自动升级；服务运行中会先停止再重启。默认关闭，需在托盘菜单里开启 |
+| `AutoUpgradeHours` | `24` | 自动检查间隔（小时，1–168） |
 | `AutoInstall` | `true` | 启动时自动补齐缺失的 Node.js / @lisp/mcp（见下方「自动补齐运行环境」） |
 | `StopServerOnExit` | `false` | 退出托盘时是否停止服务 |
 | `HealthyPollSeconds` | `5` | 健康检查间隔（秒） |
@@ -322,7 +322,8 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 
 - 安装与升级都通过 npm 完成：`npm install -g @atlisp/mcp@latest`
 - **没有 .NET SDK 的机器**：`edge-js` 的安装脚本会无条件 `spawn dotnet`（构建 CoreCLR bootstrap），没装 SDK 时报 `Error: spawn dotnet ENOENT` 让 npm 退出码 1。Windows 端走 native CLR + COM，用不到 bootstrap，所以托盘检测不到 `dotnet` 时自动给 npm 追加 `--ignore-scripts`，再调用 `EdgeNativeSupport.Repair()` 把 VC 运行时 DLL 复制到 `edge-js\lib\native\win32\<arch>\<node-abi>\`（这一步本来是安装脚本做的）。安装窗口会提示「已跳过 npm 安装脚本」，不影响使用
-- **定时自动升级**：默认每 1 小时执行一次 `npm view @atlisp/mcp version`，发现比本机新就自动升级；升级前停止服务（Windows 会锁定 `edge-js` 原生模块），升级后按原状态重启。全程不弹窗口，失败只记托盘日志并在气泡里提示，下一小时再重试。可在「设置 → 定时自动检查并升级 @lisp/mcp」关闭，或改 `tray.json` 的 `AutoUpgrade` / `AutoUpgradeHours`
+- **定时自动升级**（默认关闭）：开启后默认每 24 小时执行一次 `npm view @atlisp/mcp version`，发现比本机新就自动升级；升级前停止服务（Windows 会锁定 `edge-js` 原生模块），升级后按原状态重启。全程不弹窗口，失败只记托盘日志并在气泡里提示，下次再重试。可在「设置 → 定时自动检查并升级 @lisp/mcp」开启/关闭，或改 `tray.json` 的 `AutoUpgrade` / `AutoUpgradeHours`
+  - 旧版本默认是「每 1 小时自动静默升级」；升级到本版后 `tray.json` 会一次性迁移为 `AutoUpgrade=false`、`AutoUpgradeHours=24`（`ConfigVersion` 记到 `1`），需要自动升级请手动重新开启
 - 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）；自动升级不会弹 UAC，失败留给下一次或手动升级
 - 升级前如果服务正在运行，升级完成后托盘会自动重启服务
 - 手动「检查更新」只读取 `npm view @atlisp/mcp version`，不会修改任何文件
@@ -332,14 +333,48 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 托盘 exe 随 `@atlisp/mcp` 一起发布（`dist/AtlispTray.exe`），所以升级包时托盘也应该跟着换新：
 
 1. **自迁移**：如果托盘是从 npm 包目录启动的（`atlisp-tray`，路径含 `node_modules`），启动时会把自身复制到
-   `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` 并从那里重启，同时把开机自启项改到新路径。
+   `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` 并直接启动副本（副本自己创建托盘），同时把开机自启项改到新路径。
    这样 `npm install -g` 不会再因为运行中的 exe 被 Windows 锁定（EBUSY/EPERM）而失败。
 2. **自我替换**：每次升级 @lisp/mcp 成功后，托盘会比较包内 `dist\AtlispTray.exe` 与当前 exe 的 SHA256；
-   不同则写一个临时脚本 `%APPDATA%\atlisp-mcp\update-tray.cmd`（等本进程退出 → 覆盖 exe → 重新启动，保留 `--silent`），
-   然后托盘退出。图标会消失 1～2 秒，**服务进程不受影响**；重启后的托盘会按原状态恢复服务。
+   不同则把新 exe 复制成同目录下的暂存副本 `.AtlispTray.update.exe`，由**副本自己**以 `--apply-update <暂存> <目标> <旧PID>`
+   模式启动：等旧进程退出 → 覆盖目标 exe（最多重试 30 次）→ 启动新版，保留 `--silent` / `--start-server`。
+   然后托盘退出，图标消失 1～2 秒，**服务进程不受影响**；重启后的托盘会按原状态恢复服务。
+   - 这里刻意**不生成任何 `.cmd`/`.bat` 脚本**：旧版用过「写脚本 → `tasklist` 轮询父进程 → `copy /y` 覆盖 exe → `start`」，
+     那是杀软启发式里最典型的自我更新形态（未签名时几乎必被 `!ml` 类规则命中）。旧版留下的
+     `%APPDATA%\atlisp-mcp\update-tray.cmd` 会在新版本启动时自动删除。
 3. **失败降级**：如果托盘所在目录不可写（例如手工放进 Program Files），只记录日志并提示手动重启，不弹 UAC。
-   更新脚本的日志在 `%APPDATA%\atlisp-mcp\logs\tray-update.log`。
-4. exe 的版本号在构建时取自 `package.json`（`npm run build:tray` / `build.ps1` 自动注入），可在「关于」和「环境诊断」里查看。
+   替换过程写入托盘日志 `%APPDATA%\atlisp-mcp\logs\tray.log`（关键字 `tray-selfupdate`）。
+4. exe 的版本号在构建时取自 `package.json`（`npm run build:tray` / `build.ps1` 自动注入），可在「关于」和「环境诊断」里查看；
+   同时 exe 的版本资源里带 `CompanyName=atlisp.cn`、`ProductName=@lisp MCP Server`、`FileDescription`、`Copyright`，
+   文件属性里能看到完整的发布者信息（见「杀软误报」）。
+
+## 杀软误报（Defender / 360 / 火绒）
+
+托盘是**未签名**的 .NET WinForms exe，同时又具备「自复制、写启动项、下载并执行安装包、自我更新」等能力，
+这在 Defender 的云端 ML 模型（报 `Trojan:Win32/Wacatac.B!ml` 一类 `!ml` 后缀）眼里和恶意软件高度重合。
+已做的降噪改动：
+
+- **版本资源补全**：exe 里有 `CompanyName=atlisp.cn`、`ProductName=@lisp MCP Server`、
+  `FileDescription`、`Copyright`、`LegalTrademarks`（之前只有版本号，发布者字段是空的，是 ML 模型的强特征）。
+- **不再生成任何 `.cmd`/`.bat` 脚本**：自我更新改为「新版 exe 暂存 → 副本自己覆盖目标 → 启动」，
+  彻底去掉「`tasklist` 轮询父进程 + `copy /y` 覆盖 exe + `start`」这套恶意软件自我更新的经典形态。
+- **默认不再自动安装新版本**：`AutoUpgrade` 默认 `false`、间隔默认 24h，只检查并提示，避免开机后
+  静默联网并在后台执行 `npm install -g`（「下载并执行」形态）。
+- **迁移/重启不再借道 `cmd.exe`**：自迁移只做「复制 + `Process.Start` 副本」。
+
+仍然需要做（代码层面已无能为力）：
+
+1. **代码签名**（唯一根治手段）。OV/EV 证书需硬件 token/HSM，签名后用同一主体持续发布才能积累发布者信誉：
+   ```bat
+   set ATLISP_TRAY_SIGN_THUMBPRINT=<证书指纹，无空格>
+   npm run build:tray
+   ```
+   也可以直接调脚本：`powershell -File tray\build.ps1 -SignThumbprint <指纹> -TimestampUrl http://timestamp.digicert.com`
+   （`build.ps1` 会找 Windows SDK 的 `signtool.exe`，签名 + SHA256 时间戳；证书没插好会直接报错退出）。
+   Linux 交叉编译环境下没有 `signtool`，发布前在 Windows 上补签，或把签名放到 CI 的 Windows runner。
+2. **提交误报**：<https://www.microsoft.com/en-us/wdsi/filesubmission>（按「软件开发者」提交，公司名与签名主体一致）。
+   国内再报 360 / 火绒 / 腾讯的误报通道。**先改行为再提报**，否则换 hash 后要重提。
+3. 不要把 exe 加壳/混淆/UPX；发布时附 `SHA256SUMS`。
 
 ## 故障排查
 
@@ -353,9 +388,9 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 安装失败：`'node' 不是内部或外部命令` | 托盘进程继承的 `PATH` 不含 Node.js 目录（常见于「用托盘装完 Node.js 后没重启 Explorer/注销」）。新版托盘会在执行 npm 前自动把 Node.js 目录补进 `PATH`；若仍失败请重启托盘或注销后重新登录，也可在 `tray.json` 显式配置 `NodePath` |
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
-| 升级后托盘还是旧版本 | 查看 `%APPDATA%\atlisp-mcp\logs\tray-update.log`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
+| 升级后托盘还是旧版本 | 在托盘日志 `%APPDATA%\atlisp-mcp\logs\tray.log` 里搜 `tray-selfupdate`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
-| 首次运行被 SmartScreen 拦截 | exe 未做代码签名，点击“更多信息 → 仍要运行”；建议从本仓库自行构建 |
+| 首次运行被 SmartScreen 拦截 / 被杀软报毒 | exe 未做代码签名（见「杀软误报」）。临时处理：点“更多信息 → 仍要运行”，或把安装目录加入排除项；根治靠代码签名 + 提交误报 |
 
 ## 代码结构
 

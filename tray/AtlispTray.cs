@@ -49,6 +49,10 @@ namespace Atlisp.Tray
         [STAThread]
         private static void Main(string[] args)
         {
+            // 自替换模式：本进程是新版本的暂存副本，只负责等旧进程退出、覆盖目标 exe
+            // 再启动它。必须放在创建互斥体之前（此时旧进程还持有托盘互斥体）。
+            if (TraySelfUpdate.TryApplyStagedUpdate(args)) return;
+
             bool silent = false;
             for (int i = 0; i < args.Length; i++)
             {
@@ -63,7 +67,26 @@ namespace Atlisp.Tray
             }
             SilentMode = silent;
 
+            // 自迁移会把副本立刻拉起，此时本进程还没退出、仍持有托盘互斥体。
+            // 副本用 --wait-pid 等本进程退出后再创建托盘，避免撞上「已经在运行」。
+            int waitPid = 0;
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (string.Equals(args[i], "--wait-pid", StringComparison.OrdinalIgnoreCase))
+                {
+                    int.TryParse(args[i + 1], NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out waitPid);
+                }
+            }
+            if (waitPid > 0)
+            {
+                TraySelfUpdate.WaitForExit(waitPid, TimeSpan.FromSeconds(20));
+            }
+
             AppLog.Init();
+            // 旧版本的自我更新靠 %APPDATA%\atlisp-mcp\update-tray.cmd，新版不再生成，
+            // 顺手清掉残留（避免留下一个「可疑脚本」样本）。
+            TraySelfUpdate.CleanupLegacyScript();
 
             // Windows 7/8 上的 .NET Framework 默认不启用 TLS 1.2，npmmirror 需要 TLS 1.2
             try
@@ -97,6 +120,8 @@ namespace Atlisp.Tray
                 // 从 npm 包目录启动时先把自己迁到用户目录：运行中的 exe 会被 Windows
                 // 锁住，会导致 `npm install -g @atlisp/mcp@latest` 在替换 dist\AtlispTray.exe
                 // 时报 EBUSY/EPERM。迁移后包内文件不再被占用，也便于后续自我更新。
+                // 副本直接启动（不再借道 cmd 脚本，避免「写脚本等父进程退出」这种
+                // 杀软重点关注的形态）。
                 string relocateMessage;
                 if (TraySelfUpdate.TryRelocate(out relocateMessage))
                 {
@@ -387,6 +412,11 @@ namespace Atlisp.Tray
 
     public sealed class TrayConfig
     {
+        /// <summary>配置结构版本；0 表示旧版配置（用于一次性迁移默认值）。</summary>
+        public const int ConfigVersionCurrent = 1;
+
+        /// <summary>写入 tray.json 的配置版本，见 <see cref="ConfigVersionCurrent"/>。</summary>
+        public int ConfigVersion { get; set; }
         public int Port { get; set; }
         public string NodePath { get; set; }
         public string NpmPath { get; set; }
@@ -422,6 +452,7 @@ namespace Atlisp.Tray
 
         public TrayConfig()
         {
+            ConfigVersion = ConfigVersionCurrent;
             Port = 8110;
             NodePath = "";
             NpmPath = "";
@@ -434,8 +465,10 @@ namespace Atlisp.Tray
             CheckUpdateOnStart = true;
             StopServerOnExit = false;
             AutoInstall = true;
-            AutoUpgrade = true;
-            AutoUpgradeHours = 1;
+            // 默认「只检查、只提示，不自动安装」：开机后静默联网并在后台执行
+            // npm 全局安装，是杀软启发式里典型的「下载并执行」形态，改成用户确认后再升级。
+            AutoUpgrade = false;
+            AutoUpgradeHours = 24;
             HealthyPollSeconds = 5;
             DwgKbUrl = "http://127.0.0.1:8322";
             DwgKbApiKey = "";
@@ -465,13 +498,27 @@ namespace Atlisp.Tray
                 AppLog.Write("读取托盘配置失败，使用默认值: " + ex.Message);
             }
             config.Normalize();
-            if (!exists) config.Save();
+            // 旧版默认是「每 1 小时自动静默升级」，新默认改为「只检查并提示」。
+            // 已装了旧版托盘的机器不需要手动清 tray.json：这里一次性迁移到新默认，
+            // 避免继续每小时联网查版本并在后台静默执行 npm 安装。
+            if (config.ConfigVersion < ConfigVersionCurrent)
+            {
+                config.AutoUpgrade = false;
+                if (config.AutoUpgradeHours <= 1) config.AutoUpgradeHours = 24;
+                config.ConfigVersion = ConfigVersionCurrent;
+                config.Save();
+            }
+            else if (!exists)
+            {
+                config.Save();
+            }
             return config;
         }
 
         public void CopyFrom(TrayConfig other)
         {
             if (other == null) return;
+            ConfigVersion = other.ConfigVersion;
             Port = other.Port;
             NodePath = other.NodePath;
             NpmPath = other.NpmPath;
@@ -518,7 +565,7 @@ namespace Atlisp.Tray
         {
             if (Port < 1 || Port > 65535) Port = 8110;
             if (HealthyPollSeconds < 2 || HealthyPollSeconds > 60) HealthyPollSeconds = 5;
-            if (AutoUpgradeHours < 1 || AutoUpgradeHours > 168) AutoUpgradeHours = 1;
+            if (AutoUpgradeHours < 1 || AutoUpgradeHours > 168) AutoUpgradeHours = 24;
             NodePath = NodePath ?? "";
             NpmPath = NpmPath ?? "";
             ServerScript = ServerScript ?? "";
@@ -2325,13 +2372,20 @@ namespace Atlisp.Tray
     /// 失败（EBUSY/EPERM），运行中的旧进程也不会自动变成新版本。
     ///
     /// 处理方式：
-    ///   1. 启动时若发现自己运行在 node_modules 里，复制到用户目录并重启（自迁移）；
-    ///   2. 每次升级 @lisp/mcp 成功后，比对新包内 exe 与当前 exe，不同则用临时 cmd
-    ///      脚本（等本进程退出 → 覆盖 → 重新启动）完成自我替换。
+    ///   1. 启动时若发现自己运行在 node_modules 里，复制到用户目录并直接启动副本（自迁移）；
+    ///   2. 每次升级 @lisp/mcp 成功后，比对新包内 exe 与当前 exe，不同则把新 exe 暂存为
+    ///      副本，由副本自己（`--apply-update` 模式）等旧进程退出后覆盖目标 exe 再启动。
+    ///
+    /// 注意：这里刻意**不生成任何 .cmd/.bat 脚本**。「写脚本 → tasklist 轮询父进程 →
+    /// copy /y 覆盖 exe → start」是杀软启发式里最典型的自我更新形态（未签名时几乎必报
+    /// Wacatac 一类的 !ml 检出）。由 exe 自身完成替换既能达到同样效果，也不会踩这条规则。
     /// </summary>
     internal static class TraySelfUpdate
     {
         private const string StagedName = ".AtlispTray.update.exe";
+
+        /// <summary>自替换模式开关：由上一版托盘启动本副本时传入。</summary>
+        public const string ApplyUpdateSwitch = "--apply-update";
 
         public static string StablePath
         {
@@ -2351,8 +2405,8 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 从 npm 包目录启动时把自身复制到用户目录，并在本进程退出后启动新副本。
-        /// 返回 true 表示已安排重启，调用方应直接退出。
+        /// 从 npm 包目录启动时把自身复制到用户目录，然后直接启动副本。
+        /// 返回 true 表示已启动副本，调用方应直接退出。
         /// </summary>
         public static bool TryRelocate(out string message)
         {
@@ -2384,8 +2438,7 @@ namespace Atlisp.Tray
             }
 
             string error;
-            if (!ScheduleRestartScript(Process.GetCurrentProcess().Id, null, StablePath,
-                Program.StartServerRequested, out error))
+            if (!StartDetached(StablePath, BuildLaunchArgs(Program.StartServerRequested), out error))
             {
                 message = "无法启动迁移后的托盘: " + error;
                 return false;
@@ -2451,11 +2504,11 @@ namespace Atlisp.Tray
             }
 
             string error;
-            if (!ScheduleRestartScript(Process.GetCurrentProcess().Id, staged, current,
-                startServer, out error))
+            if (!StartDetached(staged, BuildApplyUpdateArgs(staged, current, startServer),
+                out error))
             {
                 try { File.Delete(staged); } catch { }
-                message = "无法启动托盘更新脚本: " + error;
+                message = "无法启动托盘更新进程: " + error;
                 return false;
             }
 
@@ -2464,85 +2517,20 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 写一个临时 cmd：等本进程退出 → （可选）覆盖 exe → 重新启动。
-        /// Windows 不允许覆盖正在运行的 exe，所以这一步只能交给独立进程。
+        /// 启动一个独立进程（不等待、不继承控制台）。托盘的重启/迁移/自替换都走这里。
         /// </summary>
-        private static bool ScheduleRestartScript(int pid, string stagedExe, string targetExe,
-            bool startServer, out string error)
+        private static bool StartDetached(string exePath, string arguments, out string error)
         {
             error = "";
             try
             {
-                Directory.CreateDirectory(Paths.DataDir);
-                string logFile = Path.Combine(Paths.LogDir, "tray-update.log");
-                string script = Path.Combine(Paths.DataDir, "update-tray.cmd");
-
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("@echo off");
-                sb.AppendLine("setlocal enabledelayedexpansion");
-                sb.AppendLine("set /a tries=0");
-                sb.AppendLine(":wait");
-                sb.AppendLine("tasklist /FI \"PID eq " + pid.ToString(CultureInfo.InvariantCulture) +
-                    "\" /NH 2>nul | findstr /C:\"" + pid.ToString(CultureInfo.InvariantCulture) + "\" >nul");
-                sb.AppendLine("if errorlevel 1 goto apply");
-                sb.AppendLine("set /a tries+=1");
-                sb.AppendLine("if !tries! GEQ 120 goto fail");
-                sb.AppendLine("ping -n 1 127.0.0.1 >nul");
-                sb.AppendLine("goto wait");
-                sb.AppendLine(":apply");
-                if (!string.IsNullOrEmpty(stagedExe))
-                {
-                    sb.AppendLine("set /a tries=0");
-                    sb.AppendLine(":copy");
-                    sb.AppendLine("copy /y \"" + stagedExe + "\" \"" + targetExe + "\" >nul 2>&1");
-                    sb.AppendLine("if not errorlevel 1 goto start");
-                    sb.AppendLine("set /a tries+=1");
-                    sb.AppendLine("if !tries! GEQ 30 goto copyfail");
-                    sb.AppendLine("ping -n 1 127.0.0.1 >nul");
-                    sb.AppendLine("goto copy");
-                }
-                sb.AppendLine(":start");
-                if (!string.IsNullOrEmpty(stagedExe))
-                {
-                    sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
-                }
-                string args = "";
-                if (Program.SilentMode) args += " --silent";
-                if (startServer) args += " --start-server";
-                string targetDir = Path.GetDirectoryName(targetExe);
-                if (!string.IsNullOrEmpty(targetDir))
-                {
-                    sb.AppendLine("cd /d \"" + targetDir + "\"");
-                }
-                sb.AppendLine("start \"\" \"" + targetExe + "\"" + args);
-                sb.AppendLine("del /q \"%~f0\" >nul 2>&1");
-                sb.AppendLine("exit /b 0");
-                sb.AppendLine(":copyfail");
-                // 覆盖失败说明目标还是旧版：先把旧版拉起来，避免托盘消失
-                sb.AppendLine("echo [%date% %time%] tray update copy failed >>\"" + logFile + "\"");
-                sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
-                if (!string.IsNullOrEmpty(targetDir))
-                {
-                    sb.AppendLine("cd /d \"" + targetDir + "\"");
-                }
-                sb.AppendLine("start \"\" \"" + targetExe + "\"" + args);
-                sb.AppendLine("del /q \"%~f0\" >nul 2>&1");
-                sb.AppendLine("exit /b 1");
-                sb.AppendLine(":fail");
-                sb.AppendLine("echo [%date% %time%] tray update failed (target=" + targetExe +
-                    ") >>\"" + logFile + "\"");
-                sb.AppendLine("del /q \"" + stagedExe + "\" >nul 2>&1");
-                sb.AppendLine("exit /b 1");
-
-                File.WriteAllText(script, sb.ToString(), Encoding.Default);
-
                 ProcessStartInfo psi = new ProcessStartInfo();
-                string comspec = Environment.GetEnvironmentVariable("ComSpec");
-                psi.FileName = string.IsNullOrEmpty(comspec) ? "cmd.exe" : comspec;
-                psi.Arguments = "/c call " + ProcessRunner.Quote(script);
+                psi.FileName = exePath;
+                psi.Arguments = arguments ?? "";
+                string dir = Path.GetDirectoryName(exePath);
+                if (!string.IsNullOrEmpty(dir)) psi.WorkingDirectory = dir;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
-                psi.WindowStyle = ProcessWindowStyle.Hidden;
                 Process.Start(psi);
                 return true;
             }
@@ -2550,6 +2538,183 @@ namespace Atlisp.Tray
             {
                 error = ex.Message;
                 return false;
+            }
+        }
+
+        private static string BuildLaunchArgs(bool startServer)
+        {
+            string args = "";
+            if (Program.SilentMode) args += " --silent";
+            if (startServer) args += " --start-server";
+            // 自迁移时本进程尚未退出，副本要等它让出托盘互斥体
+            args += " --wait-pid " +
+                Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+            return args.Trim();
+        }
+
+        /// <summary>
+        /// 自替换参数：--apply-update &lt;staged&gt; &lt;target&gt; &lt;pid&gt; [--silent] [--start-server]
+        /// </summary>
+        private static string BuildApplyUpdateArgs(string staged, string target, bool startServer)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append(ApplyUpdateSwitch);
+            sb.Append(' ');
+            sb.Append(ProcessRunner.Quote(staged));
+            sb.Append(' ');
+            sb.Append(ProcessRunner.Quote(target));
+            sb.Append(' ');
+            sb.Append(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+            if (Program.SilentMode) sb.Append(" --silent");
+            if (startServer) sb.Append(" --start-server");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 自替换模式入口（由上一版托盘启动）：等旧进程退出 → 覆盖目标 exe → 启动新版。
+        /// 返回 true 表示本进程只负责替换，调用方应立即退出、不要创建托盘窗口。
+        /// </summary>
+        public static bool TryApplyStagedUpdate(string[] args)
+        {
+            if (args == null) return false;
+            int index = -1;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], ApplyUpdateSwitch, StringComparison.OrdinalIgnoreCase))
+                {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0 || args.Length < index + 4) return false;
+            string staged = args[index + 1];
+            string target = args[index + 2];
+            int pid;
+            if (!int.TryParse(args[index + 3], NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out pid))
+            {
+                return false;
+            }
+
+            bool silent = false;
+            bool startServer = false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--silent", StringComparison.OrdinalIgnoreCase))
+                {
+                    silent = true;
+                }
+                else if (string.Equals(args[i], "--start-server", StringComparison.OrdinalIgnoreCase))
+                {
+                    startServer = true;
+                }
+            }
+
+            AppLog.Init();
+            try
+            {
+                AppLog.Write("tray-selfupdate: 等待旧进程 " + pid + " 退出后替换 " + target);
+                WaitForExit(pid, TimeSpan.FromSeconds(120));
+                if (!ReplaceWithRetry(staged, target))
+                {
+                    // 旧进程可能还活着（镜像仍被锁），这时再启动一份只会撞互斥体，
+                    // 直接放弃本次替换，旧托盘继续用，下次升级再试。
+                    return true;
+                }
+
+                string error;
+                if (!StartDetached(target, BuildLaunchArgsFor(silent, startServer), out error))
+                {
+                    AppLog.Write("tray-selfupdate: 启动新托盘失败: " + error);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 自替换失败不能把异常抛出去（此时还没注册全局异常处理器），
+                // 记日志后静默退出，旧托盘文件保持可用。
+                AppLog.Write("tray-selfupdate: 自替换失败: " + ex);
+            }
+            return true;
+        }
+
+        private static string BuildLaunchArgsFor(bool silent, bool startServer)
+        {
+            string args = "";
+            if (silent) args += " --silent";
+            if (startServer) args += " --start-server";
+            return args.Trim();
+        }
+
+        /// <summary>
+        /// 等指定进程退出（最多 timeout，超时只记日志）。托盘自迁移/自替换用它避免
+        /// 「两个实例抢同一个互斥体」或「覆盖还被锁住的 exe」。
+        /// </summary>
+        public static void WaitForExit(int pid, TimeSpan timeout)
+        {
+            try
+            {
+                Process process = Process.GetProcessById(pid);
+                if (!process.WaitForExit((int)timeout.TotalMilliseconds))
+                {
+                    AppLog.Write("tray-selfupdate: 等待旧进程超时，继续尝试替换");
+                }
+                process.Close();
+            }
+            catch (ArgumentException)
+            {
+                // 进程已经不在了，正常路径
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("tray-selfupdate: 等待旧进程失败: " + ex.Message);
+            }
+            // 句柄释放后镜像文件可能还被短暂锁住，先等一拍再覆盖
+            Thread.Sleep(500);
+        }
+
+        /// <summary>
+        /// 覆盖目标 exe：旧进程刚退出时镜像可能还被短暂锁住，重试 30 次（每次 500ms）。
+        /// 覆盖失败时保留旧版本继续可用，下次升级再试。
+        /// </summary>
+        private static bool ReplaceWithRetry(string staged, string target)
+        {
+            for (int attempt = 0; attempt < 30; attempt++)
+            {
+                try
+                {
+                    File.Copy(staged, target, true);
+                    try { File.Delete(staged); } catch (Exception) { }
+                    AppLog.Write("tray-selfupdate: 已替换 " + target);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (attempt == 29)
+                    {
+                        AppLog.Write("tray-selfupdate: 覆盖 " + target + " 失败: " + ex.Message +
+                            "（沿用当前版本）");
+                        return false;
+                    }
+                    Thread.Sleep(500);
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 清理旧版留下的自我更新脚本（旧版本会写 %APPDATA%\atlisp-mcp\update-tray.cmd）。
+        /// 新版本不再生成这种脚本，残留文件既没用又容易被杀软当成可疑样本。
+        /// </summary>
+        public static void CleanupLegacyScript()
+        {
+            try
+            {
+                string legacy = Path.Combine(Paths.DataDir, "update-tray.cmd");
+                if (File.Exists(legacy)) File.Delete(legacy);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("tray-selfupdate: 清理旧更新脚本失败: " + ex.Message);
             }
         }
 
@@ -4907,7 +5072,7 @@ namespace Atlisp.Tray
             _autoInstallItem.Checked = _config.AutoInstall;
             _autoUpgradeItem.Checked = _config.AutoUpgrade;
             _autoUpgradeItem.Text = "自动升级 @lisp/mcp（每 " +
-                (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1) + " 小时）";
+                (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时）";
 
             _tray.Text = Truncate("@lisp MCP · " + StateText(state) + " · 端口 " + _config.Port, 63);
 
@@ -5372,7 +5537,7 @@ namespace Atlisp.Tray
             }
             if (now < _dwgKbTaskRetryAt) return;
 
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
             _nextDwgKbCheckAt = now.AddHours(hours);
 
             PythonInfo info = PythonLocator.Resolve(_config, false);
@@ -6511,7 +6676,7 @@ namespace Atlisp.Tray
             }
             if (now < _nextUpdateCheckAt) return;
 
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
             _nextUpdateCheckAt = now.AddHours(hours);
             AppLog.Write("auto-upgrade: 开始检查 @lisp/mcp 新版本");
             CheckUpdate(true, true);
@@ -7319,7 +7484,7 @@ namespace Atlisp.Tray
             _startupUpdateChecked = _config.AutoUpgrade;
             UpdateUi();
 
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
             Balloon("定时自动检查并升级",
                 _config.AutoUpgrade
                     ? "开启：每 " + hours + " 小时检查一次 @lisp/mcp 新版本，发现后自动升级。"
@@ -7422,7 +7587,7 @@ namespace Atlisp.Tray
             builder.AppendLine("自动补齐环境 : " + (_config.AutoInstall ? "开" : "关") + BootstrapStateText());
             builder.AppendLine("自动升级     : " +
                 (_config.AutoUpgrade
-                    ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1) + " 小时检查并升级"
+                    ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时检查并升级"
                     : "关"));
             builder.AppendLine("npm 源       : " +
                 (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
