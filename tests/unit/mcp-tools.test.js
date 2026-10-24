@@ -95,6 +95,8 @@ vi.mock('../../src/streaming.js', () => ({
 vi.mock('../../src/constants.js', () => ({
   CAD_PLATFORMS: m.cadPlatforms,
   CAD_RESOURCE_URIS: m.cadResourceUris,
+  SERVER_VERSION: 'test',
+  BUILD_META: null,
 }));
 
 vi.mock('../../src/cad.js', () => ({
@@ -398,7 +400,7 @@ describe('lazy handlers', () => {
   it('returns error when handler is missing', async () => {
     const result = await TOOL_HANDLERS.open_cad({ platform: 'AutoCAD' });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toBe('Handler not found: open_cad');
+    expect(result.content[0].text).toContain('Handler not found: open_cad');
   });
 });
 

@@ -1,6 +1,6 @@
 import { getHandler, getHandlerModule } from './handler-loader.js';
 import { streamEntitiesByType, streamTextContent, streamBlockRefs } from './streaming.js';
-import { CAD_PLATFORMS, CAD_RESOURCE_URIS } from './constants.js';
+import { CAD_PLATFORMS, CAD_RESOURCE_URIS, SERVER_VERSION, BUILD_META } from './constants.js';
 import { cad } from './cad.js';
 import { pool } from './cad-pool.js';
 import { tools } from './tools/index.js';
@@ -51,7 +51,23 @@ export { handleToolCall };
 function lazy(toolName, argMapper) {
   return async (args) => {
     const handler = await getHandler(toolName);
-    if (!handler) return { content: [{ type: 'text', text: `Handler not found: ${toolName}` }], isError: true };
+    if (!handler) {
+      /* 把版本/构建号带进错误：同一句「Handler not found」可能是旧 dist、
+         精简安装（缺 handlers 目录）或 CAD 端/中继版本不一致，只有版本号
+         能区分。前缀保持不变，agent 侧的 failure-signals 仍能识别。 */
+      const build = BUILD_META
+        ? `${SERVER_VERSION}/${BUILD_META.commit || 'unknown'}`
+        : SERVER_VERSION;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Handler not found: ${toolName} (MCP ${build})；` +
+            '可能是 MCP 服务版本与 CAD/Agent 不一致，或 handlers 目录缺失。请重启/升级 MCP 后重试。',
+        }],
+        isError: true,
+      };
+    }
     const mapped = argMapper ? argMapper(args) : args;
     if (Array.isArray(mapped)) return handler(...mapped);
     return handler(mapped);
