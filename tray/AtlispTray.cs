@@ -582,18 +582,29 @@ namespace Atlisp.Tray
     internal sealed class HealthSnapshot
     {
         public bool Ok;
+        public bool Timeout;
         public bool CadConnected;
         public string CadStatus;
         public string CadPlatform;
         public string CadVersion;
         public double UptimeSeconds;
         public int ToolCount;
+        public int CommandQueueSize;
         public string Error;
 
         public string CadSummary()
         {
-            if (!Ok) return "服务未响应";
+            if (!Ok)
+            {
+                return Timeout ? "响应超时（CAD 可能正忙）" : "服务未响应";
+            }
             if (!CadConnected) return "CAD 未连接";
+            if (string.Equals(CadStatus, "busy", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandQueueSize > 0
+                    ? "CAD 忙（队列 " + CommandQueueSize + "）"
+                    : "CAD 忙";
+            }
             string text = "CAD 已连接";
             if (!string.IsNullOrEmpty(CadPlatform)) text += " · " + CadPlatform;
             if (!string.IsNullOrEmpty(CadVersion)) text += " " + CadVersion;
@@ -603,6 +614,13 @@ namespace Atlisp.Tray
 
     internal static class HealthClient
     {
+        /// <summary>
+        /// 健康检查的 HTTP 超时。必须大于服务端 /health 的最长响应时间：
+        /// 服务端在 CAD 忙时最多会等 HEALTH_FAST_PROBE_MS(1.2s) 再返回，
+        /// 这里给到 10s，避免把「慢」误判成「服务没起来」（状态行来回跳的根因）。
+        /// </summary>
+        public const int TimeoutMs = 10000;
+
         public static HealthSnapshot Check(int port, int timeoutMs)
         {
             HealthSnapshot snapshot = new HealthSnapshot();
@@ -625,6 +643,14 @@ namespace Atlisp.Tray
                     Parse(json, snapshot);
                 }
                 snapshot.Ok = true;
+            }
+            catch (WebException ex)
+            {
+                snapshot.Ok = false;
+                // 超时单独标记：这只是「这一轮探测慢了」（CAD 忙 / worker 轮换），
+                // 不等于服务挂了，调用方据此保留上一次状态。
+                snapshot.Timeout = ex.Status == WebExceptionStatus.Timeout;
+                snapshot.Error = ex.Message;
             }
             catch (Exception ex)
             {
@@ -653,6 +679,7 @@ namespace Atlisp.Tray
                         snapshot.CadStatus = GetString(cad, "status");
                         snapshot.CadPlatform = GetString(cad, "platform");
                         snapshot.CadVersion = GetString(cad, "version");
+                        snapshot.CommandQueueSize = (int)GetDouble(cad, "commandQueueSize");
                     }
                 }
 
@@ -736,7 +763,7 @@ namespace Atlisp.Tray
 
         public void CheckNow()
         {
-            _snapshot = HealthClient.Check(_port, 1500);
+            _snapshot = HealthClient.Check(_port, HealthClient.TimeoutMs);
         }
 
         public void SetPort(int port)
@@ -763,7 +790,7 @@ namespace Atlisp.Tray
             {
                 try
                 {
-                    _snapshot = HealthClient.Check(_port, 2000);
+                    _snapshot = HealthClient.Check(_port, HealthClient.TimeoutMs);
                 }
                 catch (Exception ex)
                 {
@@ -1774,6 +1801,14 @@ namespace Atlisp.Tray
             {
                 _state = ServerState.Running;
                 _lastError = null;
+                return _state;
+            }
+
+            /* 探测超时 ≠ 服务没起来：CAD 忙（长命令 / worker 轮换）时 ping 会慢，
+               托盘侧 HTTP 超时也会到。只要之前已经是 Running 就保持 Running，
+               否则状态行会在「运行中 / 启动中」之间来回跳（真机踩过）。 */
+            if (health != null && health.Timeout && _state == ServerState.Running)
+            {
                 return _state;
             }
 
@@ -4127,6 +4162,9 @@ namespace Atlisp.Tray
         private const int ServerRestartMaxFailures = 5;
         private DateTime _serverRestartRetryAt = DateTime.MinValue;
         private int _serverRestartFailures;
+        // 升级/安装时不再一开始就停服务；只有替换文件被占用（Windows 文件锁）时才停服务重试一次
+        private int _installStopRetries;
+        private int _dwgKbStopRetries;
         // 用户点过「停止知识库服务」后不再自动拉起，直到手动启动或下次开托盘
         private bool _dwgKbUserStopped;
         private DateTime _dwgKbRestartRetryAt = DateTime.MinValue;
@@ -5393,19 +5431,8 @@ namespace Atlisp.Tray
             lock (_dwgKbLock) { _dwgKbPython = info; }
             if (!info.HasPackage || !VersionUtil.IsNewer(latest, info.PackageVersion)) return;
 
-            if (DwgKbServer.IsRunning())
-            {
-                string stopError;
-                if (DwgKbServer.Stop(out stopError))
-                {
-                    _dwgKbRestartAfterUpgrade = true;
-                }
-                else
-                {
-                    AppLog.Write("dwg-kb auto-upgrade: 停止知识库失败（继续升级）: " + stopError);
-                }
-            }
-
+            // 不在开始时停知识库：pip 先下载，真正替换 .pyd 被占用时失败处理里
+            // 会停服务并重试（见 HandleTaskFailure）
             _dwgKbAutoFlow = true;
             AppLog.Write("dwg-kb auto-upgrade: " + info.PackageVersion + " -> " + latest);
             if (!_silent)
@@ -5710,22 +5737,8 @@ namespace Atlisp.Tray
                 return;
             }
 
-            // 升级时如果知识库是托盘自己启动的进程，先停掉（Windows 会锁定被加载的
-            // .pyd）；成功后 HandleTaskSuccess 会自动按原状态拉起。
-            if (info.HasPackage && DwgKbServer.IsRunning())
-            {
-                string stopError;
-                if (DwgKbServer.Stop(out stopError))
-                {
-                    _dwgKbRestartAfterUpgrade = true;
-                    AppLog.Write("dwg-kb: 升级前停止托盘启动的知识库进程");
-                }
-                else if (!auto)
-                {
-                    AppLog.Write("dwg-kb: 停止知识库失败（继续升级）: " + stopError);
-                }
-            }
-
+            // 不再升级前停止知识库：pip 先下载，只有在替换 .pyd 被占用时
+            // HandleTaskFailure 会停服务并重试一次；成功后自动按原状态拉起。
             string title = info.HasPackage ? "升级知识库（PyPI）" : "安装知识库（PyPI）";
             string action = (info.HasPackage ? "dwgkb-upgrade" : "dwgkb-install") +
                 (auto ? "-auto" : "");
@@ -6418,7 +6431,7 @@ namespace Atlisp.Tray
             }
             ServerInfo info = ServerLocator.Resolve(_config, true);
             bool shouldRunAfter = !info.IsInstalled || IsServerBusy();
-            StopServerForUpdate();
+            // 不在开始时停服务：npm 先下载，真正替换文件时若被占用，失败处理里会停服务重试
             RunNpmTask("安装 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "install", true, shouldRunAfter);
@@ -6438,7 +6451,7 @@ namespace Atlisp.Tray
                 return;
             }
             bool shouldRunAfter = IsServerBusy();
-            StopServerForUpdate();
+            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
             RunNpmTask("升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "upgrade", true, shouldRunAfter);
@@ -6514,7 +6527,7 @@ namespace Atlisp.Tray
             ServerInfo info = ServerLocator.Resolve(_config, true);
             if (!info.IsInstalled) return;
             bool shouldRunAfter = IsServerBusy();
-            StopServerForUpdate();
+            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
             RunNpmTask("自动升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "upgrade-auto", false, shouldRunAfter);
@@ -6764,6 +6777,7 @@ namespace Atlisp.Tray
 
                 _dwgKbTaskFailures = 0;
                 _dwgKbTaskRetryAt = DateTime.MinValue;
+                _dwgKbStopRetries = 0;
                 _dwgKbAutoFlow = false;
 
                 bool restart = _dwgKbRestartAfterUpgrade;
@@ -6804,6 +6818,7 @@ namespace Atlisp.Tray
             // 这里补上它本该做的事（复制 VC 运行时 DLL）；正常安装时是幂等空操作。
             if (action == "install" || action == "upgrade" || action == "upgrade-auto")
             {
+                _installStopRetries = 0;
                 AppLog.Write("edge-js: " + EdgeNativeSupport.Repair(info));
             }
 
@@ -6976,6 +6991,30 @@ namespace Atlisp.Tray
             {
                 bool auto = action.EndsWith("-auto", StringComparison.Ordinal);
                 bool upgraded = action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal);
+
+                // 现在升级不再提前停服务；pip 真正替换被占用的 .pyd/.dll 时会报
+                // PermissionError / WinError 32，这时才停知识库并重试一次。
+                if (_dwgKbStopRetries < 1 && LooksLikeFileLock(text))
+                {
+                    _dwgKbStopRetries++;
+                    string stopError = null;
+                    if (DwgKbServer.IsRunning() && DwgKbServer.Stop(out stopError))
+                    {
+                        _dwgKbRestartAfterUpgrade = true;
+                        AppLog.Write("dwg-kb: 替换文件被占用，停止知识库后重试");
+                    }
+                    else
+                    {
+                        AppLog.Write("dwg-kb: 替换文件被占用，停止知识库未成功（继续重试）: " +
+                            (stopError ?? "服务未运行"));
+                    }
+                    PythonInfo retryInfo = PythonLocator.Resolve(_config, false);
+                    lock (_dwgKbLock) { _dwgKbPython = retryInfo; }
+                    RunPipTask(retryInfo,
+                        upgraded ? "升级知识库（PyPI）" : "安装知识库（PyPI）", action, !auto);
+                    return;
+                }
+
                 // 自动升级失败：知识库可能在升级前被停掉了，先按旧版本恢复服务
                 if (auto && _dwgKbRestartAfterUpgrade)
                 {
@@ -6999,6 +7038,20 @@ namespace Atlisp.Tray
                 ShowError(upgraded ? "升级知识库失败" : "安装知识库失败",
                     "pip 退出码 " + exitCode + "\r\n\r\n" + hint);
                 Balloon("知识库安装失败", "pip 退出码 " + exitCode, ToolTipIcon.Warning);
+                return;
+            }
+
+            // 升级/安装不再一开始就停服务：npm 真正替换 edge-js 等被加载的文件时
+            // 会报 EBUSY/EPERM。这时才停服务并重试一次（见 StopServerForUpdate 注释）。
+            if (_installStopRetries < 1 && LooksLikeFileLock(text) &&
+                (action == "install" || action == "upgrade" || action == "upgrade-auto"))
+            {
+                _installStopRetries++;
+                bool wasRunning = IsServerBusy();
+                if (wasRunning) StopServerForUpdate();
+                AppLog.Write("upgrade: 替换文件被占用，停止服务后重试安装");
+                RunNpmTask(action == "upgrade-auto" ? "自动升级 @lisp MCP Server" : "升级 @lisp MCP Server",
+                    NpmRunner.InstallServerArgs(_config), action, showWindow, wasRunning);
                 return;
             }
 
@@ -7128,6 +7181,31 @@ namespace Atlisp.Tray
                 _restartAfterNodeInstall = false;
                 _server.RestartAsync();
             }
+        }
+
+        /// <summary>
+        /// 安装/升级失败输出里是否包含「本地文件被占用」的特征（Windows 文件锁）。
+        /// 升级流程默认不停服务，只有命中这些特征时才停服务并重试一次。
+        /// </summary>
+        private static bool LooksLikeFileLock(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            bool lockPhrase =
+                text.IndexOf("EBUSY", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("resource busy", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("WinError 32", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("PermissionError", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("另一个程序正在使用", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("正在使用此文件", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                text.IndexOf("文件被占用", StringComparison.OrdinalIgnoreCase) >= 0;
+            // npm 在 Windows 上替换被加载的文件时常见 EPERM + unlink/rename，
+            // 单看 EPERM 会和「权限不足」混淆，所以只在伴随删除/改名时算文件锁。
+            bool epermOnReplace =
+                text.IndexOf("EPERM", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                (text.IndexOf("unlink", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 text.IndexOf("rename", StringComparison.OrdinalIgnoreCase) >= 0);
+            return lockPhrase || epermOnReplace;
         }
 
         private static string Tail(string text, int maxLength)

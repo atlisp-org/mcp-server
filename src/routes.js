@@ -26,11 +26,21 @@ import { pairRelay, unpairRelay, getRelayStatus } from './relay-client.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const htmlDir = path.join(__dirname, 'html');
 
-/* /health 主动探测 CAD 的默认超时上限。
-   为什么是 8s：实测「冷启动首次 ping」与「CAD 刚忙完」都能到 3.5s 以上，
-   3s 会把**正常**的 CAD 判成 down（真机踩过：probe=1 报 down，紧接着
-   list_frames / block-refs 全部正常）。可用 HEALTH_PROBE_TIMEOUT_MS 覆盖。 */
+/* /health 主动探测 CAD 的超时上限。
+   - `?probe=1`（显式探测，给编排/peers 用）允许等 8s：实测「冷启动首次 ping」
+     与「CAD 刚忙完」都能到 3.5s 以上，3s 会把**正常**的 CAD 判成 down；
+   - 普通 /health 只等 HEALTH_FAST_PROBE_MS：托盘的健康检查 HTTP 超时是 2s，
+     服务端如果为了 ping 把请求拖到 8s，托盘就会判成「无响应 → 启动中」，
+     状态行在「运行中 / 启动中」之间来回跳（真机踩过）。
+   两者都可用 HEALTH_PROBE_TIMEOUT_MS / HEALTH_FAST_PROBE_MS 覆盖。 */
 const HEALTH_PROBE_TIMEOUT_MS = 8000;
+const HEALTH_FAST_PROBE_MS = 1200;
+
+/* 普通 /health 的探测去重：同一时刻只允许一个 ping 在途，且 CAD 忙（命令队列
+   非空）时不再往里塞 ping —— 否则 ping 会排在长命令后面，既必然超时又把队列
+   越堆越长。此时直接返回缓存状态（status=busy），HTTP 依然是 200。 */
+let healthProbeInFlight = false;
+
 
 function loadHtml(name, replacements = {}) {
     if (!htmlCache[name]) {
@@ -239,33 +249,49 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
         let cadResponseTime = 0;
         let probed = false;
         let probeOk = null;
+        let probeSkipped = false;
 
         let probeTimedOut = false;
 
+        const queueSize = cad._getQueueSize ? cad._getQueueSize() : 0;
         if (cad.connected || wantProbe) {
-            const t0 = Date.now();
-            const timeoutMs = Number(process.env.HEALTH_PROBE_TIMEOUT_MS) > 0
-                ? Number(process.env.HEALTH_PROBE_TIMEOUT_MS)
-                : HEALTH_PROBE_TIMEOUT_MS;
-            /* 超时用哨兵区分「探测失败」与「探测超时」：worker 卡住时 ping 可能很久不回，
-               但把超时当成 down 是**误报**（CAD 可能只是慢），语义必须是 timeout/unknown。 */
-            const TIMEOUT = Symbol('probe-timeout');
-            try {
-                /* ping 内部已吞异常（失败返回 false） */
-                const r = await Promise.race([
-                    Promise.resolve(cad.ping()).then(v => Boolean(v)).catch(() => false),
-                    new Promise(resolve => setTimeout(() => resolve(TIMEOUT), timeoutMs)),
-                ]);
-                if (r === TIMEOUT) probeTimedOut = true;
-                else probeOk = r;
-            } catch (e) {
-                logError('health ping 失败:', e.message);
-                probeOk = false;
+            /* 忙时（队列非空）或已有 ping 在途时不排队探测：直接按“忙碌”返回，
+               保证 /health 的响应时间远小于托盘 2s 的 HTTP 超时。 */
+            probeSkipped = !wantProbe && (queueSize > 0 || healthProbeInFlight);
+            if (!probeSkipped) {
+                const t0 = Date.now();
+                const envTimeout = Number(process.env.HEALTH_PROBE_TIMEOUT_MS) > 0
+                    ? Number(process.env.HEALTH_PROBE_TIMEOUT_MS)
+                    : HEALTH_PROBE_TIMEOUT_MS;
+                const fastTimeout = Number(process.env.HEALTH_FAST_PROBE_MS) > 0
+                    ? Number(process.env.HEALTH_FAST_PROBE_MS)
+                    : HEALTH_FAST_PROBE_MS;
+                const timeoutMs = wantProbe ? envTimeout : fastTimeout;
+                /* 超时用哨兵区分「探测失败」与「探测超时」：worker 卡住时 ping 可能很久不回，
+                   但把超时当成 down 是**误报**（CAD 可能只是慢），语义必须是 timeout/unknown。 */
+                const TIMEOUT = Symbol('probe-timeout');
+                healthProbeInFlight = true;
+                try {
+                    /* ping 内部已吞异常（失败返回 false） */
+                    const r = await Promise.race([
+                        Promise.resolve(cad.ping()).then(v => Boolean(v)).catch(() => false),
+                        new Promise(resolve => setTimeout(() => resolve(TIMEOUT), timeoutMs)),
+                    ]);
+                    if (r === TIMEOUT) probeTimedOut = true;
+                    else probeOk = r;
+                } catch (e) {
+                    logError('health ping 失败:', e.message);
+                    probeOk = false;
+                } finally {
+                    healthProbeInFlight = false;
+                }
+                probed = true;
+                cadResponseTime = Date.now() - t0;
             }
-            probed = true;
-            cadResponseTime = Date.now() - t0;
         }
-        const cadStatus = probeOk === true ? 'ready' : probeOk === false ? 'down' : probeTimedOut ? 'timeout' : 'unknown';
+        const cadStatus = probeSkipped
+            ? (queueSize > 0 ? 'busy' : 'unknown')
+            : probeOk === true ? 'ready' : probeOk === false ? 'down' : probeTimedOut ? 'timeout' : 'unknown';
 
         const memUsage = process.memoryUsage();
         const cpuUsage = process.cpuUsage();
@@ -282,7 +308,7 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
                 platform: cad.getPlatform ? cad.getPlatform() : null,
                 version: cad.getVersion ? cad.getVersion() : null,
                 responseTime: cadResponseTime,
-                commandQueueSize: cad._getQueueSize ? cad._getQueueSize() : 0,
+                commandQueueSize: queueSize,
                 restartCount: cad._getRestartCount ? cad._getRestartCount() : 0
             },
             system: {
