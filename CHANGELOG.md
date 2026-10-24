@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.4] - 2026-10-24
+
+### 更新内容
+
+- fix(handler-loader): 缺 handlers 目录时用静态清单兜底，避免全量 Handler not found (9f3449d)
+
 ## [1.12.3] - 2026-10-24
 
 ### 更新内容
