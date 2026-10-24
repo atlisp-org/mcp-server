@@ -2,6 +2,14 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.5] - 2026-10-24
+
+### 更新内容
+
+- fix(health): `/health` 忙时不再阻塞——普通探测 1.2s 上限（`HEALTH_FAST_PROBE_MS`），CAD 命令队列非空或已有 ping 在途时直接返回 `status:"busy"`（HTTP 200）；`?probe=1` 显式探测仍保留 8s (c917e12)
+- fix(tray): 健康检查 HTTP 超时 1.5s/2s → 10s（与服务端探测上限对齐）；探测超时不再把状态打成「启动中」，原为 Running 则保持，状态行可显示「CAD 忙（队列 N）」
+- fix(tray): 升级 `@lisp/mcp` 与 `atlisp-dwg-kb` 不再一开始就停服务，先下载，仅在替换本地文件被占用（EBUSY/EPERM+unlink/WinError 32/PermissionError）时才停服务并重试一次
+
 ## [1.12.4] - 2026-10-24
 
 ### 更新内容
