@@ -197,6 +197,20 @@ namespace Atlisp.Tray
             }
         }
 
+        /// <summary>
+        /// 托盘自动安装的 Python（官方安装包 InstallAllUsers=0 + TargetDir 到用户目录，
+        /// 不需要管理员权限）。知识库（atlisp-dwg-kb）是 Python 包，没它装不了。
+        /// </summary>
+        public static string PythonDir
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "atlisp-mcp", "python");
+            }
+        }
+
         /// <summary>首次自动开启开机自启的标记文件，用户关闭后不会被再次打开。</summary>
         public static string AutostartDefaultPath
         {
@@ -207,6 +221,12 @@ namespace Atlisp.Tray
         public static string BootstrapStatePath
         {
             get { return Path.Combine(DataDir, "bootstrap.state"); }
+        }
+
+        /// <summary>托盘启动的知识库服务 PID（用于停止；仅记托盘自己起的进程）。</summary>
+        public static string DwgKbPidPath
+        {
+            get { return Path.Combine(DataDir, "dwgkb.pid"); }
         }
     }
 
@@ -382,6 +402,23 @@ namespace Atlisp.Tray
         public bool AutoUpgrade { get; set; }
         public int AutoUpgradeHours { get; set; }
         public int HealthyPollSeconds { get; set; }
+        /// <summary>图纸知识库（atlisp-dwg-kb）服务地址，默认本机 :8322。</summary>
+        public string DwgKbUrl { get; set; }
+        /// <summary>知识库 API key；知识库侧设置了 DWG_KB_API_KEY 时必须一致。</summary>
+        public string DwgKbApiKey { get; set; }
+        /// <summary>自动安装 Python 时使用的版本（官方安装包）。</summary>
+        public string PythonVersion { get; set; }
+        /// <summary>Python 安装包镜像（默认 npmmirror；留空则用 python.org）。</summary>
+        public string PythonMirror { get; set; }
+        /// <summary>检测到的 Python 解释器路径（缓存，加速后续检测）。</summary>
+        public string PythonPath { get; set; }
+        /// <summary>托盘启动时自动启动本地知识库服务（仅当地址是本机且已安装包）。</summary>
+        public bool DwgKbAutoStart { get; set; }
+        /// <summary>
+        /// 定时检查 PyPI 上的 atlisp-dwg-kb 新版本并自动升级（间隔复用 AutoUpgradeHours）。
+        /// 仅当地址是本机且已安装包时生效；升级前会停掉托盘启动的知识库进程，完成后自动拉起。
+        /// </summary>
+        public bool DwgKbAutoUpgrade { get; set; }
 
         public TrayConfig()
         {
@@ -400,6 +437,13 @@ namespace Atlisp.Tray
             AutoUpgrade = true;
             AutoUpgradeHours = 1;
             HealthyPollSeconds = 5;
+            DwgKbUrl = "http://127.0.0.1:8322";
+            DwgKbApiKey = "";
+            PythonVersion = "3.12.8";
+            PythonMirror = "https://registry.npmmirror.com/-/binary/python";
+            PythonPath = "";
+            DwgKbAutoStart = true;
+            DwgKbAutoUpgrade = true;
         }
 
         public static TrayConfig Load()
@@ -443,6 +487,13 @@ namespace Atlisp.Tray
             AutoUpgrade = other.AutoUpgrade;
             AutoUpgradeHours = other.AutoUpgradeHours;
             HealthyPollSeconds = other.HealthyPollSeconds;
+            DwgKbUrl = other.DwgKbUrl;
+            DwgKbApiKey = other.DwgKbApiKey;
+            PythonVersion = other.PythonVersion;
+            PythonMirror = other.PythonMirror;
+            PythonPath = other.PythonPath;
+            DwgKbAutoStart = other.DwgKbAutoStart;
+            DwgKbAutoUpgrade = other.DwgKbAutoUpgrade;
             Normalize();
         }
 
@@ -479,6 +530,24 @@ namespace Atlisp.Tray
             {
                 NodeMirror = "https://npmmirror.com/mirrors/node";
             }
+            // 知识库地址：空 → 默认本机；只接受 http/https（写错成裸主机名时
+            // HttpWebRequest 会在菜单打开时抛异常，表现为「知识库不可达」）。
+            DwgKbUrl = (DwgKbUrl ?? "").Trim().TrimEnd('/');
+            if (DwgKbUrl.Length == 0) DwgKbUrl = "http://127.0.0.1:8322";
+            if (!DwgKbUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !DwgKbUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                DwgKbUrl = "http://" + DwgKbUrl;
+            }
+            DwgKbApiKey = DwgKbApiKey ?? "";
+            PythonVersion = (PythonVersion ?? "").Trim();
+            if (PythonVersion.Length == 0) PythonVersion = "3.12.8";
+            PythonMirror = (PythonMirror ?? "").Trim().TrimEnd('/');
+            if (PythonMirror.Length == 0)
+            {
+                PythonMirror = "https://registry.npmmirror.com/-/binary/python";
+            }
+            PythonPath = PythonPath ?? "";
         }
 
         private static string NormalizeNodeVersion(string value)
@@ -3088,6 +3157,791 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>
+    /// Python 环境快照（知识库是 Python 包，没 Python 就装不了）。
+    /// 与 ServerInfo 分开：Node/CAD 与 Python 是两条独立的依赖链。
+    /// </summary>
+    internal sealed class PythonInfo
+    {
+        public string PythonPath;
+        public string Version;
+        public string PipVersion;
+        public string PackageVersion;
+        public string Error;
+
+        public bool HasPython
+        {
+            get { return !string.IsNullOrEmpty(PythonPath); }
+        }
+
+        public bool HasPackage
+        {
+            get { return !string.IsNullOrEmpty(PackageVersion); }
+        }
+
+        public bool HasPip
+        {
+            get { return !string.IsNullOrEmpty(PipVersion); }
+        }
+
+        public string RuntimeText
+        {
+            get
+            {
+                if (!HasPython) return "运行环境：未检测到 Python 3.10+（可自动安装）";
+                string text = "运行环境：Python " + (Version ?? "?");
+                text += " · 知识库 " + (HasPackage ? "v" + PackageVersion : "未安装");
+                if (!HasPip) text += " · pip 不可用";
+                return text;
+            }
+        }
+    }
+
+    internal static class PythonLocator
+    {
+        private static readonly object Sync = new object();
+        private static PythonInfo _cached;
+        private static DateTime _cachedAt = DateTime.MinValue;
+
+        public static void Invalidate()
+        {
+            lock (Sync)
+            {
+                _cached = null;
+                _cachedAt = DateTime.MinValue;
+            }
+        }
+
+        public static PythonInfo Resolve(TrayConfig config, bool force)
+        {
+            lock (Sync)
+            {
+                if (!force && _cached != null &&
+                    (DateTime.UtcNow - _cachedAt).TotalSeconds < 60)
+                {
+                    return _cached;
+                }
+            }
+            PythonInfo info = Detect(config);
+            lock (Sync)
+            {
+                _cached = info;
+                _cachedAt = DateTime.UtcNow;
+            }
+            return info;
+        }
+
+        private static PythonInfo Detect(TrayConfig config)
+        {
+            PythonInfo info = new PythonInfo();
+            List<string> candidates = new List<string>();
+            if (!string.IsNullOrEmpty(config.PythonPath)) candidates.Add(config.PythonPath);
+            candidates.Add(Path.Combine(Paths.PythonDir, "python.exe"));
+
+            string fromPath = ProcessRunner.Where("python.exe");
+            if (!string.IsNullOrEmpty(fromPath)) candidates.Add(fromPath);
+            string fromPath3 = ProcessRunner.Where("python3.exe");
+            if (!string.IsNullOrEmpty(fromPath3)) candidates.Add(fromPath3);
+
+            // py 启动器：绕过 Windows Store 的 python.exe 占位符（那个只会弹商店）
+            string launcher = ProcessRunner.Where("py.exe");
+            if (!string.IsNullOrEmpty(launcher))
+            {
+                int code;
+                string output = ProcessRunner.Run(launcher,
+                    "-3 -c \"import sys;print(sys.executable)\"", 8000, out code, Encoding.UTF8);
+                if (code == 0)
+                {
+                    string[] lines = output.Split(
+                        new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        string line = lines[i].Trim();
+                        if (line.Length > 0 && File.Exists(line)) candidates.Add(line);
+                    }
+                }
+            }
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                string candidate = candidates[i];
+                if (string.IsNullOrEmpty(candidate) || !File.Exists(candidate)) continue;
+                string version = ProbeVersion(candidate);
+                if (version == null) continue;
+                info.PythonPath = candidate;
+                info.Version = version;
+                break;
+            }
+
+            if (!info.HasPython)
+            {
+                info.Error = "未检测到 Python 3.10+";
+                return info;
+            }
+
+            int pipCode;
+            string pipOutput = ProcessRunner.Run(info.PythonPath,
+                "-m pip --version", 20000, out pipCode, Encoding.UTF8);
+            if (pipCode == 0)
+            {
+                string first = FirstLine(pipOutput);
+                if (!string.IsNullOrEmpty(first)) info.PipVersion = first;
+            }
+
+            int pkgCode;
+            string pkgOutput = ProcessRunner.Run(info.PythonPath,
+                "-c \"import importlib.metadata as m;print(m.version('atlisp-dwg-kb'))\"",
+                20000, out pkgCode, Encoding.UTF8);
+            if (pkgCode == 0)
+            {
+                string version = FirstLine(pkgOutput);
+                if (!string.IsNullOrEmpty(version) &&
+                    version.IndexOf("Traceback", StringComparison.Ordinal) < 0)
+                {
+                    info.PackageVersion = version.Trim();
+                }
+            }
+            return info;
+        }
+
+        /// <summary>返回 "3.12.8"；版本 &lt; 3.10、非 Python、或超时返回 null。</summary>
+        private static string ProbeVersion(string pythonPath)
+        {
+            int code;
+            string output = ProcessRunner.Run(pythonPath,
+                "-c \"import sys;print('%d.%d.%d' % sys.version_info[:3])\"",
+                10000, out code, Encoding.UTF8);
+            if (code != 0) return null;
+            string version = FirstLine(output);
+            if (string.IsNullOrEmpty(version)) return null;
+            string[] parts = version.Split('.');
+            int major, minor;
+            if (parts.Length < 2) return null;
+            if (!int.TryParse(parts[0], out major)) return null;
+            if (!int.TryParse(parts[1], out minor)) return null;
+            if (major < 3 || (major == 3 && minor < 10)) return null;
+            return version.Trim();
+        }
+
+        private static string FirstLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            string[] lines = text.Split(new char[] { '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length > 0) return line;
+            }
+            return null;
+        }
+    }
+
+    internal static class PythonRunner
+    {
+        public static string DetectArch()
+        {
+            string arch = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "")
+                .ToUpperInvariant();
+            string arch64 = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432") ?? "")
+                .ToUpperInvariant();
+            if (arch.IndexOf("ARM64", StringComparison.Ordinal) >= 0 ||
+                arch64.IndexOf("ARM64", StringComparison.Ordinal) >= 0)
+            {
+                return "arm64";
+            }
+            if (Environment.Is64BitOperatingSystem) return "amd64";
+            return "win32";
+        }
+
+        /// <summary>
+        /// 官方安装包地址。32 位包名没有架构后缀（python-3.12.8.exe），
+        /// 这是 installers 的命名规则，别统一加后缀。
+        /// </summary>
+        public static string BuildInstallerUrl(TrayConfig config, string version, string arch)
+        {
+            string mirror = string.IsNullOrEmpty(config.PythonMirror)
+                ? "https://registry.npmmirror.com/-/binary/python"
+                : config.PythonMirror;
+            string suffix = arch == "win32" ? "" : "-" + arch;
+            return mirror.TrimEnd('/') + "/" + version + "/python-" + version +
+                suffix + ".exe";
+        }
+
+        public static Process CreatePipInstall(string pythonPath, string package,
+            DataReceivedEventHandler outputHandler, DataReceivedEventHandler errorHandler)
+        {
+            string arguments = "-m pip install --upgrade --disable-pip-version-check " + package;
+            return ProcessRunner.Create(pythonPath, arguments, Encoding.UTF8, null,
+                outputHandler, errorHandler);
+        }
+
+        /// <summary>
+        /// 查询 PyPI 上某个包的最新版本，不安装任何东西。
+        /// 先走 PyPI JSON（一次 HTTP，快）；失败再回退 `pip index versions`
+        /// （会走用户配置的镜像/代理，也能兼容公司内网源）。
+        /// </summary>
+        public static string CheckLatestVersion(PythonInfo info, string package, out string error)
+        {
+            error = null;
+            string latest = PyPiClient.LatestVersion(package, 8000, out error);
+            if (!string.IsNullOrEmpty(latest)) return latest.Trim();
+            string pypiError = error;
+
+            if (info == null || !info.HasPython) return null;
+
+            int code;
+            string output = ProcessRunner.Run(info.PythonPath,
+                "-m pip index versions " + package + " --disable-pip-version-check",
+                40000, out code, Encoding.UTF8);
+            if (code == 0)
+            {
+                Match match = Regex.Match(output,
+                    Regex.Escape(package) + @"\s*\(([^)]+)\)",
+                    RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    error = null;
+                    return match.Groups[1].Value.Trim();
+                }
+            }
+            if (string.IsNullOrEmpty(pypiError))
+            {
+                pypiError = "pip index 退出码 " + code;
+            }
+            error = pypiError;
+            return null;
+        }
+
+        /// <summary>
+        /// 静默安装官方安装包到用户目录：InstallAllUsers=0 是**免 UAC** 的关键，
+        /// PrependPath=0 不改用户 PATH（路径由托盘自己记），Shortcuts=0 不建快捷方式。
+        /// </summary>
+        public static int InstallSilently(string installerPath, string targetDir, out string error)
+        {
+            error = null;
+            try
+            {
+                string arguments = "/quiet InstallAllUsers=0 TargetDir=\"" + targetDir + "\" " +
+                    "PrependPath=0 Shortcuts=0 Include_pip=1 Include_test=0 Include_doc=0 " +
+                    "Include_tcltk=0 Include_launcher=0";
+                int exitCode;
+                string output = ProcessRunner.Run(installerPath, arguments, 300000,
+                    out exitCode, Encoding.UTF8);
+                if (exitCode != 0)
+                {
+                    error = "安装程序退出码 " + exitCode +
+                        (string.IsNullOrEmpty(output) ? "" : "：" + TailText(output, 300));
+                }
+                return exitCode;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return -1;
+            }
+        }
+
+        private static string TailText(string text, int max)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            text = text.Trim();
+            if (text.Length <= max) return text;
+            return text.Substring(text.Length - max);
+        }
+    }
+
+    /// <summary>
+    /// 本地知识库服务（atlisp-dwg-kb serve）的启动/停止。
+    /// 只管理「托盘自己启动的」进程：PID 记在 dwgkb.pid，别人手动起的服务不会被误杀。
+    /// </summary>
+    internal static class DwgKbServer
+    {
+        private static Process _process;
+
+        public static bool IsLocalUrl(string url)
+        {
+            try
+            {
+                Uri uri;
+                if (!Uri.TryCreate(url, UriKind.Absolute, out uri)) return false;
+                string host = uri.Host ?? "";
+                return host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                    host == "127.0.0.1" || host == "::1" || host == "[::1]";
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static int PortOf(string url, int fallback)
+        {
+            try
+            {
+                Uri uri;
+                if (Uri.TryCreate(url, UriKind.Absolute, out uri) && uri.Port > 0) return uri.Port;
+            }
+            catch { }
+            return fallback;
+        }
+
+        /// <summary>loopback 只绑本机；配了局域网地址说明希望被外部访问，绑 0.0.0.0。</summary>
+        public static string BindHost(string url)
+        {
+            return IsLocalUrl(url) ? "127.0.0.1" : "0.0.0.0";
+        }
+
+        public static bool IsPortListening(int port)
+        {
+            try
+            {
+                using (System.Net.Sockets.TcpClient client = new System.Net.Sockets.TcpClient())
+                {
+                    IAsyncResult ar = client.BeginConnect("127.0.0.1", port, null, null);
+                    if (!ar.AsyncWaitHandle.WaitOne(800)) return false;
+                    client.EndConnect(ar);
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static int ReadPid()
+        {
+            try
+            {
+                if (!File.Exists(Paths.DwgKbPidPath)) return 0;
+                int pid;
+                string text = File.ReadAllText(Paths.DwgKbPidPath).Trim();
+                return int.TryParse(text, out pid) ? pid : 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>托盘启动的进程是否还活着（用来决定「停止」是否可用）。</summary>
+        public static bool IsRunning()
+        {
+            int pid = ReadPid();
+            if (pid <= 0) return false;
+            try
+            {
+                Process process = Process.GetProcessById(pid);
+                return !process.HasExited;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static Process Start(PythonInfo info, string url, out string error)
+        {
+            error = null;
+            try
+            {
+                int port = PortOf(url, 8322);
+                string arguments = "-m atlisp_dwg_kb.cli serve --host " + BindHost(url) +
+                    " --port " + port + " --no-browser";
+
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = info.PythonPath;
+                psi.Arguments = arguments;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                psi.StandardOutputEncoding = Encoding.UTF8;
+                psi.StandardErrorEncoding = Encoding.UTF8;
+                // 不设置的话中文日志按系统代码页输出，写进 UTF-8 日志会乱码
+                psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+                psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+
+                Process process = new Process();
+                process.StartInfo = psi;
+
+                // 子进程输出必须持续读走：管道写满后 Python 会卡在 print 上
+                string logFile = Path.Combine(Paths.LogDir,
+                    "dwgkb-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+                StreamWriter writer = null;
+                try
+                {
+                    Directory.CreateDirectory(Paths.LogDir);
+                    writer = new StreamWriter(new FileStream(logFile, FileMode.Append,
+                        FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false));
+                    writer.AutoFlush = true;
+                }
+                catch { }
+                StreamWriter log = writer;
+                DataReceivedEventHandler onData = delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data == null || log == null) return;
+                    try { lock (log) log.WriteLine(e.Data); } catch { }
+                };
+                process.OutputDataReceived += onData;
+                process.ErrorDataReceived += onData;
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                Directory.CreateDirectory(Paths.DataDir);
+                File.WriteAllText(Paths.DwgKbPidPath, process.Id.ToString(),
+                    new UTF8Encoding(false));
+                _process = process;
+                AppLog.Write("dwg-kb: started pid=" + process.Id + " " + arguments +
+                    " log=" + logFile);
+                return process;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        public static bool Stop(out string error)
+        {
+            error = null;
+            int pid = ReadPid();
+            if (pid <= 0)
+            {
+                error = "没有找到托盘启动的知识库进程。\r\n" +
+                    "如果服务是手动或系统服务方式启动的，请用对应方式停止。";
+                return false;
+            }
+            try
+            {
+                Process process = Process.GetProcessById(pid);
+                if (!process.HasExited) process.Kill();
+            }
+            catch (ArgumentException)
+            {
+                // 进程已退出：清掉 pid 文件即可
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+            try { File.Delete(Paths.DwgKbPidPath); } catch { }
+            _process = null;
+            AppLog.Write("dwg-kb: stopped pid=" + pid);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 图纸知识库（atlisp-dwg-kb）状态快照。与 HealthSnapshot 分开放：知识库是
+    /// 独立的 Python 服务（默认 :8322），它的存活与 MCP/CAD 无关——MCP 正常而
+    /// 知识库没起是常见状态，不能混进 CAD 的健康判定里。
+    /// </summary>
+    internal sealed class DwgKbStatus
+    {
+        public bool Reachable;
+        public string Version;
+        public long Triples;
+        public bool RdfLoaded;
+        public string Error;
+    }
+
+    internal static class DwgKbClient
+    {
+        /// <summary>GET /health。不可达时 Reachable=false，不抛异常。</summary>
+        public static DwgKbStatus Check(string baseUrl, int timeoutMs)
+        {
+            DwgKbStatus status = new DwgKbStatus();
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Trim(baseUrl) + "/health");
+                request.Method = "GET";
+                request.Proxy = null;
+                request.KeepAlive = false;
+                request.Timeout = timeoutMs;
+                request.ReadWriteTimeout = timeoutMs;
+                request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (Stream stream = response.GetResponseStream())
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    Parse(reader.ReadToEnd(), status);
+                }
+                status.Reachable = true;
+            }
+            catch (Exception ex)
+            {
+                status.Reachable = false;
+                status.Error = ex.Message;
+            }
+            return status;
+        }
+
+        /// <summary>
+        /// POST /build：服务端后台重建索引（返回 run_id 之类的 JSON 文本）。
+        /// 只是「提交任务」，不等待重建完成——全量 5.5M 三元组要几分钟，
+        /// 在托盘里同步等会把菜单卡死。
+        /// </summary>
+        public static string Build(string baseUrl, string apiKey, int timeoutMs)
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Trim(baseUrl) + "/build");
+            request.Method = "POST";
+            request.Proxy = null;
+            request.KeepAlive = false;
+            request.Timeout = timeoutMs;
+            request.ReadWriteTimeout = timeoutMs;
+            request.ContentType = "application/json";
+            request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                request.Headers["X-API-Key"] = apiKey;
+            }
+            byte[] payload = Encoding.UTF8.GetBytes("{}");
+            request.ContentLength = payload.Length;
+            using (Stream body = request.GetRequestStream())
+            {
+                body.Write(payload, 0, payload.Length);
+            }
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+
+        private static string Trim(string url)
+        {
+            return (url ?? "").Trim().TrimEnd('/');
+        }
+
+        private static void Parse(string json, DwgKbStatus status)
+        {
+            try
+            {
+                JavaScriptSerializer serializer = new JavaScriptSerializer();
+                Dictionary<string, object> root =
+                    serializer.DeserializeObject(json) as Dictionary<string, object>;
+                if (root == null) return;
+                object value;
+                if (root.TryGetValue("version", out value) && value != null)
+                {
+                    status.Version = Convert.ToString(value);
+                }
+                if (root.TryGetValue("triples", out value) && value != null)
+                {
+                    long parsed;
+                    if (long.TryParse(Convert.ToString(value), out parsed)) status.Triples = parsed;
+                }
+                if (root.TryGetValue("rdf_loaded", out value) && value is bool)
+                {
+                    status.RdfLoaded = (bool)value;
+                }
+            }
+            catch
+            {
+                // 解析失败只影响状态文案，不影响可用性判断
+            }
+        }
+    }
+
+    /// <summary>
+    /// PyPI 版本查询。只用公开 JSON API（`https://pypi.org/pypi/&lt;pkg&gt;/json`），
+    /// 不下载任何文件；网络不通时返回 null 并由调用方回退到 `pip index versions`
+    /// （pip 会走用户自己配置的镜像/代理，国内网络更可靠）。
+    /// </summary>
+    internal static class PyPiClient
+    {
+        public static string LatestVersion(string package, int timeoutMs, out string error)
+        {
+            error = null;
+            try
+            {
+                string url = "https://pypi.org/pypi/" + package + "/json";
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+                request.Method = "GET";
+                request.Proxy = null;
+                request.KeepAlive = false;
+                request.Timeout = timeoutMs;
+                request.ReadWriteTimeout = timeoutMs;
+                request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+
+                string body;
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (Stream stream = response.GetResponseStream())
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    body = reader.ReadToEnd();
+                }
+
+                JavaScriptSerializer serializer = new JavaScriptSerializer();
+                Dictionary<string, object> root =
+                    serializer.DeserializeObject(body) as Dictionary<string, object>;
+                if (root == null)
+                {
+                    error = "PyPI 响应不是 JSON 对象";
+                    return null;
+                }
+                object infoValue;
+                if (!root.TryGetValue("info", out infoValue))
+                {
+                    error = "PyPI 响应缺少 info 字段";
+                    return null;
+                }
+                Dictionary<string, object> info = infoValue as Dictionary<string, object>;
+                if (info == null)
+                {
+                    error = "PyPI 响应 info 字段格式异常";
+                    return null;
+                }
+                object versionValue;
+                if (!info.TryGetValue("version", out versionValue) || versionValue == null)
+                {
+                    error = "PyPI 响应缺少 version 字段";
+                    return null;
+                }
+                string version = Convert.ToString(versionValue).Trim();
+                if (version.Length == 0)
+                {
+                    error = "PyPI 返回空版本号";
+                    return null;
+                }
+                return version;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 知识库地址 / API Key 设置对话框（托盘不依赖 InputBox，自绘一个最小窗体）。
+    /// </summary>
+    internal sealed class DwgKbSettingsForm : Form
+    {
+        private readonly TextBox _url;
+        private readonly TextBox _key;
+        private readonly Label _testResult;
+
+        public string UrlValue
+        {
+            get { return _url.Text.Trim(); }
+        }
+
+        public string ApiKeyValue
+        {
+            get { return _key.Text.Trim(); }
+        }
+
+        public DwgKbSettingsForm(string url, string apiKey)
+        {
+            Text = "@lisp MCP 托盘 - 知识库设置";
+            Width = 520;
+            Height = 220;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterParent;
+            ShowInTaskbar = false;
+            Icon = IconFactory.Create(ServerState.Starting);
+
+            Label urlLabel = new Label();
+            urlLabel.Text = "知识库地址";
+            urlLabel.Location = new Point(16, 18);
+            urlLabel.Width = 460;
+
+            _url = new TextBox();
+            _url.Location = new Point(18, 40);
+            _url.Width = 460;
+            _url.Text = url ?? "";
+
+            Label keyLabel = new Label();
+            keyLabel.Text = "API Key（知识库设置了 DWG_KB_API_KEY 时必填，可留空）";
+            keyLabel.Location = new Point(16, 72);
+            keyLabel.Width = 460;
+
+            _key = new TextBox();
+            _key.Location = new Point(18, 94);
+            _key.Width = 460;
+            _key.UseSystemPasswordChar = true;
+            _key.Text = apiKey ?? "";
+
+            _testResult = new Label();
+            _testResult.Text = "";
+            _testResult.Location = new Point(16, 124);
+            _testResult.Width = 470;
+            _testResult.Height = 24;
+            _testResult.ForeColor = Color.DimGray;
+
+            Button testButton = new Button();
+            testButton.Text = "测试连接";
+            testButton.Location = new Point(18, 152);
+            testButton.Width = 96;
+            testButton.Height = 28;
+            testButton.Click += delegate { TestConnection(); };
+
+            Button okButton = new Button();
+            okButton.Text = "保存";
+            okButton.Location = new Point(296, 152);
+            okButton.Width = 84;
+            okButton.Height = 28;
+            okButton.DialogResult = DialogResult.OK;
+
+            Button cancelButton = new Button();
+            cancelButton.Text = "取消";
+            cancelButton.Location = new Point(394, 152);
+            cancelButton.Width = 84;
+            cancelButton.Height = 28;
+            cancelButton.DialogResult = DialogResult.Cancel;
+
+            Controls.Add(urlLabel);
+            Controls.Add(_url);
+            Controls.Add(keyLabel);
+            Controls.Add(_key);
+            Controls.Add(_testResult);
+            Controls.Add(testButton);
+            Controls.Add(okButton);
+            Controls.Add(cancelButton);
+            AcceptButton = okButton;
+            CancelButton = cancelButton;
+        }
+
+        private void TestConnection()
+        {
+            string url = _url.Text.Trim();
+            if (url.Length == 0)
+            {
+                _testResult.Text = "请填写地址。";
+                return;
+            }
+            if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                url = "http://" + url;
+            }
+            DwgKbStatus status = DwgKbClient.Check(url, 2500);
+            if (status.Reachable)
+            {
+                _testResult.Text = "连接成功：v" + (status.Version ?? "?") +
+                    " · " + (status.Triples > 0 ? status.Triples.ToString("N0") + " 三元组" : "已加载");
+                _testResult.ForeColor = Color.ForestGreen;
+            }
+            else
+            {
+                _testResult.Text = "不可达：" + status.Error;
+                _testResult.ForeColor = Color.Firebrick;
+            }
+        }
+    }
+
     internal sealed class TrayApplication : ApplicationContext
     {
         private const string AgentChatUrl = "https://atlisp.cn/agent/chat";
@@ -3105,7 +3959,6 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _startItem;
         private readonly ToolStripMenuItem _stopItem;
         private readonly ToolStripMenuItem _restartItem;
-        private readonly ToolStripMenuItem _webMenu;
         private readonly ToolStripMenuItem _logsMenu;
         private readonly ToolStripMenuItem _updateMenu;
         private readonly ToolStripMenuItem _settingsMenu;
@@ -3125,6 +3978,47 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _autoInstallItem;
         private readonly ToolStripMenuItem _autoUpgradeItem;
 
+        // 图纸知识库（atlisp-dwg-kb）子菜单。状态在后台线程检测、UI 线程渲染，
+        // 与 HealthMonitor 的分工一致：菜单永远不因为知识库慢而卡住。
+        private readonly ToolStripMenuItem _dwgKbMenu;
+        private readonly ToolStripMenuItem _dwgKbStatusItem;
+        private readonly ToolStripMenuItem _dwgKbRuntimeItem;
+        private readonly ToolStripMenuItem _dwgKbOpenItem;
+        private readonly ToolStripMenuItem _dwgKbRefreshItem;
+        private readonly ToolStripMenuItem _dwgKbInstallItem;
+        private readonly ToolStripMenuItem _dwgKbStartItem;
+        private readonly ToolStripMenuItem _dwgKbStopItem;
+        private readonly ToolStripMenuItem _dwgKbAutoStartItem;
+        private readonly ToolStripMenuItem _dwgKbAutoUpgradeItem;
+        private readonly ToolStripMenuItem _dwgKbRebuildItem;
+        private readonly ToolStripMenuItem _dwgKbConfigItem;
+        private readonly object _dwgKbLock = new object();
+        private DwgKbStatus _dwgKbStatus;
+        private PythonInfo _dwgKbPython;
+        private DateTime _dwgKbCheckedAt = DateTime.MinValue;
+        private bool _dwgKbBusy;
+        private bool _dwgKbBuilding;
+        private bool _pythonInstalling;
+        private bool _dwgKbStartPipRequested;
+        private bool _dwgKbAutoStartAttempted;
+        // ---- 知识库自动安装 / 自动升级（零人工干预）----
+        // _dwgKbAutoFlow 表示当前这轮 pip/Python 流程是自动发起的：失败只记日志 +
+        // 退避重试，不弹模态框（无人值守时模态框会让托盘卡死）。
+        private bool _dwgKbAutoFlow;
+        private bool _dwgKbUpdateChecking;
+        private bool _dwgKbAutoStartAfterInstall;
+        private bool _dwgKbRestartAfterUpgrade;
+        private string _dwgKbLatestVersion;
+        private string _dwgKbPendingUpgrade;
+        private DateTime _nextDwgKbCheckAt = DateTime.MinValue;
+        private DateTime _dwgKbTaskRetryAt = DateTime.MinValue;
+        private int _dwgKbTaskFailures;
+        // 后台线程不能直接碰 NotifyIcon：把气泡请求挂在字段上，由 UI 定时器展示。
+        private bool _dwgKbBalloonPending;
+        private string _dwgKbBalloonTitle;
+        private string _dwgKbBalloonText;
+        private ToolTipIcon _dwgKbBalloonIcon;
+
         private Icon _currentIcon;
         private ServerState _lastState = ServerState.Stopped;
         private bool _firstTick = true;
@@ -3132,6 +4026,14 @@ namespace Atlisp.Tray
         private bool _startupUpdateChecked;
         private DateTime _createdAt = DateTime.UtcNow;
         private DateTime _nextUpdateCheckAt = DateTime.MinValue;
+        // 服务异常退出后自动拉起（退避 1/2/5/10/30 分钟，连续 5 次失败后停手）
+        private const int ServerRestartMaxFailures = 5;
+        private DateTime _serverRestartRetryAt = DateTime.MinValue;
+        private int _serverRestartFailures;
+        // 用户点过「停止知识库服务」后不再自动拉起，直到手动启动或下次开托盘
+        private bool _dwgKbUserStopped;
+        private DateTime _dwgKbRestartRetryAt = DateTime.MinValue;
+        private int _dwgKbRestartFailures;
         private readonly bool _startServerOnLaunch;
         private bool _restartForSelfUpdate;
         private string _latestVersion;
@@ -3181,6 +4083,7 @@ namespace Atlisp.Tray
             _menu = new ContextMenuStrip();
             _menu.ShowImageMargin = false;
             _menu.ShowCheckMargin = false;
+            _menu.ShowItemToolTips = true;
             _menu.Opening += OnMenuOpening;
 
             _headerItem = new ToolStripMenuItem("@lisp MCP Server");
@@ -3190,22 +4093,22 @@ namespace Atlisp.Tray
             _stateItem = new ToolStripMenuItem("状态：正在检测…");
             _stateItem.Enabled = false;
 
-            _startItem = new ToolStripMenuItem("启动服务");
+            _startItem = new ToolStripMenuItem("启动 MCP 服务");
             _startItem.Click += delegate { StartServer(); };
 
-            _stopItem = new ToolStripMenuItem("停止服务");
+            _stopItem = new ToolStripMenuItem("停止 MCP 服务");
             _stopItem.Click += delegate { StopServer(); };
 
-            _restartItem = new ToolStripMenuItem("重启服务");
+            _restartItem = new ToolStripMenuItem("重启 MCP 服务");
             _restartItem.Click += delegate { RestartServer(); };
 
             _panelItem = new ToolStripMenuItem("打开调试面板");
             _panelItem.Click += delegate { OpenUrl("http://127.0.0.1:" + _config.Port + "/debug"); };
 
-            _docsItem = new ToolStripMenuItem("打开 API 文档");
+            _docsItem = new ToolStripMenuItem("API 文档");
             _docsItem.Click += delegate { OpenUrl("http://127.0.0.1:" + _config.Port + "/api/docs"); };
 
-            _playgroundItem = new ToolStripMenuItem("打开 Playground");
+            _playgroundItem = new ToolStripMenuItem("Playground（在线试用）");
             _playgroundItem.Click += delegate { OpenUrl("http://127.0.0.1:" + _config.Port + "/playground"); };
 
             _logItem = new ToolStripMenuItem("查看服务器日志");
@@ -3215,6 +4118,7 @@ namespace Atlisp.Tray
             _logDirItem.Click += delegate { OpenPath(Paths.LogDir); };
 
             _checkItem = new ToolStripMenuItem("检查更新");
+            _checkItem.ToolTipText = "对比 npm 上的最新版本，不修改任何文件";
             _checkItem.Click += delegate { CheckUpdate(false); };
 
             _upgradeItem = new ToolStripMenuItem("升级到最新版");
@@ -3223,23 +4127,67 @@ namespace Atlisp.Tray
             _installItem = new ToolStripMenuItem("下载并安装 @lisp MCP Server");
             _installItem.Click += delegate { InstallServer(); };
 
-            _nodeItem = new ToolStripMenuItem("下载并安装 Node.js…");
+            _nodeItem = new ToolStripMenuItem("安装 Node.js…");
+            _nodeItem.ToolTipText = "自动下载安装 Node.js（国内走 npmmirror 镜像）";
             _nodeItem.Click += delegate { InstallNodeFromMirror(); };
 
             _trayAutoItem = new ToolStripMenuItem("随 Windows 启动托盘");
+            _trayAutoItem.ToolTipText = "开机后自动启动托盘，由托盘拉起各服务";
             _trayAutoItem.Click += delegate { ToggleTrayAutostart(); };
 
-            _serverAutoItem = new ToolStripMenuItem("托盘启动时自动启动服务");
+            _serverAutoItem = new ToolStripMenuItem("启动托盘时自动启动 MCP");
+            _serverAutoItem.ToolTipText = "关闭后托盘只做管理，不主动启动 MCP 服务";
             _serverAutoItem.Click += delegate { ToggleServerAutostart(); };
 
-            _mirrorItem = new ToolStripMenuItem("使用 npmmirror 镜像下载");
+            _mirrorItem = new ToolStripMenuItem("使用 npmmirror 国内镜像");
+            _mirrorItem.ToolTipText = "国内网络建议开启，下载 Node.js / npm 包更快";
             _mirrorItem.Click += delegate { ToggleMirror(); };
 
             _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
+            _autoInstallItem.ToolTipText = "缺 Node.js / @lisp/mcp / Python / 知识库时自动下载安装";
             _autoInstallItem.Click += delegate { ToggleAutoInstall(); };
 
-            _autoUpgradeItem = new ToolStripMenuItem("定时自动检查并升级 @lisp/mcp");
+            _autoUpgradeItem = new ToolStripMenuItem("自动升级 @lisp/mcp");
             _autoUpgradeItem.Click += delegate { ToggleAutoUpgrade(); };
+
+            _dwgKbStatusItem = new ToolStripMenuItem("图纸知识库：检测中…");
+            _dwgKbStatusItem.Enabled = false;
+
+            _dwgKbRuntimeItem = new ToolStripMenuItem("运行环境：检测中…");
+            _dwgKbRuntimeItem.Enabled = false;
+
+            _dwgKbOpenItem = new ToolStripMenuItem("打开图纸知识库");
+            _dwgKbOpenItem.ToolTipText = "在浏览器里打开知识库的查询界面";
+            _dwgKbOpenItem.Click += delegate { OpenDwgKbUi(); };
+
+            _dwgKbRefreshItem = new ToolStripMenuItem("重新检测连接");
+            _dwgKbRefreshItem.Click += delegate { RefreshDwgKbStatus(true); };
+
+            _dwgKbStartItem = new ToolStripMenuItem("启动本地知识库服务");
+            _dwgKbStartItem.Click += delegate { StartDwgKbService(); };
+
+            _dwgKbStopItem = new ToolStripMenuItem("停止本地知识库服务");
+            _dwgKbStopItem.ToolTipText = "只停止托盘自己启动的进程";
+            _dwgKbStopItem.Click += delegate { StopDwgKbService(); };
+
+            _dwgKbAutoStartItem = new ToolStripMenuItem("随托盘自动启动");
+            _dwgKbAutoStartItem.ToolTipText = "未安装时自动补齐 Python 与知识库包，然后启动";
+            _dwgKbAutoStartItem.Click += delegate { ToggleDwgKbAutoStart(); };
+
+            _dwgKbAutoUpgradeItem = new ToolStripMenuItem("自动检查新版本");
+            _dwgKbAutoUpgradeItem.ToolTipText = "定时查 PyPI，发现新版本静默升级，完成后自动恢复服务";
+            _dwgKbAutoUpgradeItem.Click += delegate { ToggleDwgKbAutoUpgrade(); };
+
+            _dwgKbInstallItem = new ToolStripMenuItem("安装 / 升级知识库…");
+            _dwgKbInstallItem.ToolTipText = "从 PyPI 安装或升级 atlisp-dwg-kb";
+            _dwgKbInstallItem.Click += delegate { InstallDwgKb(); };
+
+            _dwgKbRebuildItem = new ToolStripMenuItem("重建索引…");
+            _dwgKbRebuildItem.ToolTipText = "在知识库服务器上重建索引（管理员操作）";
+            _dwgKbRebuildItem.Click += delegate { RebuildDwgKb(); };
+
+            _dwgKbConfigItem = new ToolStripMenuItem("设置地址与 API Key…");
+            _dwgKbConfigItem.Click += delegate { ConfigureDwgKb(); };
 
             _diagItem = new ToolStripMenuItem("环境诊断…");
             _diagItem.Click += delegate { ShowDiagnostics(); };
@@ -3250,26 +4198,41 @@ namespace Atlisp.Tray
             ToolStripMenuItem configItem = new ToolStripMenuItem("打开配置文件");
             configItem.Click += delegate { OpenPath(Paths.TrayConfigPath); };
 
-            ToolStripMenuItem aboutItem = new ToolStripMenuItem("关于");
+            ToolStripMenuItem aboutItem = new ToolStripMenuItem("关于 @lisp MCP…");
             aboutItem.Click += delegate { ShowAbout(); };
 
             ToolStripMenuItem exitItem = new ToolStripMenuItem("退出托盘");
             exitItem.Click += delegate { ExitApplication(); };
 
-            ToolStripMenuItem agentChatItem = new ToolStripMenuItem("Agent Chat（atlisp.cn）");
+            ToolStripMenuItem agentChatItem = new ToolStripMenuItem("打开 Agent Chat");
+            agentChatItem.ToolTipText = "在浏览器打开 https://atlisp.cn/agent/chat";
             agentChatItem.Click += delegate { OpenUrl(AgentChatUrl); };
-
-            _webMenu = CreateSubmenu("打开网页");
-            _webMenu.DropDownItems.Add(agentChatItem);
-            _webMenu.DropDownItems.Add(_panelItem);
-            _webMenu.DropDownItems.Add(_docsItem);
-            _webMenu.DropDownItems.Add(_playgroundItem);
 
             _logsMenu = CreateSubmenu("日志与诊断");
             _logsMenu.DropDownItems.Add(_logItem);
             _logsMenu.DropDownItems.Add(_logDirItem);
             _logsMenu.DropDownItems.Add(new ToolStripSeparator());
+            _logsMenu.DropDownItems.Add(_panelItem);
+            _logsMenu.DropDownItems.Add(_docsItem);
+            _logsMenu.DropDownItems.Add(_playgroundItem);
+            _logsMenu.DropDownItems.Add(new ToolStripSeparator());
             _logsMenu.DropDownItems.Add(_diagItem);
+
+            _dwgKbMenu = CreateSubmenu("图纸知识库");
+            _dwgKbMenu.DropDownItems.Add(_dwgKbRuntimeItem);
+            _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
+            _dwgKbMenu.DropDownItems.Add(_dwgKbOpenItem);
+            _dwgKbMenu.DropDownItems.Add(_dwgKbStartItem);
+            _dwgKbMenu.DropDownItems.Add(_dwgKbStopItem);
+            _dwgKbMenu.DropDownItems.Add(_dwgKbRefreshItem);
+            _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
+            _dwgKbMenu.DropDownItems.Add(_dwgKbInstallItem);
+            _dwgKbMenu.DropDownItems.Add(_dwgKbRebuildItem);
+            _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
+            _dwgKbMenu.DropDownItems.Add(_dwgKbAutoStartItem);
+            _dwgKbMenu.DropDownItems.Add(_dwgKbAutoUpgradeItem);
+            _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
+            _dwgKbMenu.DropDownItems.Add(_dwgKbConfigItem);
 
             _updateMenu = CreateSubmenu("更新与安装");
             _updateMenu.DropDownItems.Add(_checkItem);
@@ -3281,27 +4244,30 @@ namespace Atlisp.Tray
             _settingsMenu = CreateSubmenu("设置");
             _settingsMenu.DropDownItems.Add(_trayAutoItem);
             _settingsMenu.DropDownItems.Add(_serverAutoItem);
-            _settingsMenu.DropDownItems.Add(_mirrorItem);
             _settingsMenu.DropDownItems.Add(_autoInstallItem);
             _settingsMenu.DropDownItems.Add(_autoUpgradeItem);
+            _settingsMenu.DropDownItems.Add(_mirrorItem);
             _settingsMenu.DropDownItems.Add(new ToolStripSeparator());
             _settingsMenu.DropDownItems.Add(reloadItem);
             _settingsMenu.DropDownItems.Add(configItem);
-            _settingsMenu.DropDownItems.Add(new ToolStripSeparator());
-            _settingsMenu.DropDownItems.Add(aboutItem);
 
+            // 顶层只放「一眼要看的状态」和「最常用的动作」，其余按用途收进子菜单：
+            //   状态 3 行 → 打开对话 / 启停 / 重启 → 知识库 / 日志 / 设置 / 更新 → 关于 / 退出
             _menu.Items.Add(_headerItem);
             _menu.Items.Add(_stateItem);
+            _menu.Items.Add(_dwgKbStatusItem);
             _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(agentChatItem);
             _menu.Items.Add(_startItem);
             _menu.Items.Add(_stopItem);
             _menu.Items.Add(_restartItem);
             _menu.Items.Add(new ToolStripSeparator());
-            _menu.Items.Add(_webMenu);
+            _menu.Items.Add(_dwgKbMenu);
             _menu.Items.Add(_logsMenu);
-            _menu.Items.Add(_updateMenu);
             _menu.Items.Add(_settingsMenu);
+            _menu.Items.Add(_updateMenu);
             _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(aboutItem);
             _menu.Items.Add(exitItem);
 
             _currentIcon = IconFactory.Create(ServerState.Stopped);
@@ -3316,6 +4282,9 @@ namespace Atlisp.Tray
             _uiTimer.Interval = 1000;
             _uiTimer.Tick += OnUiTimer;
             _uiTimer.Start();
+
+            // 启动即探一次知识库：托盘起来时服务通常已经在跑，不必等用户点菜单
+            RefreshDwgKbStatus(true);
 
             _server.Refresh(_health.Snapshot);
             _lastState = _server.State;
@@ -3355,6 +4324,7 @@ namespace Atlisp.Tray
             {
                 dropDown.ShowImageMargin = false;
                 dropDown.ShowCheckMargin = true;
+                dropDown.ShowItemToolTips = true;
             }
             return item;
         }
@@ -3634,11 +4604,46 @@ namespace Atlisp.Tray
                 PollPortableInstall();
                 PollTask();
 
+                // 知识库重建结果由后台线程产生，气泡只能在这里（UI 线程）弹
+                if (_dwgKbBalloonPending)
+                {
+                    _dwgKbBalloonPending = false;
+                    Balloon(_dwgKbBalloonTitle, _dwgKbBalloonText, _dwgKbBalloonIcon);
+                }
+
+                // Python 装好了 → 在 UI 线程接着跑 pip（后台线程不能建任务窗口）
+                if (_dwgKbStartPipRequested)
+                {
+                    _dwgKbStartPipRequested = false;
+                    InstallDwgKb(_dwgKbAutoFlow);
+                }
+
+                // 后台线程查到的知识库新版本：在 UI 线程启动 pip（LongTask 只能在 UI 线程建）
+                string pendingUpgrade = null;
+                lock (_dwgKbLock)
+                {
+                    if (_dwgKbPendingUpgrade != null)
+                    {
+                        pendingUpgrade = _dwgKbPendingUpgrade;
+                        _dwgKbPendingUpgrade = null;
+                    }
+                }
+                if (pendingUpgrade != null) AutoUpgradeDwgKb(pendingUpgrade);
+
                 // 启动后稍等片刻再补齐环境，避免和首轮 UI/健康检测抢线程
                 if (_config.AutoInstall && !_autoInstallDone &&
                     (DateTime.UtcNow - _createdAt).TotalSeconds > 3)
                 {
                     AutoBootstrap();
+                }
+
+                // 知识库自动启动：等首轮环境检测稳定后再拉，避免和 AutoBootstrap 抢线程。
+                // 没装 Python/包时这里会触发自动安装，装好后自动拉起（见 EnsureDwgKbStartedOnLaunch）。
+                if (_config.DwgKbAutoStart && !_dwgKbAutoStartAttempted &&
+                    (DateTime.UtcNow - _createdAt).TotalSeconds > 5 &&
+                    !TaskBusy() && !_pythonInstalling)
+                {
+                    EnsureDwgKbStartedOnLaunch();
                 }
 
                 if (_config.CheckUpdateOnStart && !_config.AutoUpgrade && !_startupUpdateChecked &&
@@ -3649,6 +4654,9 @@ namespace Atlisp.Tray
                 }
 
                 MaybeAutoUpgrade();
+                MaybeAutoUpgradeDwgKb();
+                MaybeRestartServer();
+                MaybeRestartDwgKbService();
             }
             catch (Exception ex)
             {
@@ -3658,6 +4666,7 @@ namespace Atlisp.Tray
 
         private void OnMenuOpening(object sender, CancelEventArgs e)
         {
+            RefreshDwgKbStatus(false);
             UpdateUi();
         }
 
@@ -3675,10 +4684,10 @@ namespace Atlisp.Tray
 
             ServerInfo info = ServerLocator.Resolve(_config, false);
 
-            _headerItem.Text = "@lisp MCP Server  " +
+            _headerItem.Text = "@lisp MCP 服务  " +
                 (string.IsNullOrEmpty(info.Version) ? "(未安装)" : "v" + info.Version);
 
-            string stateText = "状态：";
+            string stateText = "MCP 服务：";
             switch (state)
             {
                 case ServerState.Running:
@@ -3708,8 +4717,13 @@ namespace Atlisp.Tray
             bool busy = _task != null && !_task.Finished;
             bool updating = busy || _downloadJob != null;
 
-            _startItem.Enabled = !running && !busy;
+            // 只显示当前能做的事：运行中给「停止/重启」，停止时给「启动」，
+            // 避免菜单里同时出现一组互斥项还要用户自己判断哪个可用。
+            _startItem.Visible = !running;
+            _startItem.Enabled = !running && state != ServerState.Stopping && !busy;
+            _stopItem.Visible = running;
             _stopItem.Enabled = running && !busy;
+            _restartItem.Visible = running;
             _restartItem.Enabled = running && !busy;
             _panelItem.Enabled = state == ServerState.Running;
             _docsItem.Enabled = state == ServerState.Running;
@@ -3722,7 +4736,7 @@ namespace Atlisp.Tray
                 ? "重新安装 / 修复安装"
                 : "下载并安装 @lisp MCP Server";
             _nodeItem.Enabled = !updating;
-            _nodeItem.Text = "下载并安装 Node.js v" + _config.NodeVersion + "（npmmirror）";
+            _nodeItem.Text = "安装 Node.js v" + _config.NodeVersion + "…";
 
             bool updateAvailable = !string.IsNullOrEmpty(_latestVersion) &&
                 VersionUtil.IsNewer(_latestVersion, info.Version);
@@ -3743,10 +4757,808 @@ namespace Atlisp.Tray
             _mirrorItem.Checked = !string.IsNullOrEmpty(_config.NpmRegistry);
             _autoInstallItem.Checked = _config.AutoInstall;
             _autoUpgradeItem.Checked = _config.AutoUpgrade;
-            _autoUpgradeItem.Text = "定时自动检查并升级 @lisp/mcp（每 " +
+            _autoUpgradeItem.Text = "自动升级 @lisp/mcp（每 " +
                 (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1) + " 小时）";
 
             _tray.Text = Truncate("@lisp MCP · " + StateText(state) + " · 端口 " + _config.Port, 63);
+
+            UpdateDwgKbUi();
+        }
+
+        /// <summary>
+        /// 知识库状态刷新（后台线程）。默认 10 秒内不重复探测：菜单一秒能被打开
+        /// 好几次，每次都发 HTTP 会让右键菜单明显变慢。
+        /// </summary>
+        private void RefreshDwgKbStatus(bool force)
+        {
+            lock (_dwgKbLock)
+            {
+                if (_dwgKbBusy) return;
+                if (!force && _dwgKbStatus != null &&
+                    (DateTime.UtcNow - _dwgKbCheckedAt).TotalSeconds < 10) return;
+                _dwgKbBusy = true;
+            }
+
+            string url = _config.DwgKbUrl;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                DwgKbStatus status = DwgKbClient.Check(url, 2500);
+                // 同一轮顺带探测 Python/pip/知识库包：detect 要跑 2~3 个 python 子进程，
+                // 放主线程会让右键菜单明显卡顿。
+                PythonInfo python = null;
+                try { python = PythonLocator.Resolve(_config, false); }
+                catch { }
+                lock (_dwgKbLock)
+                {
+                    _dwgKbStatus = status;
+                    if (python != null) _dwgKbPython = python;
+                    _dwgKbCheckedAt = DateTime.UtcNow;
+                    _dwgKbBusy = false;
+                }
+            });
+        }
+
+        private void UpdateDwgKbUi()
+        {
+            DwgKbStatus status;
+            PythonInfo python;
+            string latest;
+            lock (_dwgKbLock)
+            {
+                status = _dwgKbStatus;
+                python = _dwgKbPython;
+                latest = _dwgKbLatestVersion;
+            }
+
+            if (status == null)
+            {
+                _dwgKbStatusItem.Text = "图纸知识库：检测中…";
+                _dwgKbStatusItem.ToolTipText = _config.DwgKbUrl;
+            }
+            else if (!status.Reachable)
+            {
+                _dwgKbStatusItem.Text = "图纸知识库：未连接";
+                _dwgKbStatusItem.ToolTipText = _config.DwgKbUrl;
+            }
+            else
+            {
+                string text = "图纸知识库：在线";
+                if (!string.IsNullOrEmpty(status.Version)) text += " · v" + status.Version;
+                if (status.Triples > 0) text += " · " + FormatCount(status.Triples) + "条三元组";
+                if (!status.RdfLoaded) text += " · 索引加载中";
+                if (!string.IsNullOrEmpty(latest) && python != null && python.HasPackage &&
+                    VersionUtil.IsNewer(latest, python.PackageVersion))
+                {
+                    text += " · 正在升级到 v" + latest + "…";
+                }
+                _dwgKbStatusItem.Text = text;
+                _dwgKbStatusItem.ToolTipText = _config.DwgKbUrl;
+            }
+
+            _dwgKbRuntimeItem.Text = python == null ? "运行环境：检测中…" : python.RuntimeText;
+            _dwgKbInstallItem.Enabled = !_dwgKbBuilding && !_pythonInstalling && !TaskBusy();
+            if (python != null && python.HasPackage)
+            {
+                string upgrade = "升级知识库（当前 v" + python.PackageVersion;
+                if (!string.IsNullOrEmpty(latest) &&
+                    VersionUtil.IsNewer(latest, python.PackageVersion))
+                {
+                    upgrade += " → v" + latest;
+                }
+                _dwgKbInstallItem.Text = upgrade + "）…";
+            }
+            else
+            {
+                _dwgKbInstallItem.Text = "安装知识库…";
+            }
+
+            bool online = status != null && status.Reachable;
+            _dwgKbOpenItem.Enabled = online;
+            _dwgKbRebuildItem.Enabled = online && !_dwgKbBuilding;
+            _dwgKbMenu.Text = online ? "图纸知识库" : "图纸知识库（未连接）";
+
+            // 启动/停止只对「本机 + 已安装包」有意义；停止只针对托盘自己起的进程，
+            // 别人手动起或系统服务方式起的不会被误杀。只显示当前适用的那一项。
+            bool local = DwgKbServer.IsLocalUrl(_config.DwgKbUrl);
+            bool installed = python != null && python.HasPackage;
+            bool ownedRunning = DwgKbServer.IsRunning();
+
+            _dwgKbStartItem.Visible = local && installed && !online && !ownedRunning;
+            _dwgKbStartItem.Enabled = !_dwgKbBuilding && !_pythonInstalling && !TaskBusy();
+            _dwgKbStopItem.Visible = ownedRunning;
+            _dwgKbStopItem.Enabled = ownedRunning;
+            _dwgKbAutoStartItem.Checked = _config.DwgKbAutoStart;
+            // 未装包时也要能关掉「自动安装/自动启动」，否则用户没有出口
+            _dwgKbAutoStartItem.Enabled = local;
+            _dwgKbAutoUpgradeItem.Checked = _config.DwgKbAutoUpgrade;
+            _dwgKbAutoUpgradeItem.Enabled = local;
+        }
+
+        private void OpenDwgKbUi()
+        {
+            OpenUrl(_config.DwgKbUrl.TrimEnd('/') + "/ui");
+        }
+
+        /// <summary>
+        /// 启动本地知识库服务：`python -m atlisp_dwg_kb.cli serve --host … --port …`
+        /// 进程 PID 记进 dwgkb.pid，输出写到 logs/dwgkb-*.log。
+        /// </summary>
+        private void StartDwgKbService(bool quiet = false)
+        {
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+            if (!info.HasPackage)
+            {
+                if (!quiet)
+                {
+                    Balloon("尚未安装知识库",
+                        "先用菜单「图纸知识库 → 安装 / 升级知识库…」安装 atlisp-dwg-kb。",
+                        ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            int port = DwgKbServer.PortOf(_config.DwgKbUrl, 8322);
+            if (DwgKbServer.IsPortListening(port))
+            {
+                if (!quiet)
+                {
+                    Balloon("知识库已在运行", "端口 " + port + " 已有服务在监听。", ToolTipIcon.Info);
+                }
+                RefreshDwgKbStatus(true);
+                return;
+            }
+
+            string error;
+            Process process = DwgKbServer.Start(info, _config.DwgKbUrl, out error);
+            if (process == null)
+            {
+                if (quiet)
+                {
+                    AppLog.Write("dwg-kb: 自动启动失败 " + error);
+                    ScheduleDwgKbRetry("知识库服务启动失败：" + error);
+                }
+                else
+                {
+                    ShowError("启动知识库失败", error);
+                }
+                return;
+            }
+            Balloon("知识库服务已启动",
+                "PID " + process.Id + " · " + _config.DwgKbUrl +
+                "\r\n首次加载索引可能需要几十秒。", ToolTipIcon.Info);
+            _dwgKbUserStopped = false;
+            _dwgKbRestartFailures = 0;
+            RefreshDwgKbStatus(true);
+            UpdateDwgKbUi();
+        }
+
+        private void StopDwgKbService()
+        {
+            string error;
+            if (!DwgKbServer.Stop(out error))
+            {
+                ShowError("停止知识库失败", error);
+                return;
+            }
+            // 用户主动停止：本轮托盘生命周期内不再自动拉起
+            _dwgKbUserStopped = true;
+            Balloon("知识库服务已停止", "", ToolTipIcon.Info);
+            RefreshDwgKbStatus(true);
+            UpdateDwgKbUi();
+        }
+
+        private void ToggleDwgKbAutoStart()
+        {
+            _config.DwgKbAutoStart = !_config.DwgKbAutoStart;
+            _config.Save();
+            UpdateDwgKbUi();
+            if (_config.DwgKbAutoStart && !DwgKbServer.IsRunning())
+            {
+                // 勾选那一刻就把服务拉起来，语义比「下次启动才生效」直观；
+                // 还没装包时按配置自动补齐（Python → pip → 启动）。
+                PythonInfo info = PythonLocator.Resolve(_config, false);
+                if (!info.HasPackage && _config.AutoInstall) AutoInstallDwgKb();
+                else StartDwgKbService();
+            }
+        }
+
+        private void ToggleDwgKbAutoUpgrade()
+        {
+            _config.DwgKbAutoUpgrade = !_config.DwgKbAutoUpgrade;
+            _config.Save();
+            UpdateDwgKbUi();
+            if (_config.DwgKbAutoUpgrade)
+            {
+                // 勾选后立刻查一次，不必等下一个定时周期
+                _nextDwgKbCheckAt = DateTime.MinValue;
+                _dwgKbTaskRetryAt = DateTime.MinValue;
+            }
+        }
+
+        /// <summary>
+        /// 知识库自动启动：地址必须是本机。没装包时（且 AutoInstall 开启）自动建环境：
+        /// 没 Python → 下载静默安装；有 Python → pip 装包；装完自动拉起服务。
+        /// </summary>
+        private void EnsureDwgKbStartedOnLaunch()
+        {
+            if (!_config.DwgKbAutoStart)
+            {
+                _dwgKbAutoStartAttempted = true;
+                return;
+            }
+            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl))
+            {
+                _dwgKbAutoStartAttempted = true;
+                return;
+            }
+            int port = DwgKbServer.PortOf(_config.DwgKbUrl, 8322);
+            if (DwgKbServer.IsPortListening(port))
+            {
+                _dwgKbAutoStartAttempted = true;
+                return;
+            }
+            if (_dwgKbAutoFlow || _pythonInstalling || TaskBusy()) return;
+            if (DateTime.UtcNow < _dwgKbTaskRetryAt) return;
+
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+
+            if (!info.HasPackage)
+            {
+                if (!_config.AutoInstall)
+                {
+                    _dwgKbAutoStartAttempted = true;
+                    return;
+                }
+                AppLog.Write("dwg-kb: auto-provision（Python=" +
+                    (info.HasPython ? info.Version : "未安装") + "）");
+                _dwgKbAutoStartAttempted = true;
+                AutoInstallDwgKb();
+                return;
+            }
+
+            _dwgKbAutoStartAttempted = true;
+            AppLog.Write("dwg-kb: auto-start on launch");
+            StartDwgKbService();
+        }
+
+        /// <summary>
+        /// 定时检查知识库新版本并自动升级（间隔与 @lisp/mcp 共用 AutoUpgradeHours）。
+        /// 只对「本机地址」生效：配成局域网服务器时本机装的包用不上。
+        /// </summary>
+        private void MaybeAutoUpgradeDwgKb()
+        {
+            if (!_config.DwgKbAutoUpgrade && !_config.AutoInstall) return;
+            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
+            if (TaskBusy() || _pythonInstalling || _dwgKbUpdateChecking || _dwgKbAutoFlow) return;
+
+            DateTime now = DateTime.UtcNow;
+            if (_nextDwgKbCheckAt == DateTime.MinValue)
+            {
+                if ((now - _createdAt).TotalSeconds < 30) return;
+            }
+            else if (now < _nextDwgKbCheckAt)
+            {
+                return;
+            }
+            if (now < _dwgKbTaskRetryAt) return;
+
+            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 1;
+            _nextDwgKbCheckAt = now.AddHours(hours);
+
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+
+            if (!info.HasPackage)
+            {
+                // 自动补齐：启动阶段没装完（或当时任务冲突）的在这里继续
+                if (_config.AutoInstall && _config.DwgKbAutoStart) AutoInstallDwgKb();
+                return;
+            }
+            if (!_config.DwgKbAutoUpgrade) return;
+            StartDwgKbVersionCheck(info);
+        }
+
+        /// <summary>
+        /// 后台线程查 PyPI 最新版本（HTTP + 可能的 pip index，几秒），
+        /// 结果放 _dwgKbPendingUpgrade，由 UI 定时器启动 pip。
+        /// </summary>
+        private void StartDwgKbVersionCheck(PythonInfo info)
+        {
+            _dwgKbUpdateChecking = true;
+            PythonInfo snapshot = info;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                string latest = PythonRunner.CheckLatestVersion(snapshot, "atlisp-dwg-kb", out error);
+                bool newer = !string.IsNullOrEmpty(latest) &&
+                    VersionUtil.IsNewer(latest, snapshot.PackageVersion);
+                lock (_dwgKbLock)
+                {
+                    _dwgKbUpdateChecking = false;
+                    _dwgKbLatestVersion = latest;
+                    if (newer) _dwgKbPendingUpgrade = latest;
+                }
+                if (string.IsNullOrEmpty(latest))
+                {
+                    AppLog.Write("dwg-kb update check failed: " + error);
+                }
+                else if (newer)
+                {
+                    AppLog.Write("dwg-kb update: " + snapshot.PackageVersion + " -> " + latest);
+                }
+            });
+        }
+
+        /// <summary>
+        /// 静默升级：先停掉托盘启动的知识库进程（Windows 会锁 .pyd），pip 升级完成后
+        /// 由 HandleTaskSuccess 自动拉起。不弹任务窗口、不询问，失败走退避重试。
+        /// </summary>
+        private void AutoUpgradeDwgKb(string latest)
+        {
+            if (TaskBusy() || _pythonInstalling) return;
+
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+            if (!info.HasPackage || !VersionUtil.IsNewer(latest, info.PackageVersion)) return;
+
+            if (DwgKbServer.IsRunning())
+            {
+                string stopError;
+                if (DwgKbServer.Stop(out stopError))
+                {
+                    _dwgKbRestartAfterUpgrade = true;
+                }
+                else
+                {
+                    AppLog.Write("dwg-kb auto-upgrade: 停止知识库失败（继续升级）: " + stopError);
+                }
+            }
+
+            _dwgKbAutoFlow = true;
+            AppLog.Write("dwg-kb auto-upgrade: " + info.PackageVersion + " -> " + latest);
+            if (!_silent)
+            {
+                Balloon("正在自动升级知识库",
+                    "atlisp-dwg-kb " + info.PackageVersion + " → " + latest +
+                    "，完成后自动恢复服务。",
+                    ToolTipIcon.Info);
+            }
+            RunPipTask(info, "自动升级知识库（v" + latest + "）", "dwgkb-upgrade-auto", false);
+        }
+
+        /// <summary>无人值守安装：没 Python 先装 Python，装完由定时器接着 pip 装包。</summary>
+        private void AutoInstallDwgKb()
+        {
+            if (_dwgKbAutoFlow || _pythonInstalling) return;
+            if (TaskBusy()) return;
+            if (DateTime.UtcNow < _dwgKbTaskRetryAt) return;
+            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
+
+            _dwgKbAutoFlow = true;
+            _dwgKbAutoStartAfterInstall = true;
+            AppLog.Write("dwg-kb auto: 开始自动安装");
+            InstallDwgKb(true);
+        }
+
+        /// <summary>自动流程失败后的退避：5 → 30 → 180 分钟，避免网络故障时反复下载。</summary>
+        private void ScheduleDwgKbRetry(string reason)
+        {
+            _dwgKbTaskFailures++;
+            int minutes = _dwgKbTaskFailures <= 1 ? 5 : (_dwgKbTaskFailures <= 2 ? 30 : 180);
+            _dwgKbTaskRetryAt = DateTime.UtcNow.AddMinutes(minutes);
+            _dwgKbAutoFlow = false;
+            _dwgKbAutoStartAfterInstall = false;
+            AppLog.Write("dwg-kb auto: " + reason + "（第 " + _dwgKbTaskFailures +
+                " 次失败，" + minutes + " 分钟后重试）");
+            // 按退避时间重新检查，而不是干等下一个整点
+            _nextDwgKbCheckAt = _dwgKbTaskRetryAt;
+            // 这个函数也可能从后台线程（Python 静默安装结束）调用，气泡交给 UI 定时器弹
+            _dwgKbBalloonTitle = "知识库自动安装/升级失败";
+            _dwgKbBalloonText = reason + "\r\n将在 " + minutes + " 分钟后自动重试。";
+            _dwgKbBalloonIcon = ToolTipIcon.Warning;
+            _dwgKbBalloonPending = true;
+        }
+
+        /// <summary>
+        /// MCP 服务异常退出（退出码非 0）后自动拉起，退避 1/2/5/10/30 分钟。
+        /// 用户手动停止走的是 Stopped 状态，不会触发这里。
+        /// </summary>
+        private void MaybeRestartServer()
+        {
+            if (!_config.AutoStartServer) return;
+            if ((DateTime.UtcNow - _createdAt).TotalSeconds < 30) return;
+            if (TaskBusy()) return;
+
+            if (_server.State == ServerState.Running)
+            {
+                _serverRestartFailures = 0;
+                return;
+            }
+            if (_server.State != ServerState.Error) return;
+            if (_serverRestartFailures >= ServerRestartMaxFailures) return;
+            if (DateTime.UtcNow < _serverRestartRetryAt) return;
+
+            _serverRestartFailures++;
+            int minutes = _serverRestartFailures <= 1 ? 1 :
+                (_serverRestartFailures <= 2 ? 2 :
+                (_serverRestartFailures <= 3 ? 5 :
+                (_serverRestartFailures <= 4 ? 10 : 30)));
+            _serverRestartRetryAt = DateTime.UtcNow.AddMinutes(minutes);
+            AppLog.Write("auto-restart: MCP 服务异常退出，第 " + _serverRestartFailures +
+                " 次自动拉起（开始 " + minutes + " 分钟退避）");
+            try
+            {
+                _suppressNotifications = true;
+                _server.Start();
+                _suppressNotifications = false;
+            }
+            catch (Exception ex)
+            {
+                _suppressNotifications = false;
+                AppLog.Write("auto-restart: 拉起失败 " + ex.Message);
+                if (_serverRestartFailures >= ServerRestartMaxFailures)
+                {
+                    Balloon("MCP 服务反复异常退出",
+                        "已尝试自动重启 " + ServerRestartMaxFailures +
+                        " 次，请查看服务器日志。", ToolTipIcon.Error);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 知识库服务意外退出后自动拉起（仅本机 + 已装包 + 用户没主动停止）。
+        /// 用户点「停止知识库服务」会置 _dwgKbUserStopped，避免刚停就被拉起来。
+        /// </summary>
+        private void MaybeRestartDwgKbService()
+        {
+            if (!_config.DwgKbAutoStart) return;
+            if (_dwgKbUserStopped) return;
+            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
+            if ((DateTime.UtcNow - _createdAt).TotalSeconds < 90) return;
+            if (TaskBusy() || _pythonInstalling || _dwgKbAutoFlow || _dwgKbUpdateChecking) return;
+            if (DateTime.UtcNow < _dwgKbRestartRetryAt) return;
+
+            // 托盘自己起的进程还活着，或端口上已有别的实例 → 不需要干预
+            if (DwgKbServer.IsRunning())
+            {
+                _dwgKbRestartFailures = 0;
+                return;
+            }
+            int port = DwgKbServer.PortOf(_config.DwgKbUrl, 8322);
+            if (DwgKbServer.IsPortListening(port))
+            {
+                _dwgKbRestartFailures = 0;
+                return;
+            }
+
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+            if (!info.HasPackage) return;
+            if (_dwgKbRestartFailures >= 5) return;
+
+            _dwgKbRestartFailures++;
+            int minutes = _dwgKbRestartFailures <= 1 ? 1 :
+                (_dwgKbRestartFailures <= 2 ? 2 :
+                (_dwgKbRestartFailures <= 3 ? 5 : 15));
+            _dwgKbRestartRetryAt = DateTime.UtcNow.AddMinutes(minutes);
+            AppLog.Write("dwg-kb: 服务未运行，自动拉起（第 " + _dwgKbRestartFailures +
+                " 次，开始 " + minutes + " 分钟退避）");
+            StartDwgKbService(true);
+        }
+
+        /// <summary>
+        /// 提交重建任务（服务端后台执行，不在这里等它跑完）。
+        /// 注意 /build 是 admin 操作：知识库侧设置了 DWG_KB_API_KEY 时，
+        /// 托盘配置里的 key 必须一致，否则返回 401。
+        /// </summary>
+        private void RebuildDwgKb()
+        {
+            if (_dwgKbBuilding) return;
+
+            DialogResult confirm = MessageBox.Show(
+                "将请求知识库重建索引：\r\n" + _config.DwgKbUrl + "\r\n\r\n" +
+                "重建在服务端后台运行（数分钟），期间旧索引仍可查询。\r\n继续吗？",
+                "@lisp MCP 托盘 - 知识库",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (confirm != DialogResult.Yes) return;
+
+            _dwgKbBuilding = true;
+            string url = _config.DwgKbUrl;
+            string key = _config.DwgKbApiKey;
+            UpdateDwgKbUi();
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error = null;
+                try
+                {
+                    DwgKbClient.Build(url, key, 30000);
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+
+                if (error == null)
+                {
+                    _dwgKbBalloonTitle = "知识库重建已提交";
+                    _dwgKbBalloonText = "服务端正在后台重建索引，完成后自动生效。";
+                    _dwgKbBalloonIcon = ToolTipIcon.Info;
+                }
+                else
+                {
+                    _dwgKbBalloonTitle = "知识库重建失败";
+                    _dwgKbBalloonText = error;
+                    _dwgKbBalloonIcon = ToolTipIcon.Error;
+                }
+                _dwgKbBalloonPending = true;
+
+                lock (_dwgKbLock)
+                {
+                    _dwgKbBuilding = false;
+                    _dwgKbCheckedAt = DateTime.MinValue;
+                }
+            });
+        }
+
+        private void ConfigureDwgKb()
+        {
+            using (DwgKbSettingsForm form =
+                new DwgKbSettingsForm(_config.DwgKbUrl, _config.DwgKbApiKey))
+            {
+                if (form.ShowDialog() != DialogResult.OK) return;
+                _config.DwgKbUrl = form.UrlValue;
+                _config.DwgKbApiKey = form.ApiKeyValue;
+                _config.Normalize();
+                _config.Save();
+                RefreshDwgKbStatus(true);
+                UpdateDwgKbUi();
+            }
+        }
+
+        /// <summary>
+        /// 「安装 / 升级知识库」：从 PyPI 安装 atlisp-dwg-kb。
+        /// 没 Python 先走自动安装 Python（用户目录、免 UAC），装完自动接着装包。
+        /// auto=true 时用于无人值守流程：不弹确认框、不弹任务窗口，失败走退避重试。
+        /// </summary>
+        private void InstallDwgKb(bool auto = false)
+        {
+            if (_pythonInstalling)
+            {
+                if (!auto) Balloon("请稍候", "正在安装 Python，完成后会自动继续。", ToolTipIcon.Info);
+                return;
+            }
+            if (TaskBusy())
+            {
+                if (!auto) Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
+                return;
+            }
+
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            lock (_dwgKbLock) { _dwgKbPython = info; }
+            UpdateDwgKbUi();
+
+            if (!info.HasPython)
+            {
+                if (auto)
+                {
+                    AppLog.Write("dwg-kb auto: 未检测到 Python，开始自动下载安装");
+                    _dwgKbAutoFlow = true;
+                    InstallPythonFromMirror();
+                }
+                else
+                {
+                    PromptInstallPython();
+                }
+                return;
+            }
+            if (!info.HasPip)
+            {
+                if (auto)
+                {
+                    ScheduleDwgKbRetry("Python " + info.Version + " 缺少 pip");
+                }
+                else
+                {
+                    ShowError("无法安装知识库",
+                        "检测到 Python " + info.Version + "，但 pip 不可用。\r\n\r\n" +
+                        "请重新安装 Python（勾选 pip），或手动执行：\r\n" +
+                        info.PythonPath + " -m ensurepip --upgrade");
+                }
+                return;
+            }
+
+            // 升级时如果知识库是托盘自己启动的进程，先停掉（Windows 会锁定被加载的
+            // .pyd）；成功后 HandleTaskSuccess 会自动按原状态拉起。
+            if (info.HasPackage && DwgKbServer.IsRunning())
+            {
+                string stopError;
+                if (DwgKbServer.Stop(out stopError))
+                {
+                    _dwgKbRestartAfterUpgrade = true;
+                    AppLog.Write("dwg-kb: 升级前停止托盘启动的知识库进程");
+                }
+                else if (!auto)
+                {
+                    AppLog.Write("dwg-kb: 停止知识库失败（继续升级）: " + stopError);
+                }
+            }
+
+            string title = info.HasPackage ? "升级知识库（PyPI）" : "安装知识库（PyPI）";
+            string action = (info.HasPackage ? "dwgkb-upgrade" : "dwgkb-install") +
+                (auto ? "-auto" : "");
+            _dwgKbAutoFlow = auto;
+            if (auto) AppLog.Write("dwg-kb auto: " + title);
+            RunPipTask(info, title, action, !auto);
+        }
+
+        private void PromptInstallPython()
+        {
+            string version = _config.PythonVersion;
+            string arch = PythonRunner.DetectArch();
+            DialogResult result = MessageBox.Show(
+                "未检测到 Python 3.10+。知识库（atlisp-dwg-kb）是 Python 包，需要先安装 Python。\r\n\r\n" +
+                "是否自动下载并安装 Python v" + version + "（" + arch + "）？\r\n" +
+                "约 25 MB，安装到用户目录：\r\n" + Paths.PythonDir + "\r\n" +
+                "（无需管理员权限，不改系统 PATH）",
+                "@lisp MCP 托盘 - 知识库",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (result != DialogResult.Yes) return;
+            InstallPythonFromMirror();
+        }
+
+        private void InstallPythonFromMirror()
+        {
+            if (_pythonInstalling) return;
+
+            string version = _config.PythonVersion;
+            string arch = PythonRunner.DetectArch();
+            string url = PythonRunner.BuildInstallerUrl(_config, version, arch);
+            string filePath = Path.Combine(Paths.DownloadDir,
+                "python-" + version + "-" + arch + ".exe");
+            try { Directory.CreateDirectory(Paths.DownloadDir); } catch { }
+
+            _downloadKind = "python";
+            _downloadVersion = version;
+            _downloadArch = arch;
+            _downloadUrl = url;
+            _downloadJob = new DownloadJob(url, filePath);
+
+            if (_taskWindow != null && !_taskWindow.IsDisposed)
+            {
+                try { _taskWindow.Close(); } catch { }
+            }
+            OutputForm form = new OutputForm("自动安装 Python v" + version, "", true);
+            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
+            _taskWindow = form;
+            form.Show();
+            form.Append("未检测到 Python 3.10+，正在自动下载 v" + version +
+                "（" + arch + "）\r\n");
+            form.Append("下载地址：" + url + "\r\n");
+            form.Append("安装目录：" + Paths.PythonDir + "（无需管理员权限）\r\n\r\n");
+
+            Balloon("正在安装 Python", "下载 v" + version + "，完成后自动安装知识库…",
+                ToolTipIcon.Info);
+            AppLog.Write("python: 下载 " + url);
+            _downloadJob.Start();
+            if (_downloadJob.Finished) PollDownload();
+        }
+
+        /// <summary>
+        /// 下载完成后的静默安装 + 接着装知识库。安装器是 GUI 程序（/quiet 静默），
+        /// 用后台线程等它退出，避免卡住 UI 定时器。
+        /// </summary>
+        private void StartPythonInstall(string installerPath)
+        {
+            _pythonInstalling = true;
+            string targetDir = Paths.PythonDir;
+            if (_taskWindow != null && !_taskWindow.IsDisposed)
+            {
+                _taskWindow.SetStatus("正在安装 Python 到用户目录（无需管理员权限）…");
+            }
+            AppLog.Write("python: 静默安装 " + installerPath + " -> " + targetDir);
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                int code = PythonRunner.InstallSilently(installerPath, targetDir, out error);
+                try { File.Delete(installerPath); } catch { }
+
+                PythonLocator.Invalidate();
+                PythonInfo info = PythonLocator.Resolve(_config, true);
+                _pythonInstalling = false;
+                lock (_dwgKbLock) { _dwgKbPython = info; }
+
+                if (info.HasPython)
+                {
+                    // pip 任务要建窗口/LongTask，只能在 UI 线程启动：这里只挂个请求，
+                    // 由 OnUiTimer 在下一拍调用 InstallDwgKb()。
+                    _dwgKbStartPipRequested = true;
+                    _dwgKbBalloonTitle = "Python 已安装";
+                    _dwgKbBalloonText = "Python " + info.Version + "，继续安装知识库…";
+                    _dwgKbBalloonIcon = ToolTipIcon.Info;
+                }
+                else
+                {
+                    if (_dwgKbAutoFlow)
+                    {
+                        ScheduleDwgKbRetry("安装 Python 失败" +
+                            (string.IsNullOrEmpty(error) ? "（退出码 " + code + "）" : "：" + error));
+                    }
+                    else
+                    {
+                        _dwgKbBalloonTitle = "安装 Python 失败";
+                        _dwgKbBalloonText = string.IsNullOrEmpty(error)
+                            ? ("安装程序退出码 " + code)
+                            : error;
+                        _dwgKbBalloonIcon = ToolTipIcon.Error;
+                    }
+                }
+                _dwgKbBalloonPending = true;
+            });
+        }
+
+        private void RunPipTask(PythonInfo info, string title, string action)
+        {
+            RunPipTask(info, title, action, true);
+        }
+
+        private void RunPipTask(PythonInfo info, string title, string action, bool showWindow)
+        {
+            if (TaskBusy())
+            {
+                if (!showWindow) ScheduleDwgKbRetry("已有下载/更新任务正在进行");
+                else Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
+                return;
+            }
+
+            string logFile = NewTaskLogFile("pip");
+            LongTask task = new LongTask(title, logFile);
+            task.AppendLine("Python: " + info.PythonPath);
+            task.AppendLine("命令: " + info.PythonPath +
+                " -m pip install --upgrade atlisp-dwg-kb");
+            task.AppendLine("");
+
+            Process process = PythonRunner.CreatePipInstall(info.PythonPath, "atlisp-dwg-kb",
+                delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null) task.AppendLine(e.Data);
+                },
+                delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null) task.AppendLine(e.Data);
+                });
+            if (process == null)
+            {
+                task.Dispose();
+                if (showWindow)
+                {
+                    ShowError(title, "无法启动 Python 进程，请检查安装是否完整。");
+                }
+                else
+                {
+                    if (_dwgKbRestartAfterUpgrade)
+                    {
+                        _dwgKbRestartAfterUpgrade = false;
+                        StartDwgKbService(true);
+                    }
+                    ScheduleDwgKbRetry("无法启动 pip 进程");
+                }
+                return;
+            }
+
+            _task = task;
+            _taskAction = action;
+            _restartAfterTask = false;
+            _taskElevated = false;
+            _showTaskWindow = showWindow;
+            _taskWindow = null;
+            task.Attach(process);
+            if (showWindow) ShowTaskWindow(title, task);
         }
 
         private static string StateText(ServerState state)
@@ -3986,7 +5798,9 @@ namespace Atlisp.Tray
             long total = job.Total;
             if (_taskWindow != null && !_taskWindow.IsDisposed)
             {
-                string status = "正在下载 Node.js v" + _downloadVersion +
+                string status = (_downloadKind == "python"
+                        ? "正在下载 Python v"
+                        : "正在下载 Node.js v") + _downloadVersion +
                     "（" + _downloadArch + "）：" + FormatBytes(received);
                 if (total > 0)
                 {
@@ -4012,6 +5826,23 @@ namespace Atlisp.Tray
                     _taskWindow.Append("\r\n下载失败：" + error + "\r\n");
                     _taskWindow.SetFinished(false, -1);
                 }
+                if (_downloadKind == "python")
+                {
+                    // Python 下载失败不能走 Node 的降级链（那会去装 Node MSI）
+                    _downloadKind = null;
+                    AppLog.Write("python installer download failed: " + error +
+                        " url=" + _downloadUrl);
+                    if (_dwgKbAutoFlow)
+                    {
+                        ScheduleDwgKbRetry("下载 Python 安装包失败：" + error);
+                    }
+                    else
+                    {
+                        Balloon("下载 Python 失败", error + "\r\n可稍后重试，或手动安装 Python 3.10+。",
+                            ToolTipIcon.Warning);
+                    }
+                    return;
+                }
                 AppLog.Write("Node.js download failed: " + error + " url=" + _downloadUrl);
                 OnNodeDownloadFailed(error);
                 return;
@@ -4027,6 +5858,13 @@ namespace Atlisp.Tray
                     _taskWindow.Append("\r\n" + sizeError + "\r\n");
                     _taskWindow.SetFinished(false, -1);
                 }
+                if (_downloadKind == "python")
+                {
+                    _downloadKind = null;
+                    if (_dwgKbAutoFlow) ScheduleDwgKbRetry("Python 安装包大小校验失败");
+                    else Balloon("下载 Python 失败", sizeError, ToolTipIcon.Warning);
+                    return;
+                }
                 OnNodeDownloadFailed(sizeError);
                 return;
             }
@@ -4037,6 +5875,19 @@ namespace Atlisp.Tray
                 _downloadKind = null;
                 _portableJob = new PortableInstallJob(path, Paths.PortableNodeDir);
                 _portableJob.Start();
+                return;
+            }
+
+            if (_downloadKind == "python")
+            {
+                AppLog.Write("python installer downloaded: " + path);
+                _downloadKind = null;
+                if (_taskWindow != null && !_taskWindow.IsDisposed)
+                {
+                    _taskWindow.Append("\r\n下载完成：" + path +
+                        "（" + FormatBytes(actual) + "）\r\n");
+                }
+                StartPythonInstall(path);
                 return;
             }
 
@@ -4174,6 +6025,20 @@ namespace Atlisp.Tray
                 return (bytes / 1024.0).ToString("0.0", CultureInfo.InvariantCulture) + " KB";
             }
             return (bytes / (1024.0 * 1024.0)).ToString("0.0", CultureInfo.InvariantCulture) + " MB";
+        }
+
+        /// <summary>大数字用「万 / 亿」显示，状态行不至于被 5,499,880 这种数字撑爆。</summary>
+        private static string FormatCount(long value)
+        {
+            if (value >= 100000000L)
+            {
+                return (value / 100000000.0).ToString("0.#", CultureInfo.InvariantCulture) + "亿";
+            }
+            if (value >= 10000L)
+            {
+                return (value / 10000.0).ToString("0.#", CultureInfo.InvariantCulture) + "万";
+            }
+            return value.ToString(CultureInfo.InvariantCulture);
         }
 
         private void PromptInstallServer()
@@ -4535,6 +6400,51 @@ namespace Atlisp.Tray
 
         private void HandleTaskSuccess(string action, string output, bool restartAfter, bool showWindow)
         {
+            if (action != null &&
+                (action.StartsWith("dwgkb-install", StringComparison.Ordinal) ||
+                 action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal)))
+            {
+                bool auto = action.EndsWith("-auto", StringComparison.Ordinal);
+                bool upgraded = action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal);
+                PythonLocator.Invalidate();
+                PythonInfo after = PythonLocator.Resolve(_config, true);
+                lock (_dwgKbLock) { _dwgKbPython = after; }
+
+                _dwgKbTaskFailures = 0;
+                _dwgKbTaskRetryAt = DateTime.MinValue;
+                _dwgKbAutoFlow = false;
+
+                bool restart = _dwgKbRestartAfterUpgrade;
+                bool startFresh = _dwgKbAutoStartAfterInstall;
+                _dwgKbRestartAfterUpgrade = false;
+                _dwgKbAutoStartAfterInstall = false;
+
+                if (auto)
+                {
+                    AppLog.Write("dwg-kb auto: " + (upgraded ? "升级" : "安装") +
+                        "完成 " + (after.HasPackage ? after.PackageVersion : "?"));
+                }
+                else
+                {
+                    Balloon(upgraded ? "知识库已升级" : "知识库已安装",
+                        (after.HasPackage ? "atlisp-dwg-kb " + after.PackageVersion : "安装完成") +
+                        "。\r\n本地启动：atlisp-dwg-kb serve（或在「设置知识库地址」里指向已有的知识库服务）。",
+                        ToolTipIcon.Info);
+                }
+
+                // 升级前停过服务 → 恢复；自动流程安装完成 → 按配置拉起；
+                // 手动安装且开了自动启动 → 也顺手拉起，语义一致。
+                if (restart || (startFresh && _config.DwgKbAutoStart) ||
+                    (!auto && _config.DwgKbAutoStart &&
+                     DwgKbServer.IsLocalUrl(_config.DwgKbUrl)))
+                {
+                    StartDwgKbService(auto);
+                }
+                UpdateDwgKbUi();
+                RefreshDwgKbStatus(true);
+                return;
+            }
+
             ServerLocator.Invalidate();
             ServerInfo info = ServerLocator.Resolve(_config, true);
 
@@ -4707,6 +6617,38 @@ namespace Atlisp.Tray
             string text = output ?? "";
             AppLog.Write("task failed action=" + action + " exitCode=" + exitCode +
                 " output=" + Tail(text, 2000));
+
+            if (action != null &&
+                (action.StartsWith("dwgkb-install", StringComparison.Ordinal) ||
+                 action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal)))
+            {
+                bool auto = action.EndsWith("-auto", StringComparison.Ordinal);
+                bool upgraded = action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal);
+                // 自动升级失败：知识库可能在升级前被停掉了，先按旧版本恢复服务
+                if (auto && _dwgKbRestartAfterUpgrade)
+                {
+                    _dwgKbRestartAfterUpgrade = false;
+                    StartDwgKbService(true);
+                }
+                // pip 失败最常见的原因：网络（PyPI 超时）或 Python 安装缺 pip
+                string hint = text.IndexOf("Could not find a version", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("ProxyError", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("Connection", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "看起来是网络问题。可换用国内镜像重试：\r\n" +
+                      "  python -m pip install --upgrade atlisp-dwg-kb -i https://pypi.tuna.tsinghua.edu.cn/simple"
+                    : "详细输出见任务窗口或 logs 目录下的 pip-*.log。";
+                if (auto)
+                {
+                    ScheduleDwgKbRetry("pip 退出码 " + exitCode + "（" +
+                        (upgraded ? "升级" : "安装") + "知识库）");
+                    return;
+                }
+                ShowError(upgraded ? "升级知识库失败" : "安装知识库失败",
+                    "pip 退出码 " + exitCode + "\r\n\r\n" + hint);
+                Balloon("知识库安装失败", "pip 退出码 " + exitCode, ToolTipIcon.Warning);
+                return;
+            }
 
             if (action == "node-msi")
             {
@@ -5002,6 +6944,10 @@ namespace Atlisp.Tray
             // 定时自动升级按新配置重新计时
             _nextUpdateCheckAt = DateTime.MinValue;
             _startupUpdateChecked = _config.AutoUpgrade;
+            // 知识库的自动启动/自动升级也重新计时
+            _nextDwgKbCheckAt = DateTime.MinValue;
+            _dwgKbTaskRetryAt = DateTime.MinValue;
+            _dwgKbAutoStartAttempted = false;
 
             if (restart)
             {
@@ -5050,6 +6996,13 @@ namespace Atlisp.Tray
                     : "关"));
             builder.AppendLine("npm 源       : " +
                 (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
+            builder.AppendLine("知识库地址   : " + _config.DwgKbUrl);
+            builder.AppendLine("知识库自动   : " + (_config.DwgKbAutoStart ? "随托盘启动" : "手动启动") +
+                " / " + (_config.DwgKbAutoUpgrade ? "自动升级" : "不自动升级"));
+            PythonInfo python = PythonLocator.Resolve(_config, false);
+            builder.AppendLine("知识库环境   : " + (python == null ? "检测中" : python.RuntimeText));
+            builder.AppendLine("知识库最新版 : " +
+                (string.IsNullOrEmpty(_dwgKbLatestVersion) ? "未检查" : "v" + _dwgKbLatestVersion));
             builder.AppendLine();
             builder.AppendLine("Node.js      : " + (string.IsNullOrEmpty(info.NodePath) ? "未检测到" : info.NodePath));
             if (Directory.Exists(Paths.PortableNodeDir))
@@ -5127,7 +7080,8 @@ namespace Atlisp.Tray
                 "双击托盘图标打开 https://atlisp.cn/agent/chat；\r\n" +
                 "右键菜单可启动/停止服务、\r\n" +
                 "检查更新、升级、安装以及设置开机自启。\r\n" +
-                "托盘随 @lisp/mcp 自动升级（默认每小时检查一次）。\r\n\r\n" +
+                "托盘随 @lisp/mcp 自动升级（默认每小时检查一次）；\r\n" +
+                "知识库（atlisp-dwg-kb）同样自动安装、自动升级、异常自愈。\r\n\r\n" +
                 "项目主页：https://gitee.com/atlisp",
                 "关于 @lisp MCP 托盘",
                 MessageBoxButtons.OK,

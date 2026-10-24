@@ -40,11 +40,13 @@ describe('toolProfile 档位过滤', () => {
     }
   });
 
-  it('standard 档：200~230 个，包含编辑/块/标注/文字/打印/文件类', () => {
+  it('standard 档：200~250 个，包含编辑/块/标注/文字/打印/文件类', () => {
     config.toolProfile = 'standard';
     const visible = getVisibleTools();
     expect(visible.length).toBeGreaterThanOrEqual(200);
-    expect(visible.length).toBeLessThanOrEqual(230);
+    // 上界从 230 提到 250：新增「图纸知识库」分类 11 个只读工具（2026-10）。
+    // 预算的意义是防止档位无节制膨胀，不是钉死一个数字——有意新增分类时同步调整。
+    expect(visible.length).toBeLessThanOrEqual(250);
     const n = names(visible);
     expect(n.has('create_block')).toBe(true);
     expect(n.has('insert_block')).toBe(true);

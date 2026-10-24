@@ -22,6 +22,11 @@ import { skill_search, skill_install, skill_list_installed, skill_uninstall, ski
 import { pluginList, pluginReload } from './handlers/plugin-handlers.js';
 import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
 import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_call_tool, peer_cad_info, peer_cad_pool, peer_stats, peer_summary, peer_broadcast } from './handlers/peer-handlers.js';
+import {
+    dwgKbHealth, dwgKbStats, dwgKbSearch, dwgKbQuery, dwgKbListDrawings,
+    dwgKbProjects, dwgKbLayers, dwgKbBlocks, dwgKbReviewQueue,
+    dwgKbDrawingHistory, dwgKbCrossRef,
+} from './handlers/dwg-kb-handlers.js';
 
 // 注册实例切换回调：通知已订阅客户端刷新资源
 // 缓存已在 cad-pool.setActive() 中通过 setInstanceKey() 自动隔离
@@ -556,6 +561,21 @@ export const TOOL_HANDLERS = {
     import_external_data: lazy('import_external_data', (a) => a),
     export_to_external:  lazy('export_to_external', (a) => a),
     list_data_sources:   lazy('list_data_sources'),
+
+    // === 图纸知识库（atlisp-dwg-kb，只读 HTTP 查询）===
+    // 全部直连 Node handler（不经 CAD/LISP）：知识库没起时返回 reachable:false，
+    // 而不是抛错——否则模型会把「服务没开」读成「查不到图纸」。
+    dwg_kb_health:           (a) => dwgKbHealth(a),
+    dwg_kb_stats:            (a) => dwgKbStats(a),
+    dwg_kb_search:           (a) => dwgKbSearch(a),
+    dwg_kb_query:            (a) => dwgKbQuery(a),
+    dwg_kb_list_drawings:    (a) => dwgKbListDrawings(a),
+    dwg_kb_projects:         (a) => dwgKbProjects(a),
+    dwg_kb_layers:           (a) => dwgKbLayers(a),
+    dwg_kb_blocks:           (a) => dwgKbBlocks(a),
+    dwg_kb_review_queue:     (a) => dwgKbReviewQueue(a),
+    dwg_kb_drawing_history:  (a) => dwgKbDrawingHistory(a),
+    dwg_kb_cross_ref:        (a) => dwgKbCrossRef(a),
 
     // === Lint & Analysis ===
     analyze_lisp_code: async (a) => {

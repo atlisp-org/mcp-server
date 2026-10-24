@@ -51,6 +51,11 @@ const envSchema = z.object({
     ERROR_REPORT_URL: z.string().optional(),
     SSL_KEY_PATH: z.string().optional().default(''),
     SSL_CERT_PATH: z.string().optional().default(''),
+    // 图纸知识库（atlisp-dwg-kb）：独立 HTTP 服务，默认本机 :8322。
+    // API key 与知识库侧 DWG_KB_API_KEY 必须一致，否则 /drawings 等 401。
+    DWG_KB_URL: z.string().optional().default('http://127.0.0.1:8322'),
+    DWG_KB_API_KEY: z.string().optional().default(''),
+    DWG_KB_TIMEOUT: z.coerce.number().optional().default(10000),
     LLM_API_KEY: z.string().optional().default(''),
     LLM_API_URL: z.string().optional().default('https://api.openai.com/v1/chat/completions'),
     LLM_MODEL: z.string().optional().default('gpt-4o-mini'),
@@ -335,6 +340,11 @@ const config = {
     errorReportUrl: fileConfig?.errorReportUrl ?? (env.ERROR_REPORT_URL || 'https://atlisp.cn/api/error/report'),
     sslKey: cliArgs.sslKey ?? fileConfig?.sslKey ?? env.SSL_KEY_PATH,
     sslCert: cliArgs.sslCert ?? fileConfig?.sslCert ?? env.SSL_CERT_PATH,
+    dwgKb: {
+      url: fileConfig?.dwgKb?.url ?? env.DWG_KB_URL,
+      apiKey: fileConfig?.dwgKb?.apiKey ?? env.DWG_KB_API_KEY,
+      timeout: fileConfig?.dwgKb?.timeout ?? env.DWG_KB_TIMEOUT,
+    },
     llmApiKey: fileConfig?.llmApiKey ?? env.LLM_API_KEY,
     llmApiUrl: fileConfig?.llmApiUrl ?? env.LLM_API_URL,
     llmModel: fileConfig?.llmModel ?? env.LLM_MODEL,

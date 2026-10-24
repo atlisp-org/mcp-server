@@ -46,6 +46,7 @@ import { tools as concurrent_tools } from './concurrent-tools.js';
 import { tools as peer_tools } from './peer-tools.js';
 import { tools as standards_tools } from './standards-tools.js';
 import { tools as frame_tools } from './frame-tools.js';
+import { tools as dwg_kb_tools } from './dwg-kb-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -96,6 +97,10 @@ const READ_ONLY_TOOLS = new Set([
   'check_file_naming', 'generate_compliance_report',
   // 图框识别：只读查询（扫多段线 + 算尺寸，不改图）
   'list_frames',
+  // 图纸知识库（atlisp-dwg-kb）：HTTP 只读查询，不碰 CAD
+  'dwg_kb_health', 'dwg_kb_stats', 'dwg_kb_search', 'dwg_kb_query',
+  'dwg_kb_list_drawings', 'dwg_kb_projects', 'dwg_kb_layers', 'dwg_kb_blocks',
+  'dwg_kb_review_queue', 'dwg_kb_drawing_history', 'dwg_kb_cross_ref',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -138,6 +143,8 @@ const OPEN_WORLD_TOOLS = new Set([
 
 function getToolCategory(name) {
   const n = name;
+  // 图纸知识库单独成类：它是跨文件的历史库查询，与当前图纸的 CAD 操作不是一回事
+  if (/^dwg_kb_/.test(n)) return '图纸知识库';
   if (/^(draw_|create_3d_|create_box|create_cone|create_cylinder|create_sphere|create_torus|create_wedge|extrude_|revolve_|boolean_|slice_solid|thicken_|offset_surface|create_loft_|create_region|create_cloud_line|convert_to_cloud_line|get_3d_solid_info|create_mesh)/.test(n)) return '绘图与3D';
   if (/^(move_entity|copy_entity|rotate_entity|scale_entity|mirror_entity|offset_entity|array_)/.test(n)) return '修改';
   if (/^batch_(?!get_block_attr|set_block_attr|plot_wizard|attach_pdfs)/.test(n)) return '修改';
@@ -295,6 +302,7 @@ export const tools = [
   ...peer_tools,
   ...standards_tools,
   ...frame_tools,
+  ...dwg_kb_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
@@ -308,8 +316,8 @@ import config from '../config.js';
 // | 档位       | 工具数(约) | 包含 category                                                                  |
 // |------------|-----------|---------------------------------------------------------------------------------|
 // | minimal    | 104       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
-// | standard   | 228       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据 |
-// | full       | 361       | 全部（默认，行为与档位引入前完全一致）                                            |
+// | standard   | 239       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据、图纸知识库 |
+// | full       | 372       | 全部（默认，行为与档位引入前完全一致）                                            |
 //
 // 只影响 tools/list 等发现接口（getVisibleTools）；被过滤的工具仍可通过 search_tools /
 // list_tools_by_category 检索并直接调用（工具调用校验走完整 toolsByName）。
@@ -320,7 +328,7 @@ export const PROFILE_CATEGORIES = {
   standard: new Set([
     '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具',
     '修改', '编辑', '块', '标注与填充', '文字', '打印', '文件',
-    '视口', '坐标系与布局', '样式', '扩展数据',
+    '视口', '坐标系与布局', '样式', '扩展数据', '图纸知识库',
   ]),
   full: null, // null = 不按 category 过滤
 };

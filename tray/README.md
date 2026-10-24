@@ -6,6 +6,8 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **下载 / 安装 / 升级**：通过 npm 安装或升级到 `@atlisp/mcp@latest`
 - **自动安装 Node.js**：检测不到 Node.js 时，默认下载免 UAC 的 portable zip 解压到用户目录；失败才降级 MSI（需 UAC 授权）
 - **检查更新 / 自动升级**：对比本机版本与 npm 上的最新版本；默认每 1 小时检查一次，发现新版本自动静默升级（运行中的服务会先停止再重启）
+- **知识库全自动**：默认随托盘启动本地知识库，缺 Python / `atlisp-dwg-kb` 时自动下载安装；定时查 PyPI 新版本并静默升级（升级前停服务、完成后自动拉起）
+- **异常自愈**：MCP 或知识库进程异常退出后自动拉起（带退避，最多 5 次），用户主动停止的不会被拉起
 - **托盘自我更新**：从 npm 包目录启动时先迁移到用户目录（避免升级时 exe 被锁），每次升级 @lisp/mcp 后自动替换托盘自身并重启
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
@@ -73,32 +75,57 @@ npm pack --dry-run
 运行 `AtlispTray.exe` 后，通知区域出现 @lisp 品牌图标（右下角的小圆点表示服务状态）：
 
 - **双击图标**：打开 `https://atlisp.cn/agent/chat`
-- **右键菜单**（二级菜单）：
-  - 启动服务 / 停止服务 / 重启服务
-  - **打开网页** ▸
-    - Agent Chat（atlisp.cn）
-    - 调试面板
-    - API 文档
-    - Playground
+- **右键菜单**按用途分成四组，顶层只放状态和最常用的动作：
+
+  ```
+  @lisp MCP 服务  v1.12.0                  ← 状态（不可点）
+  MCP 服务：运行中 · 端口 8110 · CAD 已连接
+  图纸知识库：在线 · v0.2.2 · 550万条三元组
+  ────────────────────────────
+  打开 Agent Chat                          ← 主入口
+  启动 MCP 服务 / 停止 MCP 服务            ← 只显示当前能做的那个
+  重启 MCP 服务                            ← 运行中才显示
+  ────────────────────────────
+  图纸知识库 ▸
+  日志与诊断 ▸
+  设置 ▸
+  更新与安装 ▸（有新版本时标题提示）
+  ────────────────────────────
+  关于 @lisp MCP…
+  退出托盘
+  ```
+
+  子菜单内容：
+
+  - **图纸知识库** ▸（未连接时标题带「未连接」）
+    - 运行环境：Python 3.12.8 · 知识库 v0.2.2（状态行，不可点）
+    - 打开图纸知识库（`{地址}/ui`）
+    - 启动本地知识库服务 / 停止本地知识库服务（按状态只显示一项；PID 记在 `dwgkb.pid`）
+    - 重新检测连接
+    - 安装 / 升级知识库…（`pip install --upgrade atlisp-dwg-kb`；没有 Python 3.10+ 时**自动下载并安装**到用户目录，免管理员权限）
+    - 重建索引…（服务端后台重建，管理员操作，需要与该服务一致的 API Key）
+    - ☑ 随托盘自动启动（默认开启；未安装时自动补齐 Python + 包，然后拉起；仅本机地址生效）
+    - ☑ 自动检查新版本（默认开启；每小时查 PyPI，发现新版本静默 `pip install --upgrade`）
+    - 设置地址与 API Key…（默认 `http://127.0.0.1:8322`，可填局域网服务器地址）
   - **日志与诊断** ▸
-    - 查看服务器日志
-    - 打开日志目录
+    - 查看服务器日志 / 打开日志目录
+    - 打开调试面板 / API 文档 / Playground（服务运行时可点）
     - 环境诊断…
   - **更新与安装** ▸（有新版本时标题会提示）
     - 检查更新
-    - 升级到最新版
+    - 升级到最新版（或「升级到 v1.12.2（当前 v1.12.0）」）
     - 重新安装 / 修复安装
-    - 下载并安装 Node.js（默认 v22.12.0，npmmirror）
+    - 安装 Node.js v22.12.0…（默认 v22.12.0，npmmirror）
   - **设置** ▸
-    - 随 Windows 启动托盘
-    - 托盘启动时自动启动服务
-    - 使用 npmmirror 镜像下载
-    - 启动时自动补齐运行环境
-    - 定时自动检查并升级 @lisp/mcp（每 1 小时）
+    - ☑ 随 Windows 启动托盘
+    - ☑ 启动托盘时自动启动 MCP
+    - ☑ 启动时自动补齐运行环境
+    - ☑ 自动升级 @lisp/mcp（每 1 小时）
+    - ☐ 使用 npmmirror 国内镜像
     - 重新加载配置
     - 打开配置文件
-    - 关于
-  - 退出托盘
+  - **关于 @lisp MCP…**：版本、端口、项目主页
+  - **退出托盘**
 
 右下角状态圆点颜色：
 
@@ -132,6 +159,13 @@ npm pack --dry-run
 | `AutoInstall` | `true` | 启动时自动补齐缺失的 Node.js / @lisp/mcp（见下方「自动补齐运行环境」） |
 | `StopServerOnExit` | `false` | 退出托盘时是否停止服务 |
 | `HealthyPollSeconds` | `5` | 健康检查间隔（秒） |
+| `DwgKbUrl` | `http://127.0.0.1:8322` | 图纸知识库（atlisp-dwg-kb）服务地址；指向局域网服务器时改成对应 IP |
+| `DwgKbApiKey` | `""` | 知识库 API Key；服务端设置了 `DWG_KB_API_KEY` 时必须一致 |
+| `PythonVersion` | `3.12.8` | 自动安装 Python 时使用的版本（官方安装包） |
+| `PythonMirror` | `https://registry.npmmirror.com/-/binary/python` | Python 安装包镜像；留空则用 python.org |
+| `PythonPath` | `""` | 手动指定 `python.exe` 路径（留空自动检测：托盘目录 → PATH → `py` 启动器） |
+| `DwgKbAutoStart` | `true` | 托盘启动时自动拉起本地知识库服务（仅本机地址；没装 Python/包且 `AutoInstall=true` 时自动安装） |
+| `DwgKbAutoUpgrade` | `true` | 定时检查 PyPI 上的 `atlisp-dwg-kb` 新版本并静默升级；间隔复用 `AutoUpgradeHours` |
 
 修改后可从托盘菜单选择 **重新加载配置**（端口等设置立即生效）。
 
@@ -142,13 +176,78 @@ npm pack --dry-run
 1. **缺 Node.js** → 从 `NodeMirror` 下载 `node-v<版本>-win-<架构>.zip`，解压到 `%LOCALAPPDATA%\atlisp-mcp\node\`。zip 版不需要安装、不写注册表、不弹 UAC。解压在后台线程完成，不阻塞界面。
 2. **portable 路线失败**（镜像不可达、磁盘不足等）→ 自动降级为 MSI 安装，此时会弹 **UAC**（这是唯一需要人工点「是」的环节），再失败则退到 winget。
 3. **缺 @lisp/mcp** → `npm install -g @atlisp/mcp@latest`。普通用户的 npm 全局前缀是 `%APPDATA%\npm`，同样不需要管理员权限；只有确实没有写权限时才会触发 UAC 重试。检测不到 `dotnet` 时自动追加 `--ignore-scripts` 并补齐 `edge-js` 的 VC 运行时 DLL（见「安装 / 升级 @lisp/mcp」）。
-4. **依赖齐全** → 按 `AutoStartServer` 启动服务。
+4. **缺 Python / 知识库包**（`DwgKbAutoStart` 开启且 `DwgKbUrl` 是本机）→ 自动静默安装 Python 到 `%LOCALAPPDATA%\atlisp-mcp\python`，再 `pip install atlisp-dwg-kb`，完成后自动拉起知识库服务。全程不需要确认。
+5. **依赖齐全** → 按 `AutoStartServer` 启动 MCP 服务，按 `DwgKbAutoStart` 启动知识库服务。
+
+第 4 步只在 `AutoInstall=true`（默认）时执行；把知识库地址配成局域网服务器后不再在本机装包。
 
 Node.js 探测顺序：`tray.json` 的 `NodePath` → `%ProgramFiles%\nodejs` / fnm / nvm / scoop → **portable 目录** → `PATH`。portable 排在 `PATH` 之前是为了修复「刚装完 Node.js 但 Explorer 环境没刷新」的情况；同时托盘会在调用 npm 前把 Node.js 目录补进自身 `PATH`（否则 `edge-js` 等依赖的安装脚本会报 `'node' 不是内部或外部命令`）。
 
 失败退避：1 分钟 → 5 分钟 → 30 分钟，累计 3 次后停止自动安装并给出提示。退避状态写入 `%APPDATA%\atlisp-mcp\bootstrap.state`，避免每次开机重复下载 35 MB。环境一旦就绪（即使是你手动装的），托盘仍会自动启动服务。
 
 菜单 **设置 → 启动时自动补齐运行环境** 可开关该行为。
+
+## 服务自愈
+
+两个服务都要「一直在跑」，所以意外退出会被自动拉起（用户主动停止的不算）：
+
+| 服务 | 触发条件 | 退避 | 上限 |
+|------|----------|------|------|
+| MCP（`@lisp/mcp`） | 进程退出码非 0 且 `AutoStartServer=true` | 1 / 2 / 5 / 10 / 30 分钟 | 5 次 |
+| 知识库（`atlisp-dwg-kb`） | 托盘启动的进程消失、端口无监听、`DwgKbAutoStart=true` | 1 / 2 / 5 / 15 分钟 | 5 次 |
+
+菜单里点「停止服务 / 停止知识库服务」属于主动停止，不会触发自动拉起（知识库在下次托盘启动或手动启动前保持停止）。
+自动拉起次数用完后只记日志，等下次托盘启动重新计数。
+
+## 知识库（atlisp-dwg-kb）
+
+「知识库（dwg-kb）」子菜单用于管理图纸知识库服务（默认 `http://127.0.0.1:8322`）：
+
+- **状态行**：在线/不可达 + 版本 + 三元组数；**运行环境行**：Python 版本 + `atlisp-dwg-kb` 版本
+- **安装 / 升级知识库（PyPI）…**：执行 `python -m pip install --upgrade atlisp-dwg-kb`
+- **重建知识库…**：`POST /build`（服务端后台任务，管理员操作）
+- **设置知识库地址…**：地址 + API Key，带「测试连接」
+
+**没有 Python 时自动安装**（无需管理员权限）：
+
+1. 从 `PythonMirror` 下载官方安装包 `python-<版本>-amd64.exe`（ARM64 用 `-arm64`，32 位无后缀）
+2. 静默安装到 `%LOCALAPPDATA%\atlisp-mcp\python\`：
+   `/quiet InstallAllUsers=0 TargetDir=... PrependPath=0 Shortcuts=0 Include_pip=1`
+   —— `InstallAllUsers=0` 是**免 UAC** 的关键，`PrependPath=0` 不改系统 PATH
+3. 安装完成后自动继续 `pip install atlisp-dwg-kb`，全程在任务窗口里可见
+
+探测顺序：`tray.json` 的 `PythonPath` → `%LOCALAPPDATA%\atlisp-mcp\python\python.exe` → `PATH` 的 `python.exe`/`python3.exe` → `py -3` 启动器。**版本必须 ≥ 3.10**；Windows 应用商店的 `python.exe` 占位符会因探测失败被跳过。
+
+装完包后本地启动服务：
+
+```
+%LOCALAPPDATA%\atlisp-mcp\python\python.exe -m atlisp_dwg_kb.cli serve --host 127.0.0.1 --port 8322 --no-browser
+```
+
+（或把知识库部署在服务器上，用「设置知识库地址」指向它。）
+
+**启动 / 停止（菜单项，不用手敲命令）**
+
+- **启动知识库服务**：仅在「地址是本机（localhost/127.0.0.1）+ 已安装 atlisp-dwg-kb + 端口空闲」时可用。
+  绑地址规则：`DwgKbUrl` 是 loopback → 绑 `127.0.0.1`；配成局域网 IP → 绑 `0.0.0.0`（允许外部访问）。
+- **停止知识库服务**：只停托盘自己启动的进程——PID 写在 `%APPDATA%\atlisp-mcp\dwgkb.pid`，
+  手动启动或系统服务方式启动的知识库不会被误杀（此时按钮置灰）。停止后本轮托盘生命周期内不会自动拉起。
+- **随托盘自动启动知识库**（`DwgKbAutoStart`，默认开）：托盘启动 5 秒自动拉起；
+  未安装时自动补 Python + 包再拉起；端口已有服务则不重复启动。
+- **知识库异常自愈**：托盘启动的服务进程意外退出后自动重新拉起（退避 1/2/5/15 分钟，最多 5 次）。
+- 服务输出写在 `%APPDATA%\atlisp-mcp\logs\dwgkb-<时间>.log`；首次加载大索引需要几十秒，状态行会显示「索引加载中」。
+- 托盘退出时不会停止知识库（它是服务，退出托盘后仍可被 MCP/浏览器使用）。
+
+**自动升级（PyPI）**
+
+`DwgKbAutoUpgrade` 默认开启，间隔与 `AutoUpgradeHours` 一致（默认 1 小时）：
+
+1. 先用 PyPI JSON（`https://pypi.org/pypi/atlisp-dwg-kb/json`）查最新版本；
+   失败时回退 `python -m pip index versions atlisp-dwg-kb`（会走你配置的 pip 镜像/代理）
+2. 发现比本机新 → 若知识库由托盘启动则先停止（Windows 会锁 Python 扩展）
+3. `python -m pip install --upgrade atlisp-dwg-kb`（静默执行，输出写 `logs/pip-*.log`）
+4. 成功后自动恢复知识库服务；失败则按旧版本恢复服务，并在 5/30/180 分钟后重试
+5. 只在 `DwgKbUrl` 是本机地址时生效（配了局域网服务器时本机包用不上）
 
 服务日志：`%APPDATA%\atlisp-mcp\logs\server-YYYYMMDD.log`
 托盘日志：`%APPDATA%\atlisp-mcp\logs\tray.log`
@@ -253,6 +352,8 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 - `ServerManager`：启动/停止/重启、pid/lock 文件解析、Windows 服务识别
 - `HealthMonitor` / `HealthClient`：后台线程轮询 `/health`，避免阻塞 UI
 - `ServerLocator`：Node/npm/@lisp mcp 路径与版本探测
+- `PythonLocator` / `PythonRunner`：Python ≥3.10 探测、官方安装包静默安装、pip 安装
+- `DwgKbServer` / `DwgKbClient` / `DwgKbSettingsForm`：知识库本地服务启停（PID 记录）、状态探活、`/build` 提交、地址与 API Key 设置
 - `ZipInstaller` / `PortableInstallJob`：portable Node.js zip 的剥根解压（后台线程）
 - `NpmRunner` / `LongTask`：npm 安装、升级、检查更新的异步执行与日志
 - `TraySelfUpdate`：托盘自迁移（npm 包目录 → 用户目录）与升级后的自我替换/重启

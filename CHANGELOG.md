@@ -2,6 +2,17 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.2] - 2026-10-24
+
+### 更新内容
+
+- feat(tray): 右键菜单按状态与用途重组，启停按当前状态只显示可执行项，补充悬停说明
+- feat(tray): 知识库自动安装 / 自动升级（PyPI）/ 异常自愈；MCP 异常退出自动拉起
+- feat(tray): 知识库本地服务启停、版本与三元组状态、地址与 API Key 设置
+- feat(dwg-kb): 新增 11 个 dwg_kb_* 只读工具（检索/查询/图纸/项目/图层/块/复核/版本/互引）
+- feat(dwg-kb): 新增 DWG_KB_URL / DWG_KB_API_KEY / DWG_KB_TIMEOUT 配置与「图纸知识库」分类
+- docs: 更新托盘 README（菜单树、自动升级与自愈说明）与 AGENTS 文件表
+
 ## [1.12.0] - 2026-10-23
 
 ### 更新内容
