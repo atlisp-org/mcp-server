@@ -1,0 +1,35 @@
+{
+  "name": "workflow-library",
+  "description": "图库使用流程：搜索符号 → 确认尺寸/单位 → 插入（自动修正基点与单位）→ 图框/图例/明细表。素材在服务端，客户端无需副本。",
+  "arguments": [
+    { "name": "action", "description": "步骤: search/insert/frame/legend/bom", "required": true, "default": "search" },
+    { "name": "query", "description": "关键字：中文名 / 拼音首字母 / 规格 / 标准号（如 平开门、dsm、M6x40、GB5782）", "required": false },
+    { "name": "category", "description": "限定专业或子目录，如 室内、电气/元件库、图框库", "required": false },
+    { "name": "id", "description": "符号 id（search 返回的 id，原样传入）", "required": false },
+    { "name": "point", "description": "插入点，如 1000,2000", "required": false },
+    { "name": "scale", "description": "额外缩放，默认 1（单位换算自动做）", "required": false, "default": "1" },
+    { "name": "rotation", "description": "旋转角度（度），默认 0", "required": false, "default": "0" }
+  ],
+  "templates": {
+    "search": {
+      "code": "",
+      "description": "1. 调用 library_search({ query, category, limit: 20 }) —— 关键词支持中文名、拼音首字母（dsm→单扇门）、规格（M6x40）、标准号（GB5782）\n2. 结果里看 name / category / size / units / std，挑最匹配的一个\n3. 命中有歧义（同名不同标准）时，把候选列给用户选，不要自己猜\n4. 只读，不修改图纸"
+    },
+    "insert": {
+      "code": "",
+      "description": "1. 没有插入点就先问用户，或用 get_bounding_box / 用户给的点\n2. 调用 library_insert({ id, point, scale, rotation, align: \"auto\" })\n   - align=auto：只在基点偏离超过符号尺寸时才居中；门铰点/图框角点这类有意的基点会被保留\n   - 图框、标题栏用 align=\"bottom-left\"\n3. 返回 handle 说明插入成功；unitsUndefined=true 表示该符号未定义单位，尺寸需用户确认\n4. 用户嫌大/小 → 调 scale，不要改图"
+    },
+    "frame": {
+      "code": "",
+      "description": "1. 图库图框只有：横栏 A1/A2、竖栏 A0–A3（含加长）、标题栏 180/200/220/240、会签栏\n2. 调用 library_search({ query: \"图框库\", category: \"图框库\", limit: 20 }) 确认可用图幅\n3. 插入用 library_insert({ id, point, align: \"bottom-left\" })\n4. 没有该图幅时如实告知并列出可选项（不要用别的图幅顶替）"
+    },
+    "legend": {
+      "code": "",
+      "description": "1. 图例按当前布局里**已用到的块**生成，调用前确认图纸上已有块参照\n2. 调用 eval_lisp_with_result 执行 (at-library:legend (list X Y 0.0))（需已安装 at-library 包）\n3. 或逐步：get_blocks → 逐个 block 的包围盒 → 排版（不推荐，慢）\n4. 图例只放在当前布局（CTAB）"
+    },
+    "bom": {
+      "code": "",
+      "description": "1. 标准件明细表依赖「块名 = 图库 id」这个约定（图库插入的块满足）\n2. 调用 eval_lisp_with_result 执行 (at-library:bom (list X Y 0.0))\n3. 只统计能解析出标准号（GB/JGJ/CJJ…）的块；一个都没有时退回全量块统计"
+    }
+  }
+}

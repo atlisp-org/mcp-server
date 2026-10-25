@@ -1,0 +1,21 @@
+{
+  "name": "workflow-hatch-pattern",
+  "description": "填充图案流程：搜图案 → 选中闭合边界 → 填充（.pat 由 CAD 端按需下载）。855 个图案，含 ACAD 标准与砖/木/石/混凝土等自定义。",
+  "arguments": [
+    { "name": "action", "description": "步骤: search/hatch", "required": true, "default": "search" },
+    { "name": "query", "description": "图案关键字：英文名 / 中文名 / 拼音首字母（如 AR-CONC、木地板、mdb）", "required": false },
+    { "name": "pattern", "description": "图案名（search 返回的名字）", "required": false },
+    { "name": "scale", "description": "填充比例，默认 1（数值越大图案越疏）", "required": false, "default": "1" },
+    { "name": "angle", "description": "填充角度（度），默认 0", "required": false, "default": "0" }
+  ],
+  "templates": {
+    "search": {
+      "code": "",
+      "description": "1. 调用 pattern_search({ query, limit: 20 })\n2. 结果含 name / desc / file；图案名和文件名可能不同（AR-CONC 在 ACAD.PAT 里）\n3. 中文名多为「混凝土1」「砖面3」这类，按用户的描述给 2~3 个候选让用户挑\n4. 只读"
+    },
+    "hatch": {
+      "code": "",
+      "description": "1. **前置**：必须有选择集（闭合边界）。没有就先 select_entities 让用户选，或按用户给的句柄选\n2. 调用 hatch_with_pattern({ pattern, scale, angle }) —— CAD 端会按需下载对应 .pat 再执行 -HATCH\n3. 比例不合适时只调 scale 重填（先删掉旧的填充，别叠两层）\n4. 失败常见原因：边界不闭合 / 未选边界 / 图案名写错。按返回信息修正，不要盲目换图案"
+    }
+  }
+}
