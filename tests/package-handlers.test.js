@@ -38,11 +38,40 @@ describe('package-handlers', () => {
   });
 
   describe('installPackage', () => {
-    it('sends install command for known package', async () => {
+    it('用包管理器 API 安装，并等到包真的出现在本地列表里', async () => {
       mockCad.connected = true;
-      mockSendCommandWithResult.mockResolvedValue('"INSTALLED"');
+      /* 第一次查询：还没装；安装后轮询：出现。 */
+      mockSendCommandWithResult
+        .mockResolvedValueOnce('((:NAME . base))')
+        .mockResolvedValue('((:NAME . test2021) (:NAME . base))');
+
       const result = await installPackage('test2021');
-      expect(result.content[0].text).toContain('已发送');
+
+      expect(result.content[0].text).toContain('已安装');
+      const sent = mockSendCommand.mock.calls.map((c) => String(c[0])).join('\n');
+      /* 包安装是 @::package-install；@::load-module 是内核模块加载器，
+         对包名只会返回 T（旧实现的 bug）。 */
+      expect(sent).toContain('@::package-install "test2021"');
+      expect(sent).toContain('@::load-pkg "test2021"');
+    });
+
+    it('超时如实报错，不假装安装成功', async () => {
+      process.env.PACKAGE_INSTALL_WAIT_MS = '50';
+      mockCad.connected = true;
+      mockSendCommandWithResult.mockResolvedValue('((:NAME . base))');
+
+      const result = await installPackage('test2021');
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('超时');
+      delete process.env.PACKAGE_INSTALL_WAIT_MS;
+    });
+
+    it('不存在的包直接拒绝', async () => {
+      mockCad.connected = true;
+      const result = await installPackage('no-such-pkg-xyz');
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('不存在');
     });
   });
 });

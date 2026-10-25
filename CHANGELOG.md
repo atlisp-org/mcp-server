@@ -2,6 +2,19 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [Unreleased]
+
+### 修复：install_package 装不上包
+
+- `install_package` 旧实现发的是 `(@::load-module '包名)`——那是**内核模块**
+  加载器，对包名只返回 `T`，什么也不装（实测 at-pm 装完后 `pkg.lsp` 仍不存在）。
+  改为包管理器 API：`(@::load-module 'pkgman)` + `(@::package-install "包名")`；
+- 安装是异步的：发完命令后轮询 `(@::package-list-in-local)`，等包**真的出现**
+  再返回（默认 60s，`PACKAGE_INSTALL_WAIT_MS` 可调），随后
+  `(@::load-pkg "包名" '())` 加载函数；已安装则只重新加载；
+- 超时/包不存在返回 `isError` 与可执行的下一步，不再回「已发送」让 agent
+  接着撞 `no function definition`。
+
 ## [1.12.9] - 2026-10-25
 
 ### 更新内容
