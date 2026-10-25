@@ -262,10 +262,23 @@ describe('handleToolCall', () => {
       expect(result.content[0].text).toContain('不存在');
     });
 
-    it('sends command when CAD connected', async () => {
+    it('loads package directly when already installed', async () => {
       mockCad.connected = true;
-      await handleToolCall('install_package', { packageName: 'base' });
-      expect(mockSendCommand).toHaveBeenCalled();
+      mockSendCommandWithResult.mockResolvedValue('((:NAME . "base"))');
+      const result = await handleToolCall('install_package', { packageName: 'base' });
+      expect(mockSendCommand).toHaveBeenCalledWith(expect.stringContaining('@::load-pkg "base"'));
+      expect(result.content[0].text).toContain('已安装');
+    });
+
+    it('installs via package manager API before loading', async () => {
+      mockCad.connected = true;
+      // 第一次轮询未就绪，第二次命中——覆盖 waitForInstall 的重试路径。
+      mockSendCommandWithResult
+        .mockResolvedValueOnce('nil')
+        .mockResolvedValue('((:NAME . "base"))');
+      const result = await handleToolCall('install_package', { packageName: 'base' });
+      expect(mockSendCommand).toHaveBeenCalledWith(expect.stringContaining('@::package-install "base"'));
+      expect(result.content[0].text).toContain('已安装并加载');
     });
   });
 

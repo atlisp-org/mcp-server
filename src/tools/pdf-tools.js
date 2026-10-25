@@ -35,7 +35,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                pdfHandle: { type: 'string', description: 'PDF 底图实体句柄' }
+                pdfHandle: { type: 'string', description: 'PDF 底图实体句柄（先 list_attached_pdfs 获取，非 PDF 文件路径）' }
             },
             required: ['pdfHandle']
         }
@@ -131,7 +131,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '实体句柄' }
+                handle: { type: 'string', description: '实体句柄（要移除超链接的实体 Handle）' }
             },
             required: ['handle']
         }

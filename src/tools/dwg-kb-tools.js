@@ -6,6 +6,7 @@
  * 找不到图时先用 dwg_kb_query / dwg_kb_search，再用 open_dwg 在 CAD 里打开。
  */
 const LIMIT_DESC = '返回条数（默认 20，上限由服务端 1000 截断）';
+const OFFSET_DESC = '分页偏移，从 0 开始；下一页取 offset + 本次返回条数';
 
 export const tools = [
   {
@@ -62,20 +63,20 @@ export const tools = [
         discipline: { type: 'string', description: '专业过滤，如 "Architecture"、"Structure"、"HVAC"、"Electrical"；也可用中文，服务端按层名打分' },
         project: { type: 'string', description: '项目名过滤，如 "广诚商务广场"' },
         limit: { type: 'integer', description: LIMIT_DESC },
-        offset: { type: 'integer', description: '分页偏移（默认 0）' },
+        offset: { type: 'integer', description: OFFSET_DESC },
       },
     },
   },
   {
     name: 'dwg_kb_projects',
     description:
-      '列出图纸库中的项目（可按名字模糊过滤）。当用户说"有哪些项目"时调用。',
+      '列出图纸库中的项目（分页）。当用户说"有哪些项目/这个项目有多少张图"时调用。name 支持模糊过滤；拿到项目名后可传给 dwg_kb_list_drawings 的 project 参数继续下钻。',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '项目名模糊过滤（可选）' },
+        name: { type: 'string', description: '项目名模糊过滤（可选），如 "广诚"' },
         limit: { type: 'integer', description: LIMIT_DESC },
-        offset: { type: 'integer', description: '分页偏移（默认 0）' },
+        offset: { type: 'integer', description: OFFSET_DESC },
       },
     },
   },
@@ -87,7 +88,7 @@ export const tools = [
       type: 'object',
       properties: {
         limit: { type: 'integer', description: LIMIT_DESC },
-        offset: { type: 'integer', description: '分页偏移（默认 0）' },
+        offset: { type: 'integer', description: OFFSET_DESC },
       },
     },
   },
@@ -99,7 +100,7 @@ export const tools = [
       type: 'object',
       properties: {
         limit: { type: 'integer', description: LIMIT_DESC },
-        offset: { type: 'integer', description: '分页偏移（默认 0）' },
+        offset: { type: 'integer', description: OFFSET_DESC },
       },
     },
   },
@@ -110,7 +111,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        limit: { type: 'integer', description: '返回条数（默认 50）' },
+        limit: { type: 'integer', description: '返回条数（默认 50，只返回队列前 N 条）' },
       },
     },
   },

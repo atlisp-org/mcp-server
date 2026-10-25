@@ -67,6 +67,28 @@ export function getIndustryStandards(industry) {
   return data || { error: `行业规范文件加载失败: ${industry}` };
 }
 
+/**
+ * 按规范 key（即 src/standards/<key>.json 的文件名）读取规范。
+ * key 只允许来自 listAvailableStandards()（白名单），避免 URI 里传入 ../ 造成路径穿越。
+ * 未命中时返回 { error, available } 而不是抛错，便于资源读取直接回传可用列表。
+ *
+ * @param {string} key 如 drafting / coding / architectural
+ * @returns {object} 规范内容，或 { error, available }
+ */
+export function getStandardsByKey(key) {
+  const available = listAvailableStandards().map(s => s.key);
+  const normalized = String(key ?? '').trim().toLowerCase();
+  if (!normalized) return { error: '缺少规范 key', available };
+  if (!available.includes(normalized)) return { error: `未知规范: ${key}`, available };
+
+  const cacheKey = `key:${normalized}`;
+  const cached = getCachedStandards(cacheKey);
+  if (cached) return cached;
+  const data = loadStandardsFile(`${normalized}.json`);
+  if (data) setCachedStandards(cacheKey, data);
+  return data || { error: `规范文件加载失败: ${normalized}`, available };
+}
+
 export function listAvailableStandards() {
   try {
     const files = fs.readdirSync(STANDARDS_DIR).filter(f => f.endsWith('.json'));

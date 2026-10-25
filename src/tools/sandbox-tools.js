@@ -17,7 +17,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        sessionId: { type: 'string', description: '会话 ID' },
+        sessionId: { type: 'string', description: '会话 ID（不传则用当前 MCP 会话）' },
         ruleIndex: { type: 'number', description: '规则索引号（从 0 开始）。由 sandbox_validate 返回结果中的 ruleIndex 字段提供' }
       },
       required: ['sessionId', 'ruleIndex']
@@ -29,7 +29,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        sessionId: { type: 'string', description: '会话 ID' }
+        sessionId: { type: 'string', description: '会话 ID（不传则用当前 MCP 会话）' }
       },
       required: ['sessionId']
     }

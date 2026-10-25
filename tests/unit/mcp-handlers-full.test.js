@@ -240,10 +240,17 @@ describe('resources', () => {
     expect(subManager.list).toHaveBeenLastCalledWith();
   });
 
-  it('resources/templates/list 返回 6 个模板', async () => {
+  it('resources/templates/list 返回带变量占位与描述的模板', async () => {
     const r = await client.listResourceTemplates();
-    expect(r.resourceTemplates).toHaveLength(6);
-    expect(r.resourceTemplates.map(t => t.uriTemplate)).toContain('atlisp://dwg/entity/{handle}');
+    expect(r.resourceTemplates).toHaveLength(11);
+    const uris = r.resourceTemplates.map(t => t.uriTemplate);
+    expect(uris).toContain('atlisp://dwg/entity/{handle}');
+    expect(uris).toContain('atlisp://dwg/analysis{?type}');
+    expect(uris).toContain('atlisp://standards/{standard}');
+    for (const t of r.resourceTemplates) {
+      expect(t.uriTemplate).toContain('{');
+      expect(t.description.length).toBeGreaterThan(20);
+    }
   });
 
   it('resources/read 返回 JSON 文本内容', async () => {

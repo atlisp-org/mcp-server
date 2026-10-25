@@ -10,7 +10,7 @@ export const tools = [
         toDate: { type: 'string', description: '结束时间（ISO 格式）。如 2025-12-31T23:59:59Z' },
         result: { type: 'string', description: '按结果状态筛选。如 "success"（成功）/ "error"（失败）/ 不传查全部' },
         user: { type: 'string', description: '按用户筛选。如 "admin"、"user1"' },
-        sessionId: { type: 'string', description: '按会话 ID 筛选' },
+        sessionId: { type: 'string', description: '按会话 ID 筛选（可选；不传则统计所有会话）' },
         offset: { type: 'number', description: '分页偏移量（默认 0）。如 0' },
         limit: { type: 'number', description: '每页条数（默认 100）。如 50' }
       }

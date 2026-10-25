@@ -57,8 +57,8 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sheetSetName: { type: 'string', description: '图纸集名称' },
-                sheetName: { type: 'string', description: '要移除的图纸名称' }
+                sheetSetName: { type: 'string', description: '图纸集名称（list_sheet_sets 返回的显示名），如 "高层住宅A栋"' },
+                sheetName: { type: 'string', description: '要移除的图纸名称（list_sheets 返回的显示名），如 "一层平面图"' }
             },
             required: ['sheetSetName', 'sheetName']
         }
@@ -106,8 +106,8 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sheetSetName: { type: 'string', description: '图纸集名称' },
-                sheetName: { type: 'string', description: '要移动的图纸名称' },
+                sheetSetName: { type: 'string', description: '图纸集名称（list_sheet_sets 返回的显示名），如 "高层住宅A栋"' },
+                sheetName: { type: 'string', description: '要移动的图纸名称（list_sheets 返回的显示名）' },
                 newIndex: { type: 'number', description: '新位置索引（0-based），如 0=最前，3=第四张' }
             },
             required: ['sheetSetName', 'sheetName', 'newIndex']
@@ -119,7 +119,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sheetSetName: { type: 'string', description: '图纸集名称' },
+                sheetSetName: { type: 'string', description: '图纸集名称（list_sheet_sets 返回的显示名），如 "高层住宅A栋"' },
                 subsetName: { type: 'string', description: '子集名称，如 "建筑专业"、"一层图纸"' }
             },
             required: ['sheetSetName', 'subsetName']
@@ -131,7 +131,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sheetSetName: { type: 'string', description: '图纸集名称' }
+                sheetSetName: { type: 'string', description: '图纸集名称（list_sheet_sets 返回的显示名），如 "高层住宅A栋"' }
             },
             required: ['sheetSetName']
         }
@@ -142,8 +142,8 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sheetSetName: { type: 'string', description: '图纸集名称' },
-                sheetName: { type: 'string', description: '图纸名称' },
+                sheetSetName: { type: 'string', description: '图纸集名称（list_sheet_sets 返回的显示名），如 "高层住宅A栋"' },
+                sheetName: { type: 'string', description: '图纸名称（list_sheets 返回的显示名）' },
                 propertyName: { type: 'string', description: '属性名，如 "图号"、"版本"、"状态"' },
                 value: { type: 'string', description: '属性值，如 "JS-01"、"Rev.A"、"送审"' }
             },

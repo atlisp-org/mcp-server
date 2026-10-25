@@ -56,7 +56,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        sheetSetName: { type: 'string', description: '目标图纸集名称' },
+        sheetSetName: { type: 'string', description: '目标图纸集名称（接收导入布局的图纸集，list_sheet_sets 可查）' },
         sourceDwg: { type: 'string', description: '源 DWG 文件路径，如 "C:/projects/source.dwg"' },
         layoutNames: { type: 'array', items: { type: 'string' }, description: '要导入的布局名称列表，如 ["A1-平面", "A2-立面"]（可选，不传则导入全部布局）' }
       },

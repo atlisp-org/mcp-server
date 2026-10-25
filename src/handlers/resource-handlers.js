@@ -29,7 +29,12 @@ import {
   getCadEvents,
 } from './resource-readers.js';
 import { getPackages, getPlatforms, getDwgList, getCadStatus } from './metadata-readers.js';
-import { getDraftingStandards, getCodingStandards } from './standards-readers.js';
+import {
+  getDraftingStandards,
+  getCodingStandards,
+  getStandardsByKey,
+  listAvailableStandards,
+} from './standards-readers.js';
 import {
   getCadSnapshot,
   getDwgContext,
@@ -87,6 +92,11 @@ function parseTemplateUri(uri) {
   const blockRefMatch = pathOnly.match(/^atlisp:\/\/dwg\/block-refs\/(.+)$/);
   if (blockRefMatch) return { type: 'block-refs', blockName: safeDecode(blockRefMatch[1]) };
 
+  // 具体行业规范：atlisp://standards/architectural 等。
+  // 注意 atlisp://standards/drafting、/coding 已有静态条目，但仍走本分支读取，行为一致。
+  const standardsMatch = pathOnly.match(/^atlisp:\/\/standards\/(.+)$/);
+  if (standardsMatch) return { type: 'standards', key: safeDecode(standardsMatch[1]) };
+
   return null;
 }
 
@@ -94,10 +104,21 @@ function parseTemplateUri(uri) {
 // Public API
 // =============================================================================
 
+// 实时状态只作为**追加**信息挂在静态描述后面：早期实现直接替换 description，
+// 连“支持哪些参数、和哪个工具分工”都一起丢了，模型看不到用法只能瞎试。
+const LIVE_DESCRIPTION_BUILDERS = {
+  'atlisp://cad/info': s => `${s.platform || '未知平台'}${s.dwgName ? `，当前文档 ${s.dwgName}` : ''}`,
+  'atlisp://dwg/entities': s => `${s.entityCount} 个实体，${s.layerCount} 个图层`,
+  'atlisp://dwg/name': s => s.dwgName || '(未命名)',
+  'atlisp://dwg/path': s => s.dwgPath || '(图纸尚未保存)',
+  'atlisp://dwg/tbl': s => `${s.layerCount} 个图层`,
+  'atlisp://dwg/context': s => `${s.dwgName || '(未命名)'}，${s.entityCount} 实体，${s.layerCount} 图层`,
+};
+
 /**
  * Returns the current state of resources with live CAD data embedded.
- * Queries CAD for entity counts, layer names, DWG info, etc. and enriches
- * resource descriptors with actual data in description and annotations fields.
+ * Queries CAD for entity counts, layer names, DWG info, etc. and appends the
+ * result to each resource description (静态描述保留，见 LIVE_DESCRIPTION_BUILDERS)。
  */
 export async function listResources(subscribedUris = []) {
   let snapshot = null;
@@ -124,27 +145,9 @@ export async function listResources(subscribedUris = []) {
     };
 
     if (hasLive) {
-      switch (r.uri) {
-        case 'atlisp://cad/info':
-          entry.description = `CAD 连接信息 (${snapshot.platform || '未知平台'}${snapshot.dwgName ? ', ' + snapshot.dwgName : ''})`;
-          break;
-        case 'atlisp://dwg/entities':
-          entry.description = `图元列表。${snapshot.entityCount} 个实体，${snapshot.layerCount} 个图层。支持 ?type=LINE&layer=0&bbox=0,0,100,100`;
-          break;
-        case 'atlisp://dwg/name':
-          entry.description = `当前 DWG 文件名: ${snapshot.dwgName || '(未命名)'}`;
-          break;
-        case 'atlisp://dwg/path':
-          entry.description = snapshot.dwgPath ? `文件完整路径: ${snapshot.dwgPath}` : '文件完整路径';
-          break;
-        case 'atlisp://dwg/tbl':
-          entry.description = `CAD 表数据 (${snapshot.layerCount} 个图层)。支持路径方式 atlisp://dwg/tbl/layer`;
-          break;
-        case 'atlisp://dwg/context':
-          entry.description = `当前图纸上下文: ${snapshot.dwgName || '(未命名)'}，${snapshot.entityCount} 实体，${snapshot.layerCount} 图层`;
-          break;
-        default: break;
-      }
+      const build = LIVE_DESCRIPTION_BUILDERS[r.uri];
+      const live = build ? build(snapshot) : '';
+      if (live) entry.description = `${r.description}\n【实时】${live}`;
     }
 
     return entry;
@@ -169,6 +172,9 @@ export async function readResource(uri) {
       // { total, offset, limit, blockRefs }，便于调用方断言 collected === total。
       const { params } = parseQuery(uri);
       return await getBlockRefs({ blockName: templateMatch.blockName, ...params });
+    }
+    if (templateMatch.type === 'standards') {
+      return getStandardsByKey(templateMatch.key);
     }
   }
 
@@ -202,9 +208,11 @@ export async function readResource(uri) {
     case 'atlisp://cad/dwgs':
       return await getDwgList();
     case 'atlisp://packages':
-      return await getPackages(params.name);
+      return await getPackages({ name: params.name, search: params.search });
     case 'atlisp://platforms':
       return getPlatforms();
+    case 'atlisp://standards':
+      return listAvailableStandards();
     case 'atlisp://standards/drafting':
       return getDraftingStandards();
     case 'atlisp://standards/coding':

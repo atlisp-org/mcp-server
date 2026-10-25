@@ -57,10 +57,10 @@ export const tools = [
             type: 'object',
             properties: {
                 type: { type: 'string', description: '触发器类型: entity_count/layer_exists/layer_count/doc_name/custom_lisp。如 entity_count' },
-                name: { type: 'string', description: '触发器名称（可选）' },
+                name: { type: 'string', description: '触发器名称（可选，便于 watch_list 里识别）' },
                 filter: { type: 'object', description: '实体过滤器如 { type: "LINE" }，仅 entity_count 使用' },
                 operator: { type: 'string', description: '比较运算符: gte(>=)/lte(<=)/eq(==)，默认 gte' },
-                value: { type: 'number', description: '比较阈值。如 100' },
+                value: { type: 'number', description: '比较阈值（按 condition 与 entity_count/layer_count 比较），如 100' },
                 layerName: { type: 'string', description: '图层名称如 "0"（layer_exists 使用）' },
                 pattern: { type: 'string', description: '名称匹配模式如 "*方案*"（doc_name 使用）' },
                 lispCode: { type: 'string', description: '自定义条件 Lisp 代码（custom_lisp 使用）' },

@@ -30,7 +30,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '实体句柄' },
+                handle: { type: 'string', description: '实体句柄（get_all_entity_xdata / dwg/entities 返回的 Handle）' },
                 appName: { type: 'string', description: '要删除的应用程序名称，如 "MY_APP"' }
             },
             required: ['handle', 'appName']
@@ -64,8 +64,8 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                sourceHandle: { type: 'string', description: '源实体句柄，数据来源' },
-                targetHandle: { type: 'string', description: '目标实体句柄，数据去向' },
+                sourceHandle: { type: 'string', description: '源实体句柄（数据来源，可用 get_all_entity_xdata 确认）' },
+                targetHandle: { type: 'string', description: '目标实体句柄（数据写入的实体）' },
                 appName: { type: 'string', description: '仅复制指定应用程序的数据，如 "MY_APP"（可选，默认复制全部）' }
             },
             required: ['sourceHandle', 'targetHandle']
@@ -90,7 +90,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '实体句柄' },
+                handle: { type: 'string', description: '实体句柄（要导出的实体 Handle）' },
                 filePath: { type: 'string', description: '导出 JSON 文件路径，如 "C:/data/xdata-backup.json"' }
             },
             required: ['handle', 'filePath']
@@ -102,7 +102,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '目标实体句柄' },
+                handle: { type: 'string', description: '目标实体句柄（要导入数据的实体 Handle）' },
                 filePath: { type: 'string', description: '导入 JSON 文件路径，如 "C:/data/xdata-backup.json"' },
                 appName: { type: 'string', description: '仅导入指定应用程序的数据，如 "MY_APP"（可选，默认导入全部）' }
             },

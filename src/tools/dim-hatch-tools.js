@@ -66,7 +66,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                blockHandle: { type: 'string', description: '块引用实体句柄。' },
+                blockHandle: { type: 'string', description: '块引用实体句柄（INSERT 的 Handle，不是块定义名；get_block_attributes 可返回）' },
                 tag: { type: 'string', description: '属性标签名称，如 "编号"、"规格"、"材质"。通过 get_block_attributes 可查看所有标签。' },
                 value: { type: 'string', description: '要设置的新属性值，如 "D001"、"C30混凝土"。' }
             },

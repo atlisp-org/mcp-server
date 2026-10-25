@@ -176,8 +176,20 @@ export async function getTables(params = {}) {
   }
 }
 
-export async function getPackages(filterName = null) {
-  const cacheKey = filterName ? `packages:${filterName}` : 'packages:all';
+/**
+ * 已安装包列表。
+ * @param {string|{name?: string, search?: string}|null} filter
+ *   - 字符串：按包名精确过滤（历史调用方式）
+ *   - 对象：name = 精确匹配；search = 对 name/description/fullName 做大小写不敏感的子串匹配
+ *   - null：返回全部
+ */
+export async function getPackages(filter = null) {
+  const opts = filter && typeof filter === 'object' ? filter : { name: filter };
+  const nameFilter = opts.name ? String(opts.name) : '';
+  const searchFilter = opts.search ? String(opts.search).toLowerCase() : '';
+  // 缓存键带上过滤形态（对象参数的键名），避免「无过滤」与「未知键过滤」互相污染
+  const shape = filter && typeof filter === 'object' ? Object.keys(filter).sort().join(',') : '';
+  const cacheKey = `packages:${nameFilter}:${searchFilter}:${shape}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
@@ -238,8 +250,15 @@ export async function getPackages(filterName = null) {
       return null;
     }).filter(Boolean);
 
-    if (filterName) {
-      const filtered = packages.filter(p => p.name === filterName);
+    if (nameFilter || searchFilter) {
+      const filtered = packages.filter(p => {
+        if (nameFilter && p.name !== nameFilter) return false;
+        if (searchFilter) {
+          const haystack = `${p.name} ${p.description || ''} ${p.fullName || ''}`.toLowerCase();
+          if (!haystack.includes(searchFilter)) return false;
+        }
+        return true;
+      });
       setCache(cacheKey, filtered);
       return filtered;
     }

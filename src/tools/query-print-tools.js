@@ -138,7 +138,7 @@ export const tools = [
             type: 'object',
             properties: {
                 type: { type: 'string', description: '实体 DXF 类型' },
-                handle: { type: 'string', description: '实体句柄' },
+                handle: { type: 'string', description: '实体句柄（十六进制字符串，如 "1F3A"）' },
                 layer: { type: 'string', description: '所在图层名' },
                 color: { type: 'number', description: '颜色号（256=ByLayer）' },
                 linetype: { type: 'string', description: '线型名' },

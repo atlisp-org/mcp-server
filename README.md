@@ -809,43 +809,52 @@ atlisp-mcp --no-auto-install-atlisp
 
 ## MCP 资源
 
-### 静态资源 (13)
+资源适合「只读了解图纸」：一次读取返回结构化 JSON，不需要拼 LISP；写操作仍走工具。
+描述里写明了返回字段与 query 参数，`resources/list` 会附带【实时】摘要（实体数/图层数/文件名）。
+
+### 资源 (23)
 
 | URI | 名称 | 说明 | 可订阅 |
 |-----|------|------|--------|
-| `atlisp://cad/info` | CAD Info | CAD 连接信息 | ✓ |
-| `atlisp://dwg/entities` | Entities | 实体列表/统计 | ✓ |
-| `atlisp://dwg/text-content` | Text Content | 文字内容与位置 | ✓ |
-| `atlisp://dwg/text-combined` | Combined Text | 合并后的段落文本 | ✓ |
-| `atlisp://dwg/name` | DWG Name | 当前文件名 | ✓ |
-| `atlisp://dwg/path` | DWG Path | 文件完整路径 | ✓ |
-| `atlisp://dwg/block-refs` | Block References | 块参照与属性 | ✓ |
-| `atlisp://dwg/tbl` | Tables | CAD 表数据 | ✓ |
-| `atlisp://cad/dwgs` | DWG List | 所有打开的 DWG | ✓ |
-| `atlisp://packages` | Packages | 已安装包列表 | ✓ |
-| `atlisp://platforms` | Platforms | 支持的平台 | ✗ |
-| `atlisp://standards/drafting` | Drafting | CAD 制图规范 | ✗ |
+| `atlisp://cad/info` | CAD Info | 连接概况：平台/版本/busy | ✓ |
+| `atlisp://dwg/entities` | Entities | 图元统计；`?type/layer/bbox` 返回全属性对象 | ✓ |
+| `atlisp://dwg/text-content` | Text Content | 文字内容与坐标，`?layer/bbox/offset/limit` | ✓ |
+| `atlisp://dwg/text-combined` | Combined Text | 碎片文字按坐标合并成段落 | ✓ |
+| `atlisp://cad/events` | CAD Events | 订阅变更通知；读取返回当前快照 | ✓ |
+| `atlisp://dwg/name` | DWG Name | 当前 DWG 文件名 | ✓ |
+| `atlisp://dwg/path` | DWG Path | 当前 DWG 完整路径 | ✓ |
+| `atlisp://dwg/block-refs` | Block References | 块参照/属性/动态块特性，支持分页 | ✓ |
+| `atlisp://dwg/tbl` | Tables | 符号表；`atlisp://dwg/tbl/{table}` 单表 | ✓ |
+| `atlisp://cad/dwgs` | DWG List | 所有已打开文档 | ✓ |
+| `atlisp://packages` | Packages | 已安装包；`?name=` 精确、`?search=` 模糊 | ✓ |
+| `atlisp://platforms` | Platforms | 支持的平台与扩展名 | ✗ |
+| `atlisp://standards` | Standards Index | 可用规范清单（key/名称/类别） | ✗ |
+| `atlisp://standards/drafting` | Drafting | 通用制图规范 | ✗ |
 | `atlisp://standards/coding` | Coding | @lisp 编码规范 | ✗ |
-| `atlisp://standards/architectural` | Architectural | 建筑行业规范 | ✗ |
-| `atlisp://standards/structural` | Structural | 结构行业规范 | ✗ |
-| `atlisp://standards/mechanical` | Mechanical | 机械行业规范 | ✗ |
-| `atlisp://standards/electrical` | Electrical | 电气行业规范 | ✗ |
-| `atlisp://standards/hvac` | HVAC | 暖通给排水行业规范 | ✗ |
-| `atlisp://standards/civil` | Civil | 土木道桥行业规范 | ✗ |
-| `atlisp://standards/surveying` | Surveying | 测绘行业规范 | ✗ |
-| `atlisp://standards/interior` | Interior | 室内装饰行业规范 | ✗ |
-| `atlisp://standards/landscape` | Landscape | 景观园林行业规范 | ✗ |
+| `atlisp://dwg/context` | DWG Context | 图纸上下文：布局/UCS/单位/范围/图层 | ✓ |
+| `atlisp://dwg/analysis` | Drawing Analysis | 图纸统计；`?type=summary\|detailed` | ✓ |
+| `atlisp://dwg/frames` | Drawing Frames | 图框识别（图幅/比例/未命中候选） | ✓ |
+| `atlisp://dwg/standards/check` | Standards Check | 按规范抽查必需图层 | ✗ |
+| `atlisp://system/cad-status` | CAD Status | 实例连接/停滞/队列状态 | ✗ |
+| `atlisp://tools/categories` | Tool Categories | 工具分类统计 | ✗ |
+| `atlisp://tools/industries` | Tool Industries | 行业工具推荐；`?name=建筑` | ✗ |
+| `atlisp://tools/relationships` | Tool Relationships | 工具协作关系图 | ✗ |
 
-### 资源模板
+### 资源模板 (11)
 
 | URI 模板 | 说明 |
 |----------|------|
-| `atlisp://dwg/entity/{handle}` | 按句柄查实体详情 |
-| `atlisp://dwg/entities?type={type}&layer={layer}&bbox={bbox}` | 过滤实体 |
-| `atlisp://dwg/block-refs/{blockName}` | 按块名过滤块参照 |
-| `atlisp://dwg/tbl/{table}` | 查询表（layer/block/textstyle/dimstyle/linetype/ucs/view/viewport/regapp/plotstyle） |
-| `atlisp://dwg/text-content?bbox={bbox}&layer={layer}&offset={offset}&limit={limit}` | 分页文字 |
-| `atlisp://packages?search={query}` | 搜索包 |
+| `atlisp://dwg/entity/{handle}` | 按句柄查单个实体 |
+| `atlisp://dwg/entities{?type,layer,bbox}` | 按类型/图层/范围过滤实体 |
+| `atlisp://dwg/text-content{?layer,bbox,offset,limit}` | 分页读取文字 |
+| `atlisp://dwg/text-combined{?layer,bbox,offset,limit}` | 合并段落文字 |
+| `atlisp://packages{?name,search}` | 精确/模糊查询已安装包 |
+| `atlisp://dwg/block-refs/{blockName}{?offset,limit}` | 按块名分页读块参照 |
+| `atlisp://dwg/tbl/{tbl}` | 查询单张符号表 |
+| `atlisp://dwg/analysis{?type}` | 图纸统计 summary/detailed |
+| `atlisp://dwg/frames{?layer,minSize,scales,offset,limit,includeInner,includeUnmatched}` | 图框识别与分页 |
+| `atlisp://tools/industries{?name}` | 按行业推荐工具 |
+| `atlisp://standards/{standard}` | 按 key 读规范（drafting/coding/architectural/…） |
 
 ### MCP 根目录 (Roots)
 

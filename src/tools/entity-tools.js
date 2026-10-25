@@ -29,7 +29,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '目标实体句柄' },
+                handle: { type: 'string', description: '目标实体句柄（get_entity / select_entities 返回的 Handle，如 "1F3A"）' },
                 property: { type: 'string', description: '要修改的属性: layer(图层), color(颜色号1-255), linetype(线型名), elevation(标高Z值)' },
                 value: { type: 'string', description: '属性值。color 传数字(1-255)，如 "1"=红、"2"=黄。linetype 传线型名如 "DASHED"、"CENTER"。layer 传图层名如 "0"、"墙体"' }
             },
@@ -42,7 +42,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                handle: { type: 'string', description: '要删除的实体句柄' }
+                handle: { type: 'string', description: '要删除的实体句柄（get_entity / dwg/entities 返回的 Handle）' }
             },
             required: ['handle']
         }
@@ -66,8 +66,8 @@ export const tools = [
             required: ['count', 'handles']
         }
     },
-{ name: 'bring_to_front_entity', description: '将指定实体移到显示顺序最前（覆盖在其他所有实体之上）。当用户说"把这个置前/移到最前"时调用。影响显示顺序，不改变图层。destructive（视觉上）。对比 send_to_back_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '要置前的实体句柄' } }, required: ['handle'] } },
-{ name: 'send_to_back_entity', description: '将指定实体移到显示顺序最后（被其他实体覆盖）。当用户说"把这个置后/移到最后"时调用。影响显示顺序。destructive（视觉上）。对比 bring_to_front_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '要置后的实体句柄' } }, required: ['handle'] } },
+{ name: 'bring_to_front_entity', description: '将指定实体移到显示顺序最前（覆盖在其他所有实体之上）。当用户说"把这个置前/移到最前"时调用。影响显示顺序，不改变图层。destructive（视觉上）。对比 send_to_back_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '要置前的实体句柄（目标实体 Handle）' } }, required: ['handle'] } },
+{ name: 'send_to_back_entity', description: '将指定实体移到显示顺序最后（被其他实体覆盖）。当用户说"把这个置后/移到最后"时调用。影响显示顺序。destructive（视觉上）。对比 bring_to_front_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '要置后的实体句柄（目标实体 Handle）' } }, required: ['handle'] } },
 { name: 'bring_above_entity', description: '将目标实体置于参照实体上方（调整显示顺序）。当用户说"把这个放到XX上面"时调用。两个实体都需要句柄。destructive（视觉上）。对比 bring_to_front_entity（直接置顶）和 send_below_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '目标实体句柄（要移动的实体）' }, referenceHandle: { type: 'string', description: '参照实体句柄（目标将置于此实体上方）' } }, required: ['handle', 'referenceHandle'] } },
 { name: 'send_below_entity', description: '将目标实体置于参照实体下方（调整显示顺序）。当用户说"把这个放到XX下面"时调用。两个实体都需要句柄。destructive（视觉上）。对比 bring_above_entity。', inputSchema: { type: 'object', properties: { handle: { type: 'string', description: '目标实体句柄（要移动的实体）' }, referenceHandle: { type: 'string', description: '参照实体句柄（目标将置于此实体下方）' } }, required: ['handle', 'referenceHandle'] } },
 { name: 'select_all', description: '选择当前图形中所有实体，返回句柄数组(string[])。当用户说"全选/选所有/选全部"时调用。适合在批量操作前获取全部实体。只读。', inputSchema: { type: 'object', properties: {} } },

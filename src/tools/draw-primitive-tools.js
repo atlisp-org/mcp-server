@@ -18,7 +18,7 @@ export const tools = [
             type: 'object',
             properties: {
                 center: { type: 'string', description: '圆心坐标，如 "50,50"' },
-                radius: { type: 'number', description: '半径值，必须 > 0' }
+                radius: { type: 'number', description: '半径（图形单位，必须 > 0）' }
             },
             required: ['center', 'radius']
         }
@@ -30,7 +30,7 @@ export const tools = [
             type: 'object',
             properties: {
                 center: { type: 'string', description: '圆心坐标，如 "50,50"' },
-                radius: { type: 'number', description: '圆弧半径，必须 > 0' },
+                radius: { type: 'number', description: '圆弧半径（图形单位，必须 > 0）' },
                 startAngle: { type: 'number', description: '起始角度（度），如 0 = 右侧水平方向' },
                 endAngle: { type: 'number', description: '终止角度（度），如 180 = 左侧水平方向' }
             },
@@ -81,7 +81,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                text: { type: 'string', description: '文字内容，支持中英文' },
+                text: { type: 'string', description: '文字内容，支持中英文；不会被自动换行' },
                 point: { type: 'string', description: '插入点坐标（左下角对齐），如 "50,50"' },
                 height: { type: 'number', description: '文字高度，如 2.5, 5, 10。默认使用当前文字样式高度' }
             },
@@ -156,7 +156,7 @@ export const tools = [
         center: { type: 'string', description: '中心点坐标，如 "0,0,0"。支持 3D' },
         topRadius: { type: 'number', description: '顶部半径，如 10。设为 0 可创建锥形螺旋' },
         bottomRadius: { type: 'number', description: '底部半径，如 30。必须 > 0' },
-        height: { type: 'number', description: '螺旋总高度，如 50' },
+        height: { type: 'number', description: '螺旋总高度（图形单位），如 50' },
         turns: { type: 'number', description: '圈数（默认 3），如 5=五圈' }
       },
       required: ['center', 'topRadius', 'bottomRadius', 'height']

@@ -1,3 +1,11 @@
+// 行业取值与 standards-readers.js 的 INDUSTRY_FILE_MAP 保持一致。写成 enum 是为了
+// 让模型直接看到合法取值——传 "建筑行业" 之类的别名会被后端静默回落成通用规范。
+const INDUSTRY_VALUES = [
+  '通用', '建筑', '结构', '机械', '电气', '暖通给排水',
+  '土木道桥', '测绘', '室内装饰', '景观园林',
+];
+const INDUSTRY_DESC = `行业规范，默认"通用"。可选：${INDUSTRY_VALUES.join(' / ')}。不同行业有不同的规则与图层前缀。`;
+
 export const tools = [
   {
     name: 'check_drawing_standards',
@@ -17,7 +25,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业模板: "建筑"/"结构"/"机械"/"电气"/"暖通给排水"/"土木道桥"/"测绘"/"室内装饰"/"景观园林"。必须指定行业。' },
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: '要应用的行业模板，必填。可选：' + INDUSTRY_VALUES.join(' / ') + '。会按该行业规范创建必需图层与样式。' },
         overwrite: { type: 'boolean', description: '是否覆盖已有同名图层/样式，默认false（跳过已存在的）' }
       },
       required: ['industry']
@@ -29,7 +37,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '可选：筛选指定行业的规范' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: '可选：筛选指定行业（如 "建筑"）；不传则列出全部规范文件' }
       }
     }
   },
@@ -39,7 +47,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业名称: "通用"/"建筑"/"结构"/"机械"/"电气"/"暖通给排水"/"土木道桥"/"测绘"/"室内装饰"/"景观园林"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       },
       required: ['industry']
     }
@@ -63,8 +71,8 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        standard1: { type: 'string', description: '第一个规范名称' },
-        standard2: { type: 'string', description: '第二个规范名称' }
+        standard1: { type: 'string', enum: INDUSTRY_VALUES, description: '第一个行业规范（基准），如 "建筑"' },
+        standard2: { type: 'string', enum: INDUSTRY_VALUES, description: '第二个行业规范（对比），如 "结构"' }
       },
       required: ['standard1', 'standard2']
     }
@@ -75,7 +83,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -85,7 +93,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -95,7 +103,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -105,7 +113,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -115,7 +123,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -125,7 +133,7 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' }
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC }
       }
     }
   },
@@ -143,8 +151,8 @@ export const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        industry: { type: 'string', description: '行业规范，默认"通用"' },
-        format: { type: 'string', enum: ['json', 'html', 'text'], description: '输出格式，默认json' },
+        industry: { type: 'string', enum: INDUSTRY_VALUES, description: INDUSTRY_DESC },
+        format: { type: 'string', enum: ['json', 'html', 'text'], description: '报告输出格式，默认 json；html 便于人工阅读，text 便于贴进邮件' },
         outputFile: { type: 'string', description: '输出文件路径（可选，不指定则返回内容）' }
       }
     }

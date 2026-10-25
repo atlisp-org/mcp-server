@@ -177,32 +177,49 @@ Server 在初始化时声明以下能力：
 
 ### 资源 URI
 
+`resources/list` 会返回下面这些资源（附实时摘要）；带参数的资源也提供资源模板。
+
 | URI | 类型 | 说明 |
 |-----|------|------|
-| `atlisp://cad/info` | 静态 | CAD 连接信息 |
+| `atlisp://cad/info` | 订阅 | CAD 连接概况（平台/版本/busy） |
 | `atlisp://dwg/name` | 订阅 | 当前 DWG 文件名 |
 | `atlisp://dwg/path` | 订阅 | 当前 DWG 文件路径 |
-| `atlisp://dwg/entities` | 订阅 | 实体统计 |
-| `atlisp://dwg/text-content` | 订阅 | 文字内容 |
+| `atlisp://dwg/context` | 订阅 | 图纸上下文（布局/UCS/单位/范围/图层） |
+| `atlisp://dwg/entities` | 订阅 | 实体统计；`?type&layer&bbox` 返回全属性 |
+| `atlisp://dwg/text-content` | 订阅 | 文字内容与坐标 |
 | `atlisp://dwg/text-combined` | 订阅 | 合并后段落文本 |
-| `atlisp://dwg/block-refs` | 订阅 | 块参照 |
-| `atlisp://dwg/tbl` | 订阅 | CAD 表数据 |
+| `atlisp://dwg/block-refs` | 订阅 | 块参照（支持 `?offset&limit`） |
+| `atlisp://dwg/tbl` | 订阅 | 符号表数据 |
+| `atlisp://dwg/analysis` | 订阅 | 图纸统计（`?type=summary\|detailed`） |
+| `atlisp://dwg/frames` | 订阅 | 图框识别 |
+| `atlisp://dwg/standards/check` | 静态 | 按规范抽查必需图层 |
 | `atlisp://cad/dwgs` | 订阅 | 所有打开的 DWG |
-| `atlisp://packages` | 订阅 | 已安装包列表 |
-| `atlisp://platforms` | 静态 | 支持平台列表 |
-| `atlisp://standards/drafting` | 静态 | CAD 制图规范 |
+| `atlisp://cad/events` | 订阅 | 变更通知入口（读取返回当前快照） |
+| `atlisp://packages` | 订阅 | 已安装包（`?name` 精确 / `?search` 模糊） |
+| `atlisp://platforms` | 静态 | 支持的平台与扩展名 |
+| `atlisp://standards` | 静态 | 可用规范清单 |
+| `atlisp://standards/drafting` | 静态 | 通用制图规范 |
 | `atlisp://standards/coding` | 静态 | @lisp 编码规范 |
+| `atlisp://system/cad-status` | 静态 | 各 CAD 实例连接/停滞状态 |
+| `atlisp://tools/categories` | 静态 | 工具分类统计 |
+| `atlisp://tools/industries` | 静态 | 按行业推荐工具（`?name=建筑`） |
+| `atlisp://tools/relationships` | 静态 | 工具协作关系图 |
 
 资源模板：
 
 | 模板 | 示例 |
 |------|------|
 | `atlisp://dwg/entity/{handle}` | `atlisp://dwg/entity/1F3A` |
-| `atlisp://dwg/entities?type={type}&layer={layer}&bbox={bbox}` | `atlisp://dwg/entities?type=LINE&layer=0` |
-| `atlisp://dwg/block-refs/{blockName}` | `atlisp://dwg/block-refs/门` |
-| `atlisp://dwg/tbl/{table}` | `atlisp://dwg/tbl/layer` |
-| `atlisp://dwg/text-content?offset=0&limit=100` | 分页文字 |
-| `atlisp://packages?search={query}` | `atlisp://packages?search=json` |
+| `atlisp://dwg/entities{?type,layer,bbox}` | `atlisp://dwg/entities?type=LINE&layer=0` |
+| `atlisp://dwg/text-content{?layer,bbox,offset,limit}` | `atlisp://dwg/text-content?offset=0&limit=100` |
+| `atlisp://dwg/text-combined{?layer,bbox,offset,limit}` | `atlisp://dwg/text-combined?layer=0` |
+| `atlisp://dwg/block-refs/{blockName}{?offset,limit}` | `atlisp://dwg/block-refs/门?limit=100` |
+| `atlisp://dwg/tbl/{tbl}` | `atlisp://dwg/tbl/layer` |
+| `atlisp://dwg/analysis{?type}` | `atlisp://dwg/analysis?type=detailed` |
+| `atlisp://dwg/frames{?layer,minSize,scales,offset,limit,includeInner,includeUnmatched}` | `atlisp://dwg/frames?layer=PUB_TITLE` |
+| `atlisp://packages{?name,search}` | `atlisp://packages?search=json` |
+| `atlisp://tools/industries{?name}` | `atlisp://tools/industries?name=建筑` |
+| `atlisp://standards/{standard}` | `atlisp://standards/architectural` |
 
 ---
 

@@ -17,6 +17,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { listResources, readResource } from './handlers/resource-handlers.js';
+import { RESOURCE_TEMPLATES } from './handlers/resource-defs.js';
 import { listPrompts, getPrompt } from './handlers/prompt-handlers.js';
 import { SERVER_NAME, SERVER_VERSION, SERVER_CAPABILITIES } from './constants.js';
 import { subscribe, unsubscribe, list as subList } from './subscription-manager.js';
@@ -56,44 +57,6 @@ function parseLispList(str) {
   return parts.map(p => { if (p.startsWith('"') && p.endsWith('"')) return p.slice(1, -1); return p; });
 }
 const completionsCache = new Map(); // Map<refType, {values: string[], ts: number}>
-const RESOURCE_TEMPLATES = [
-    {
-        uriTemplate: 'atlisp://dwg/entity/{handle}',
-        name: 'Entity by Handle',
-        description: '根据句柄查询实体详情',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/entities{?type,layer,bbox}',
-        name: 'Filtered Entities',
-        description: '按 type/layer/bbox 过滤图元，返回 entity:properties 全属性 JSON（ObjectName, Handle, Layer, Color, Center, Radius 等）',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/text-content{?bbox,layer,offset,limit}',
-        name: 'Text Content',
-        description: '文本内容及位置，用于语义分析',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://packages{?search}',
-        name: 'Package Search',
-        description: '搜索 @lisp 包',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/block-refs/{blockName}',
-        name: 'Block References',
-        description: '获取块参照列表，支持按块名过滤',
-        mimeType: 'application/json'
-    },
-    {
-        uriTemplate: 'atlisp://dwg/tbl/{tbl}',
-        name: 'CAD Tables',
-        description: '获取 CAD 表数据 (layer, block, textstyle, dimstyle, linetype, ucs, view, regapp)',
-        mimeType: 'application/json'
-    }
-];
 
 export function createMcpServer(handlers = {}) {
     const { handleToolCall = () => ({ content: [] }) } = handlers;
@@ -102,7 +65,12 @@ export function createMcpServer(handlers = {}) {
         { name: SERVER_NAME, version: SERVER_VERSION },
         {
             capabilities: SERVER_CAPABILITIES,
-            instructions: '这是一个 @lisp MCP 服务器，用于通过 AI Agent 控制 CAD (AutoCAD/ZWCAD/GStarCAD/BricsCAD)。支持 330+ 工具操作图元、图层、块、标注、布局、图纸集、打印等。'
+            instructions: [
+                '这是 @lisp MCP 服务器，用于通过 AI Agent 控制 CAD（AutoCAD/ZWCAD/GStarCAD/BricsCAD）。',
+                '首次操作先调用 open_cad（需要后台连接不切窗口时用 connect_cad）；之后再做查询或绘图。',
+                '工具列表按 100 条分页返回，且可能被 profile 过滤——找不到工具时用 search_tools / list_tools_by_category 检索，再用 get_tool_info 确认参数。',
+                '只读了解图纸优先用 MCP 资源（resources/list）：atlisp://dwg/context 看上下文、atlisp://dwg/analysis 看统计、atlisp://dwg/entities 看实体；需要修改图纸再用工具。',
+            ].join(''),
         }
     );
 
