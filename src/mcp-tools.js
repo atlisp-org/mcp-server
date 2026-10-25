@@ -155,6 +155,12 @@ export const TOOL_HANDLERS = {
     // === Block Operations ===
     create_block:         lazy('create_block', (a) => [a?.name, a?.entities || '(princ)']),
     insert_block:         lazy('insert_block', (a) => [a?.blockName, a?.point, a?.scale, a?.rotation]),
+
+    // === 在线图库（library-handlers.js）===
+    library_search:       lazy('library_search', (a) => a || {}),
+    library_insert:       lazy('library_insert', (a) => a || {}),
+    library_categories:   lazy('library_categories', (a) => a || {}),
+    library_info:         lazy('library_info', (a) => a || {}),
     get_blocks:           lazy('get_blocks'),
     explode_block:         lazy('explode_block', (a) => a?.handle),
     get_block_attributes: lazy('get_block_attributes', (a) => a?.blockHandle),

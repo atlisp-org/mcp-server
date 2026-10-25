@@ -48,6 +48,7 @@ import { tools as peer_tools } from './peer-tools.js';
 import { tools as standards_tools } from './standards-tools.js';
 import { tools as frame_tools } from './frame-tools.js';
 import { tools as dwg_kb_tools } from './dwg-kb-tools.js';
+import { tools as library_tools } from './library-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -77,6 +78,7 @@ const READ_ONLY_TOOLS = new Set([
   'audit_log_query', 'audit_log_stats',
   'cad_pool_list', 'cad_pool_stats', 'cad_pool_health',
   'get_3d_solid_info',
+  'library_search', 'library_categories', 'library_info',
   'watch_list', 'webhook_list', 'webhook_log',
   'lisp_repl_list', 'lisp_repl_history',
   'agent_list_context', 'agent_get_context',
@@ -313,6 +315,7 @@ export const tools = [
   ...standards_tools,
   ...frame_tools,
   ...dwg_kb_tools,
+  ...library_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
