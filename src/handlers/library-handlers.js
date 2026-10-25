@@ -36,6 +36,15 @@ function libraryBase() {
   return String(process.env.ATLISP_LIBRARY_BASE || 'https://atlisp.cn').replace(/\/+$/, '');
 }
 
+/**
+ * CAD 下载 dwg 用的基址（默认走 CAD 自己的 (@::uri) = s3 镜像）。
+ * 与图库同机部署时可设成局域网地址（如 http://192.168.1.100:8100），
+ * CAD 就只在内网取 40KB 的 dwg，不用绕公网一圈。
+ */
+function cadLibraryBase() {
+  return String(process.env.ATLISP_LIBRARY_CAD_BASE || '').replace(/\/+$/, '');
+}
+
 /** 服务端/开发机上的完整图库目录（存在就用它，免下载）。 */
 function libraryRoot() {
   return process.env.ATLISP_LIBRARY_ROOT || path.join(os.homedir(), 'www', 'dw', 'library');
@@ -115,9 +124,14 @@ let _refreshing = null;
  */
 function pickIndexFile() {
   const explicit = process.env.ATLISP_LIBRARY_INDEX;
-  if (explicit && fs.existsSync(explicit)) return { file: explicit, full: true };
-  const local = path.join(libraryRoot(), 'index', 'library-index.json');
-  if (fs.existsSync(local)) return { file: local, full: true };
+  if (explicit && fs.existsSync(explicit)) return { file: explicit, full: true, local: true };
+  const root = libraryRoot();
+  // 与图库同机时优先读本地 web 索引：3MB，解析比全量 17MB 快一个数量级；
+  // 需要 insbase/warn 等完整字段时 libraryInfo 会另外读全量（见 ensureFullIndex）。
+  const localWeb = path.join(root, 'index', 'library-web.json');
+  if (fs.existsSync(localWeb)) return { file: localWeb, full: false, local: true };
+  const localFull = path.join(root, 'index', 'library-index.json');
+  if (fs.existsSync(localFull)) return { file: localFull, full: true, local: true };
   const cachedFull = path.join(cacheDir(), 'library-index.json');
   if (fs.existsSync(cachedFull)) return { file: cachedFull, full: true };
   const cachedWeb = path.join(cacheDir(), 'library-web.json');
@@ -175,7 +189,7 @@ async function ensureIndex() {
   if (picked) {
     try {
       const raw = readJson(picked.file);
-      const normalized = normalizeIndex(raw, picked.full ? 'local' : 'cache');
+      const normalized = normalizeIndex(raw, picked.local ? (picked.full ? 'local-full' : 'local-web') : 'cache');
       if (normalized && normalized.items.length) {
         normalized.stale = fileAge(picked.file) > indexTtlMs();
         _index = normalized;
@@ -292,17 +306,40 @@ export async function libraryCategories(args = {}) {
   };
 }
 
+let _fullIndex = null;
+
+/** 同机的全量索引（17MB）：只有 libraryInfo 需要 insbase/warn 时才读。 */
+function ensureFullIndex() {
+  if (_fullIndex) return _fullIndex;
+  const candidates = [
+    process.env.ATLISP_LIBRARY_INDEX,
+    path.join(libraryRoot(), 'index', 'library-index.json'),
+    path.join(cacheDir(), 'library-index.json'),
+  ].filter(Boolean);
+  for (const file of candidates) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const normalized = normalizeIndex(readJson(file), 'local-full');
+      if (normalized && normalized.items.length) {
+        _fullIndex = normalized;
+        return _fullIndex;
+      }
+    } catch (e) {
+      logError(`library full index read failed (${file}): ${e.message}`);
+    }
+  }
+  return null;
+}
+
 export async function libraryInfo(args = {}) {
   const id = String(args.id || '').trim();
   if (!id) return mcpError('id 不能为空');
 
-  // 1) 本地完整索引里有 → 直接用（服务端/开发机）
-  try {
-    const index = await ensureIndex();
-    const item = index.items.find((x) => x.id === id);
-    if (item && (item.insbase || item.warn)) return infoResponse(item);
-  } catch {
-    /* 忽略，走 HTTP */
+  // 1) 同机全量索引里有 → 直接读盘，不绕网络
+  const full = ensureFullIndex();
+  if (full) {
+    const item = full.items.find((x) => x.id === id);
+    if (item) return infoResponse(item);
   }
 
   // 2) 服务端单条接口（客户端没有完整索引时的权威来源）
@@ -452,13 +489,16 @@ export async function libraryInsert(args = {}) {
     }
   }
 
+  // CAD 端下载基址：同机部署可用 LAN 地址（ATLISP_LIBRARY_CAD_BASE）跳过公网
+  const cadBase = cadLibraryBase();
+  const cadBaseExpr = cadBase ? `"${escapeLispString(cadBase)}"` : '(@::uri)';
   const safeId = id.replace(/[/\\<>":;?*|,=`]/g, '_');
   const pathSetup =
     pathMode === 'cad'
       ? [
           `  (setq path (strcat @::*prefix* "library/mcp/${escapeLispString(safeId)}.dwg"))`,
           '  (@::mkdir (@::path (vl-filename-directory path)))',
-          `  (@::down-by-base64 (strcat (@::uri) "/dw/library/${escapeLispString(id)}.dwg") path nil)`,
+          `  (@::down-by-base64 (strcat ${cadBaseExpr} "/dw/library/${escapeLispString(id)}.dwg") path nil)`,
         ]
       : [`  (setq path "${escapeLispString(downloaded.file)}")`];
 
