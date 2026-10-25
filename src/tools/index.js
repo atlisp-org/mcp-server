@@ -49,6 +49,7 @@ import { tools as standards_tools } from './standards-tools.js';
 import { tools as frame_tools } from './frame-tools.js';
 import { tools as dwg_kb_tools } from './dwg-kb-tools.js';
 import { tools as library_tools } from './library-tools.js';
+import { tools as pattern_tools } from './pattern-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -316,6 +317,7 @@ export const tools = [
   ...frame_tools,
   ...dwg_kb_tools,
   ...library_tools,
+  ...pattern_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));

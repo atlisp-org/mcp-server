@@ -161,6 +161,10 @@ export const TOOL_HANDLERS = {
     library_insert:       lazy('library_insert', (a) => a || {}),
     library_categories:   lazy('library_categories', (a) => a || {}),
     library_info:         lazy('library_info', (a) => a || {}),
+
+    // === 填充图案（pattern-handlers.js）===
+    pattern_search:       lazy('pattern_search', (a) => a || {}),
+    hatch_with_pattern:   lazy('hatch_with_pattern', (a) => a || {}),
     get_blocks:           lazy('get_blocks'),
     explode_block:         lazy('explode_block', (a) => a?.handle),
     get_block_attributes: lazy('get_block_attributes', (a) => a?.blockHandle),

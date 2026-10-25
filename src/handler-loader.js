@@ -25,7 +25,7 @@ const resolvedCache = new Map();
 export const HANDLER_MODULE_NAMES = [
   '3d', 'analysis', 'batch', 'batch-transaction', 'block', 'cad',
   'constraint', 'debug', 'dim-hatch', 'draw', 'dwg-kb', 'edit', 'entity',
-  'external', 'file', 'frame', 'function', 'layer', 'library', 'lint', 'meta',
+  'external', 'file', 'frame', 'function', 'layer', 'library', 'lint', 'meta', 'pattern',
   'package', 'parametric', 'pdf-annotation', 'peer', 'plugin', 'prompt',
   'purge', 'query-print', 'resource', 'sheetset', 'skill', 'spatial',
   'standards', 'style', 'text', 'ucs-layout', 'viewport', 'xdata', 'xref',
