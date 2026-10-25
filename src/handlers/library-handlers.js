@@ -450,12 +450,18 @@ export async function libraryInsert(args = {}) {
   const rotationDeg = Number(args.rotation) || 0;
   const align = String(args.align || 'auto');
 
+  /* 同机部署时 agent 会把 off/size/units 一起传过来 —— 这时完全不用索引，
+     用户端 MCP 不必先下 3MB（这是「跳过周转」的关键）。 */
+  const explicit =
+    Array.isArray(args.off) && Array.isArray(args.size) && args.units !== undefined;
   let item = null;
-  try {
-    const index = await ensureIndex();
-    item = index.items.find((i) => i.id === id) || null;
-  } catch {
-    /* 索引拿不到也能插：基点/单位就交给 CAD 自己判断 */
+  if (!explicit) {
+    try {
+      const index = await ensureIndex();
+      item = index.items.find((i) => i.id === id) || null;
+    } catch {
+      /* 索引拿不到也能插：基点/单位就交给 CAD 自己判断 */
+    }
   }
 
   const dryRun = process.env.LIBRARY_INSERT_DRY_RUN === '1';
@@ -464,9 +470,10 @@ export async function libraryInsert(args = {}) {
     if (!cad.connected) return mcpError('未连接 CAD');
   }
 
-  const md = (item && (item.warn ? item.warn.includes('units_missing') : false)) || (item && item.units === 0);
-  const off = (item && item.off) || [0, 0];
-  const bbox = (item && item.bbox) || [0, 0];
+  const off = explicit ? args.off.map(Number) : (item && item.off) || [0, 0];
+  const bbox = explicit ? args.size.map(Number) : (item && item.bbox) || [0, 0];
+  const symUnits = explicit ? Number(args.units) || 0 : (item && item.units) || 0;
+  const md = symUnits === 0;
   const size = Math.max(Math.abs(bbox[0] || 0), Math.abs(bbox[1] || 0), 1e-9);
   const offLen = Math.hypot(off[0] || 0, off[1] || 0);
   let useOffset = false;
@@ -474,7 +481,6 @@ export async function libraryInsert(args = {}) {
   else if (align === 'auto' && offLen > size) useOffset = true;
 
   const rot = (rotationDeg * Math.PI) / 180;
-  const symUnits = (item && item.units) || 0;
 
   // 优先 CAD 端下载：中继拓扑下 MCP 与 CAD 不同机，本地文件路径对 CAD 不可见
   const cadSide = dryRun ? true : await cadCanDownload();

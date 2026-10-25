@@ -66,6 +66,20 @@ export const tools = [
           enum: ['auto', 'base', 'center', 'bottom-left'],
           description: '对齐方式。auto（默认）=基点偏移过大时自动用几何中心对齐，否则尊重图库原始基点；base=完全按图库基点；center=几何中心对准插入点；bottom-left=左下角对准插入点（图框常用）',
         },
+        off: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '基点偏移 [x,y]（符号单位）。由 agent 从本机索引自动带入；传了就不再查索引（用户端无需下载索引）。一般不手工填。',
+        },
+        size: {
+          type: 'array',
+          items: { type: 'number' },
+          description: '符号包围盒 [宽,高]（符号单位）。同上，由 agent 自动带入，用于判断是否需要居中。',
+        },
+        units: {
+          type: 'number',
+          description: '符号的 $INSUNITS（0=未定义）。同上，由 agent 自动带入，用于按图纸单位换算比例。',
+        },
       },
       required: ['id', 'point'],
     },
