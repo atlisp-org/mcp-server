@@ -2,6 +2,18 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.13] - 2026-10-25
+
+### 更新内容
+
+- feat(prompts): library-usage —— 图库与填充的系统提示词（可直接被客户端拉取） (3adb72c)
+- feat(prompts): 图库与填充图案的使用流程 prompt (246e477)
+- feat(pattern): 填充图案库（855 个 .pat）接入 MCP (3bf290b)
+- feat(library): library_insert 支持外部传入 off/size/units（用户端免索引） (376f110)
+- perf(library): 同机部署直读本地索引，CAD 可走内网取 dwg (479ec7c)
+- fix(library): MCP 端不再依赖本地图库副本 (bd727a1)
+- feat(library): 4 个在线图库 MCP 工具 (04638d8)
+
 ## [1.12.12] - 2026-10-25
 
 ### 更新内容
