@@ -2,6 +2,42 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.11] - 2026-10-25
+
+### 更新内容
+
+- fix(tray): 升级时彻底释放 npm 包目录占用（EBUSY） (e19f41b)
+
+### 修复：升级 @lisp/mcp 报 EBUSY（包目录被占用）
+
+npm 替换全局包的做法是把整个 `node_modules\@atlisp\mcp` 改名成 `.mcp-XXXXXX`
+再解压新版本，只要还有进程「在里面」Windows 就拒绝改名：
+
+```
+EBUSY: resource busy or locked, rename '...\@atlisp\mcp' -> '...\.mcp-otF029uM'
+```
+
+常见占用者：把该目录当工作目录的服务进程（托盘旧版把服务 CWD 直接设成包目录）、
+连过 CAD 后常驻的 `edge-js` 原生模块、Windows 服务模式、
+MCP 客户端拉起的实例、残留的 `cad-worker`、包内运行中的托盘 exe。
+旧逻辑只停托盘自己拉起的服务再原样重试一次，命中其他情况仍然失败。
+
+- 服务不再以包目录为工作目录启动（改用 `%APPDATA%\atlisp-mcp`），
+  `cad-worker` 显式 `cwd: os.tmpdir()`——从根上消掉最常见的占用源；
+- 新增目录占用探测：把目录**改名再改回来**（和 npm 那一步等价）判断是否真的空闲，
+  不再靠猜；占用者用 PowerShell `Win32_Process` 枚举（`-EncodedCommand` 传参，wmic 兜底）；
+- 升级/安装前预检：目录空闲就照旧边下载边服务、不停服务；被占用则依次停托盘服务、
+  停 Windows 服务、把托盘 CWD 移出包目录、等句柄释放，再只结束确定属于本包的
+  进程（node / `AtlispTray` / `AtlispUpdater`，编辑器与终端不碰），确认空闲后才跑 npm。
+  手动升级会弹一次确认框列出占用进程，自动升级静默处理；
+- 失败重试 1 次 → 2 次，且必须探测到目录已释放才重试；仍失败时对话框直接给出占用清单
+  与「命令行窗口/编辑器把该目录当工作目录」这类漏网原因；
+- 改名探测途中被强杀的残留目录下次启动自动复原；升级失败时把被停掉的旧服务拉回来。
+
+> 从旧版本升级到本版仍需先手动过一次（旧托盘没有新逻辑，它自己会撞 EBUSY）：
+> 退出托盘与 MCP 客户端 → `npm install -g @atlisp/mcp@latest` → 重新运行 `atlisp-tray`。
+> 之后托盘日志里搜 `locked:` 可看到它探测到/结束了哪些占用进程。
+
 ## [1.12.10] - 2026-10-25
 
 ### 更新内容
