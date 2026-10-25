@@ -2,7 +2,11 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
-## [Unreleased]
+## [1.12.12] - 2026-10-25
+
+### 更新内容
+
+- feat(dwg-kb): 新增 6 个审查向工具 (21bc187)
 
 ### 图纸知识库：新增 6 个审查向工具
 
