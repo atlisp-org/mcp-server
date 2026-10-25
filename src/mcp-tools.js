@@ -91,6 +91,7 @@ export const TOOL_HANDLERS = {
 
     // === System ===
     get_cad_info:          lazy('get_cad_info'),
+    cad_duplicates:        lazy('cad_duplicates'),
     new_document:          lazy('new_document'),
     install_atlisp:        lazy('install_atlisp'),
     init_atlisp:          lazy('init_atlisp'),

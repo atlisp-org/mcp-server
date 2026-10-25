@@ -190,7 +190,7 @@ export const CORE_TOOLS = new Set([
   'draw_polygon', 'draw_ellipse', 'draw_text', 'draw_mtext', 'draw_spline', 'draw_point',
   // 选择与查询
   'select_entities', 'select_all', 'select_last', 'get_entity', 'get_entity_info',
-  'get_bounding_box', 'measure_distance', 'measure_area', 'find_text',
+  'get_bounding_box', 'measure_distance', 'measure_area', 'find_text', 'cad_duplicates',
   // 修改
   'delete_entity', 'batch_delete', 'batch_move', 'batch_copy', 'move_entity', 'copy_entity',
   'rotate_entity', 'scale_entity', 'mirror_entity', 'offset_entity',

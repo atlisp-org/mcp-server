@@ -9,6 +9,7 @@ import { tools as dim_hatch_tools } from './dim-hatch-tools.js';
 import { tools as ucs_layout_tools } from './ucs-layout-tools.js';
 import { tools as query_print_tools } from './query-print-tools.js';
 import { tools as batch_tools } from './batch-tools.js';
+import { tools as analysis_tools } from './analysis-tools.js';
 
 import { tools as xdata_tools } from './xdata-tools.js';
 import { tools as sheetset_tools } from './sheetset-tools.js';
@@ -97,6 +98,8 @@ const READ_ONLY_TOOLS = new Set([
   'check_file_naming', 'generate_compliance_report',
   // 图框识别：只读查询（扫多段线 + 算尺寸，不改图）
   'list_frames',
+  // 重复实体查询：只读扫描，不改图
+  'cad_duplicates',
   // 图纸知识库（atlisp-dwg-kb）：HTTP 只读查询，不碰 CAD
   'dwg_kb_health', 'dwg_kb_stats', 'dwg_kb_search', 'dwg_kb_query',
   'dwg_kb_list_drawings', 'dwg_kb_projects', 'dwg_kb_layers', 'dwg_kb_blocks',
@@ -156,6 +159,7 @@ function getToolCategory(name) {
   if (/^(create_ucs|set_ucs|delete_ucs|list_ucs|get_current_ucs|create_layout|delete_layout|rename_layout|set_layout|list_layouts|get_current_layout)/.test(n)) return '坐标系与布局';
   if (/^(create_viewport|set_viewport|lock_viewport|unlock_viewport|maximize_viewport|minimize_viewport|create_polygonal_viewport|zoom_|create_named_view|restore_named_view|list_named_views)/.test(n)) return '视口';
   if (/^find_text/.test(n)) return '文字';
+  if (/^cad_duplicates/.test(n)) return '选择与属性';
   if (/^find_/.test(n)) return '空间查询';
   if (/^(select_|get_entity|set_entity|delete_entity|get_bounding_box|create_group|delete_group|list_groups|get_group_entities|measure_|send_to_back_entity|bring_above_entity|send_below_entity)/.test(n)) return '选择与属性';
   if (/^(get_dynamic_block_prop|set_dynamic_block_prop|list_visibility|set_visibility)/.test(n)) return '块';
@@ -271,6 +275,7 @@ export const tools = [
   ...ucs_layout_tools,
   ...query_print_tools,
   ...batch_tools,
+  ...analysis_tools,
 
   ...xdata_tools,
   ...sheetset_tools,

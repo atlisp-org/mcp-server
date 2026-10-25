@@ -145,6 +145,69 @@ export async function checkDrawingStandards() {
   }
 }
 
+/**
+ * 只读重复实体检查：同类型 + 同图层 + 同几何签名。
+ *
+ * 以往这类需求每次都让模型现写 LISP，容差和判定口径都不统一（记忆里一周问了
+ * 5 次）。这里把签名/分组做成确定性实现，只返回清单，不删除任何东西。
+ */
+export async function cadDuplicates(params = {}) {
+  await ensureCad();
+  const types = Array.isArray(params.types)
+    ? params.types.map((t) => String(t).trim().toUpperCase()).filter(Boolean)
+    : [];
+  const tolerance = Number.isFinite(Number(params.tolerance)) && Number(params.tolerance) > 0
+    ? Number(params.tolerance)
+    : 1e-6;
+  const maxGroups = Math.min(500, Math.max(1, Number(params.maxGroups) || 50));
+
+  const typeFilter = types.length
+    ? `(list '(-4 . "<OR") ${types.map((t) => `(cons 0 "${escapeLispString(t)}")`).join(' ')} '(-4 . "OR>"))`
+    : null;
+  const selection = typeFilter ? `(ssget "_X" ${typeFilter})` : '(ssget "_X")';
+
+  const code = `(progn
+  (vl-load-com)
+  (setq tol ${tolerance})
+  (defun @dup:norm (v)
+    (if (numberp v) (* tol (fix (+ 0.5 (/ v tol)))) v))
+  (defun @dup:key (e / ed k)
+    (setq ed (entget e))
+    (setq k (list (cdr (assoc 0 ed)) (cdr (assoc 8 ed))))
+    (foreach pair ed
+      (if (member (car pair) '(10 11 40 50 51 1 2 41 42 43 70 90))
+        (setq k (append k (list (@dup:norm (cdr pair)))))))
+    (vl-princ-to-string k))
+  (setq ss ${selection} groups nil n 0)
+  (if ss
+    (progn
+      (setq i (sslength ss))
+      (repeat i
+        (setq i (1- i))
+        (setq e (ssname ss i))
+        (setq k (@dup:key e))
+        (setq h (cdr (assoc 5 (entget e))))
+        (if (setq g (assoc k groups))
+          (setq groups (subst (cons k (cons h (cdr g))) g groups))
+          (setq groups (cons (list k h) groups))))))
+  (setq out "" n 0)
+  (foreach g groups
+    (if (and (> (length g) 2) (< n ${maxGroups}))
+      (progn
+        (setq n (1+ n))
+        (setq out (strcat out "\\n" (car g) " => " (vl-princ-to-string (cdr g)))))))
+  (strcat "重复实体组: " (itoa n) "（最多显示 ${maxGroups} 组；tol=${tolerance}）" out)
+)`;
+
+  try {
+    const result = await cad.sendCommandWithResult(code);
+    const text = String(result ?? '').replace(/^"|"$/g, '');
+    return { content: [{ type: 'text', text: text || '检查完成，无输出' }] };
+  } catch (e) {
+    return { content: [{ type: 'text', text: `检查重复实体失败: ${e.message}` }], isError: true };
+  }
+}
+
 export function getToolRelationships() {
   return {
     selection: {
