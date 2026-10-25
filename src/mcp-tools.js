@@ -25,7 +25,8 @@ import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer
 import {
     dwgKbHealth, dwgKbStats, dwgKbSearch, dwgKbQuery, dwgKbListDrawings,
     dwgKbProjects, dwgKbLayers, dwgKbBlocks, dwgKbReviewQueue,
-    dwgKbDrawingHistory, dwgKbCrossRef,
+    dwgKbDrawingHistory, dwgKbCrossRef, dwgKbLayerDrawings, dwgKbVerifyDrawing,
+    dwgKbRenderDrawing, dwgKbJob, dwgKbProjectOverview, dwgKbCrossRefGraph,
 } from './handlers/dwg-kb-handlers.js';
 
 // 注册实例切换回调：通知已订阅客户端刷新资源
@@ -593,6 +594,13 @@ export const TOOL_HANDLERS = {
     dwg_kb_review_queue:     (a) => dwgKbReviewQueue(a),
     dwg_kb_drawing_history:  (a) => dwgKbDrawingHistory(a),
     dwg_kb_cross_ref:        (a) => dwgKbCrossRef(a),
+    // 图层反查 / 双轨校验 / 渲染 / 异步任务 / 项目概览 / 跨专业全景
+    dwg_kb_layer_drawings:   (a) => dwgKbLayerDrawings(a),
+    dwg_kb_verify_drawing:   (a) => dwgKbVerifyDrawing(a),
+    dwg_kb_render_drawing:   (a) => dwgKbRenderDrawing(a),
+    dwg_kb_job:              (a) => dwgKbJob(a),
+    dwg_kb_project_overview: (a) => dwgKbProjectOverview(a),
+    dwg_kb_cross_ref_graph:  (a) => dwgKbCrossRefGraph(a),
 
     // === Lint & Analysis ===
     analyze_lisp_code: async (a) => {

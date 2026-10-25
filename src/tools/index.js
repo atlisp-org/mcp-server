@@ -104,6 +104,9 @@ const READ_ONLY_TOOLS = new Set([
   'dwg_kb_health', 'dwg_kb_stats', 'dwg_kb_search', 'dwg_kb_query',
   'dwg_kb_list_drawings', 'dwg_kb_projects', 'dwg_kb_layers', 'dwg_kb_blocks',
   'dwg_kb_review_queue', 'dwg_kb_drawing_history', 'dwg_kb_cross_ref',
+  // 图层反查 / 异步任务 / 项目概览 / 跨专业全景（只读；verify+render 会落盘，故不算 readOnly）
+  'dwg_kb_layer_drawings', 'dwg_kb_job', 'dwg_kb_project_overview',
+  'dwg_kb_cross_ref_graph',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -133,6 +136,8 @@ const IDEMPOTENT_WRITE_TOOLS = new Set([
   'cad_pool_connect', 'cad_pool_disconnect', 'cad_pool_switch',
   'agent_set_context', 'agent_delete_context', 'agent_clear_context',
   'set_page_setup', 'create_page_setup',
+  // 历史图渲染：重复渲染同一张图产出同名文件，幂等
+  'dwg_kb_render_drawing',
 ]);
 
 const OPEN_WORLD_TOOLS = new Set([
@@ -320,9 +325,9 @@ import config from '../config.js';
 //
 // | 档位       | 工具数(约) | 包含 category                                                                  |
 // |------------|-----------|---------------------------------------------------------------------------------|
-// | minimal    | 104       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
-// | standard   | 239       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据、图纸知识库 |
-// | full       | 372       | 全部（默认，行为与档位引入前完全一致）                                            |
+// | minimal    | 105       | 系统、选择与属性、图层、绘图与3D、空间查询、包与函数、元工具                       |
+// | standard   | 246       | minimal + 修改、编辑、块、标注与填充、文字、打印、文件、视口、坐标系与布局、样式、扩展数据、图纸知识库 |
+// | full       | 379       | 全部（默认，行为与档位引入前完全一致）                                            |
 //
 // 只影响 tools/list 等发现接口（getVisibleTools）；被过滤的工具仍可通过 search_tools /
 // list_tools_by_category 检索并直接调用（工具调用校验走完整 toolsByName）。

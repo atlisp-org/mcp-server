@@ -174,6 +174,7 @@ export async function dwgKbListDrawings(args = {}) {
     query: {
       discipline: args.discipline,
       project: args.project,
+      layer: args.layer,
       limit: args.limit,
       offset: args.offset,
     },
@@ -247,4 +248,102 @@ export async function dwgKbCrossRef(args = {}) {
   const r = await request(`/drawings/${encodeURIComponent(id)}/cross_ref`, { timeout: 30000 });
   if (!r.ok) return failResult(r);
   return okResult({ elapsedMs: r.elapsedMs, drawing: r.data?.drawing, references: r.data?.references ?? [] });
+}
+
+// ---- 图层反查 / 双轨校验 / 渲染 / 异步任务 / 项目概览 / 跨专业全景 ----
+
+function drawingId(args = {}) {
+  return String(args.drawing || args.drawing_id || '').trim();
+}
+
+export async function dwgKbLayerDrawings(args = {}) {
+  const layer = String(args.layer || '').trim();
+  if (!layer) return failResult({ error: '缺少 layer 参数（图层名，默认子串匹配）', url: dwgKbUrl() });
+  const r = await request(`/layers/${encodeURIComponent(layer)}/drawings`, {
+    query: {
+      exact: args.exact === undefined ? undefined : (args.exact ? 'true' : 'false'),
+      discipline: args.discipline,
+      project: args.project,
+      limit: args.limit,
+      offset: args.offset,
+    },
+    timeout: args.timeout || 30000,
+  });
+  if (!r.ok) return failResult(r);
+  return okResult({
+    elapsedMs: r.elapsedMs,
+    layer: r.data?.layer ?? layer,
+    exact: r.data?.exact,
+    total: r.data?.total,
+    offset: r.data?.offset,
+    limit: r.data?.limit,
+    // 模糊命中的层名原样回传：长名图层常带 XData 前缀，调用方要能看见到底命中了什么
+    matchedLayers: (r.data?.matched_layers ?? []).slice(0, 50),
+    matchedLayerCount: r.data?.matched_layer_count,
+    items: r.data?.items ?? [],
+    evidence: r.data?.evidence ?? [],
+  });
+}
+
+export async function dwgKbVerifyDrawing(args = {}) {
+  const id = drawingId(args);
+  if (!id) return failResult({ error: '缺少 drawing 参数（图纸 id 或名称）', url: dwgKbUrl() });
+  // 渲染 + VLM + 逐条裁决；大图 30–60s，后台模式则由 job 轮询
+  const r = await request(`/drawings/${encodeURIComponent(id)}/verify`, {
+    method: 'POST',
+    query: {
+      question: args.question,
+      background: args.background ? 'true' : undefined,
+    },
+    timeout: args.timeout || 120000,
+  });
+  if (!r.ok) return failResult(r);
+  return okResult({ elapsedMs: r.elapsedMs, drawing: id, ...(r.data || {}) });
+}
+
+export async function dwgKbRenderDrawing(args = {}) {
+  const id = drawingId(args);
+  if (!id) return failResult({ error: '缺少 drawing 参数（图纸 id 或名称）', url: dwgKbUrl() });
+  const format = args.format === 'svg' ? 'svg' : 'png';
+  const r = await request(`/drawings/${encodeURIComponent(id)}/render`, {
+    method: 'POST',
+    query: { format, background: args.background ? 'true' : undefined },
+    timeout: args.timeout || 120000,
+  });
+  if (!r.ok) return failResult(r);
+  const data = r.data || {};
+  // 图片落盘，只回路径/URL：不要把二进制塞进模型上下文
+  const url = data.file ? `${dwgKbUrl()}${data.file}` : undefined;
+  return okResult({ elapsedMs: r.elapsedMs, drawing: id, background: !!args.background, ...data, ...(url ? { url } : {}) });
+}
+
+export async function dwgKbJob(args = {}) {
+  const id = String(args.job_id || args.jobId || '').trim();
+  if (!id) return failResult({ error: '缺少 job_id 参数', url: dwgKbUrl() });
+  const r = await request(`/jobs/${encodeURIComponent(id)}`, { timeout: 10000 });
+  if (!r.ok) return failResult(r);
+  return okResult({ elapsedMs: r.elapsedMs, ...(r.data || {}) });
+}
+
+export async function dwgKbProjectOverview(args = {}) {
+  const project = String(args.project || args.name || '').trim();
+  if (!project) return failResult({ error: '缺少 project 参数（项目名，支持模糊）', url: dwgKbUrl() });
+  const r = await request(`/projects/${encodeURIComponent(project)}`, { timeout: 30000 });
+  if (!r.ok) return failResult(r);
+  return okResult({
+    elapsedMs: r.elapsedMs,
+    project: r.data?.project,
+    totalDrawings: r.data?.total_drawings,
+    disciplines: r.data?.disciplines ?? {},
+    reviewRounds: r.data?.review_rounds ?? [],
+  });
+}
+
+export async function dwgKbCrossRefGraph(args = {}) {
+  const kind = ['bridges', 'matrix', 'shared_layers'].includes(args.kind) ? args.kind : 'shared_layers';
+  // shared_layer_analysis 要遍历全库图层，大库 10–30s
+  const r = await request(`/cross_ref/${kind}`, { timeout: args.timeout || 60000 });
+  if (!r.ok) return failResult(r);
+  const key = kind === 'bridges' ? 'bridges' : (kind === 'matrix' ? 'matrix' : 'layers');
+  return okResult({ elapsedMs: r.elapsedMs, kind, [key]: r.data?.[key] ?? [] });
 }

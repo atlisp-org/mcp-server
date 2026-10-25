@@ -56,12 +56,13 @@ export const tools = [
   {
     name: 'dwg_kb_list_drawings',
     description:
-      '按专业/项目分页列出图纸（含 id、名称、专业、项目、磁盘路径、图层）。当用户说"列出建筑专业的图/看看这个项目有哪些图"时调用。可用返回的 id 继续调 dwg_kb_drawing_history / dwg_kb_cross_ref。',
+      '按专业/项目/图层分页列出图纸（含 id、名称、专业、项目、磁盘路径、图层）。当用户说"列出建筑专业的图/看看这个项目有哪些图/哪些图用了 WALL 图层"时调用。传 layer 时等价于图层反查（返回值额外带 matched_layers）。可用返回的 id 继续调 dwg_kb_drawing_history / dwg_kb_cross_ref。',
     inputSchema: {
       type: 'object',
       properties: {
         discipline: { type: 'string', description: '专业过滤，如 "Architecture"、"Structure"、"HVAC"、"Electrical"；也可用中文，服务端按层名打分' },
         project: { type: 'string', description: '项目名过滤，如 "广诚商务广场"' },
+        layer: { type: 'string', description: '图层名过滤（子串，不区分大小写）；也可直接用 dwg_kb_layer_drawings' },
         limit: { type: 'integer', description: LIMIT_DESC },
         offset: { type: 'integer', description: OFFSET_DESC },
       },
@@ -137,6 +138,90 @@ export const tools = [
         drawing: { type: 'string', description: '图纸 id 或名称（支持模糊）' },
       },
       required: ['drawing'],
+    },
+  },
+  {
+    name: 'dwg_kb_layer_drawings',
+    description:
+      '反查「哪些图纸用过某个图层」——图层名到图纸（dwg_kb_layers 是反方向：图层清单+使用次数）。当用户说"哪些图还有 A-OLD 图层/这个图层规范覆盖了哪些图/哪张图用了防火门图层"时调用。默认按子串匹配（不区分大小写），返回 matched_layers 说明实际命中的层名，不做猜测。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: { type: 'string', description: '图层名，如 "A-WALL"、"防火"（子串匹配；长名图层常带 XData 前缀，子串才查得到）' },
+        exact: { type: 'boolean', description: 'true = 整名匹配（不区分大小写）；默认 false 子串匹配' },
+        discipline: { type: 'string', description: '专业过滤，如 "Architecture"' },
+        project: { type: 'string', description: '项目名过滤（模糊）' },
+        limit: { type: 'integer', description: LIMIT_DESC },
+        offset: { type: 'integer', description: OFFSET_DESC },
+      },
+      required: ['layer'],
+    },
+  },
+  {
+    name: 'dwg_kb_verify_drawing',
+    description:
+      '对单张历史图纸做双轨校验：VLM 读图声称的房名/图名/专业/图号逐条与 ezdxf 硬数据裁决，冲突标 corrected 并带 evidence。当用户说"这张图审一下/核对图名和图号/这张图有没有问题"时调用。报告会写入知识库并挂到 RDF（cad:has_verification），属于写操作但不改图。大图可能 30–60 秒；超过客户端超时用 background=true 再轮询 dwg_kb_job。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        drawing: { type: 'string', description: '图纸 id 或名称（支持模糊）' },
+        question: { type: 'string', description: '可选：只针对某个问题校验，如 "图名与图号是否一致"' },
+        background: { type: 'boolean', description: 'true = 异步任务，立即返回 job_id，用 dwg_kb_job 查询进度' },
+      },
+      required: ['drawing'],
+    },
+  },
+  {
+    name: 'dwg_kb_render_drawing',
+    description:
+      '把历史图纸渲染成 PNG/SVG 并返回落盘路径与 URL（图片不进上下文）。当用户说"把这张历史图调出来看看/看看上一版长什么样"时调用；拿到 path 后可交给多模态分析，或配合 dwg_kb_drawing_history 做版本视觉对比。大图用 background=true。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        drawing: { type: 'string', description: '图纸 id 或名称（支持模糊）' },
+        format: { type: 'string', enum: ['png', 'svg'], description: '输出格式，默认 png' },
+        background: { type: 'boolean', description: 'true = 异步任务，立即返回 job_id，用 dwg_kb_job 查询进度' },
+      },
+      required: ['drawing'],
+    },
+  },
+  {
+    name: 'dwg_kb_job',
+    description:
+      '查询 dwg_kb_verify_drawing / dwg_kb_render_drawing 用 background=true 启动的异步任务状态（queued/running/done/error + 结果）。当上一步返回 status=started 时调用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: '启动异步任务时返回的 job_id' },
+      },
+      required: ['job_id'],
+    },
+  },
+  {
+    name: 'dwg_kb_project_overview',
+    description:
+      '项目级概览：图纸总数、专业分布、审查轮次（含轮次日期与每轮图纸数）。当用户说"这个项目有多少张图/审了几轮/项目整体情况"时调用。项目名支持模糊匹配。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: '项目名（模糊），如 "广诚商务广场"' },
+      },
+      required: ['project'],
+    },
+  },
+  {
+    name: 'dwg_kb_cross_ref_graph',
+    description:
+      '跨专业关联全景（不是单张图的互引，那是 dwg_kb_cross_ref）：bridges=桥接图清单；matrix=专业协调矩阵（两两引用次数）；shared_layers=被多个专业共用的图层（协调风险点）。当用户说"建筑和暖通哪些图有关联/哪些图层跨专业共用"时调用。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['shared_layers', 'bridges', 'matrix'],
+          description: 'shared_layers（默认）| bridges | matrix',
+        },
+      },
     },
   },
 ];

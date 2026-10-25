@@ -29,7 +29,7 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
-- **工具定义**：`src/tools/` 下 47 个文件定义工具 Schema（共 372 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
+- **工具定义**：`src/tools/` 下 47 个文件定义工具 Schema（共 379 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
 - **协议版本**：`src/constants.js` 的 `PROTOCOL_VERSION` 取自 SDK 的 `LATEST_PROTOCOL_VERSION`（不再写死，当前 2025-11-25）；Server 握手按 SDK `SUPPORTED_PROTOCOL_VERSIONS` 协商，旧客户端仍可回退 2024-11-05（`mcp-scanner.js` 用该常量做探测）
 - **结构化输出**：查询类工具在定义中声明 `outputSchema`，对应 handler 同时返回 `content`（文本，向后兼容）与 `structuredContent`（JSON）；`src/tool-executor.js` 统一透传 structuredContent，并在缺少 content 时回填 JSON 文本块（解析辅助见 `src/handlers/structured-output.js`）
 - **远程 Peer 转发**：Linux 服务器可将 CAD 工具调用转发到 Windows 主机（MCP-to-MCP）。`src/peer-discovery.js` UDP 广播发现（端口 9811）、`src/peer-manager.js` 管理 peer 生命周期（健康检查/静态 peer）、`src/peer-proxy.js` HTTP 转发（JSON + SSE）、`src/peer-forward.js` 转发白名单（`peer_`/`skill_`/`webhook_`/`audit_` 等本地管理工具永不转发）
@@ -41,7 +41,7 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 
 ## 图纸知识库（atlisp-dwg-kb）集成
 
-`dwg_kb_*`（11 个只读工具）把**历史图纸库**接进 MCP：CAD 工具管「当前打开的图」，这组管「跨文件找图/统计/版本演进/图号互引/复核队列」。
+`dwg_kb_*`（17 个工具，其中 15 个只读）把**历史图纸库**接进 MCP：CAD 工具管「当前打开的图」，这组管「跨文件找图/统计/版本演进/图号互引/复核队列/图层反查/单图双轨校验」。
 
 - **实现**：`src/handlers/dwg-kb-handlers.js`（HTTP 客户端 + handler，直连 Node，不经 LISP）→ `atlisp-dwg-kb serve`（默认 `127.0.0.1:8322`）
 - **配置**：`DWG_KB_URL` / `DWG_KB_API_KEY` / `DWG_KB_TIMEOUT`（也可写进 `~/.atlisp/atlisp.config.json` 的 `dwgKb`）；key 必须与知识库侧 `DWG_KB_API_KEY` 一致，否则 `/drawings`、`/search` 等 401

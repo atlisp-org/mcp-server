@@ -2,6 +2,23 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [Unreleased]
+
+### 图纸知识库：新增 6 个审查向工具
+
+`dwg_kb_*` 从 11 个扩到 17 个，补上「图层反查图纸」和「单图双轨校验」两条原来
+只能靠 SPARQL 手写的路：
+
+- `dwg_kb_layer_drawings` — 图层 → 图纸反查（子串匹配，回传实际命中的 `matchedLayers`）
+- `dwg_kb_verify_drawing` — 单张图双轨校验（VLM 声称 vs ezdxf 硬数据，冲突标 `corrected`）
+- `dwg_kb_render_drawing` — 历史图渲染 PNG/SVG，回传落盘路径 + URL（图片不进上下文）
+- `dwg_kb_job` — 查询 `verify`/`render` 的 `background=true` 异步任务
+- `dwg_kb_project_overview` — 项目级图纸数/专业分布/审查轮次
+- `dwg_kb_cross_ref_graph` — 跨专业全景（bridges / matrix / shared_layers）
+
+`verify` / `render` 会落盘（校验报告还会挂到 RDF），因此不标 `readOnlyHint`；
+`render` 记为幂等写。其余四个为只读。
+
 ## [1.12.11] - 2026-10-25
 
 ### 更新内容
