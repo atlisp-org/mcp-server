@@ -2,7 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
-## [Unreleased]
+## [1.12.10] - 2026-10-25
+
+### 更新内容
+
+- feat(resources): 重写工具/资源描述，资源扩展到 24 个 (f8ad678)
+- fix(package): install_package 走包管理器 API 并等待安装完成 (7d297f7)
 
 ### 修复：install_package 装不上包
 
