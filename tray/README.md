@@ -401,6 +401,20 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
    也可以直接调脚本：`powershell -File tray\build.ps1 -SignThumbprint <指纹> -TimestampUrl http://timestamp.digicert.com`
    （`build.ps1` 会找 Windows SDK 的 `signtool.exe`，签名 + SHA256 时间戳；证书没插好会直接报错退出）。
    Linux 交叉编译环境下没有 `signtool`，发布前在 Windows 上补签，或把签名放到 CI 的 Windows runner。
+
+   **CI 签名**（`.github/workflows/sign-release.yml`，凭据缺失时自动跳过）：两条渠道任选一条，
+   都签 `AtlispTray.exe` + `AtlispUpdater.exe`，签完用 `signtool verify /pa` 校验并上传 artifact。
+
+   | 渠道 | 适用 | 需要的 secrets |
+   |---|---|---|
+   | **Azure Trusted Signing** | 付费（约 $9.99/月起），CI 最省事，私钥不在本地 | `AZURE_CLIENT_ID` `AZURE_TENANT_ID` `AZURE_SUBSCRIPTION_ID` `AZURE_CLIENT_SECRET` `AZURE_TS_ENDPOINT` `AZURE_TS_ACCOUNT` `AZURE_TS_CERT_PROFILE` |
+   | **SignPath Foundation** | 开源项目免费（需公开仓库 + OSI 协议，本项目 ISC 符合） | `SIGNPATH_API_TOKEN` `SIGNPATH_ORGANIZATION_ID` `SIGNPATH_PROJECT_SLUG` `SIGNPATH_SIGNING_POLICY_SLUG` `SIGNPATH_ARTIFACT_CONFIG_SLUG` |
+
+   > **坑**：签名后的 exe 必须是最终发布的那一份。CI 的 publish job 因此用
+   > `npm publish --ignore-scripts` 发布——否则 `prepack` / `prepublishOnly` 会重新编译，
+   > 把刚签好的 exe 覆盖成未签名版本。手动发布时同理：
+   > 先 `npm run build`（只构建 JS）→ 放入已签名 exe → `node scripts/check-build.mjs` →
+   > `npm publish --ignore-scripts`。
 2. **提交误报**：<https://www.microsoft.com/en-us/wdsi/filesubmission>（按「软件开发者」提交，公司名与签名主体一致）。
    国内再报 360 / 火绒 / 腾讯的误报通道。**先改行为再提报**，否则换 hash 后要重提。
 3. 不要把 exe 加壳/混淆/UPX；发布时附 `SHA256SUMS`。

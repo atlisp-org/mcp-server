@@ -153,6 +153,10 @@ npm ci → npm run build → npm test     # Node 20/22/24
 npm run lint                          # eslint（强制，0 问题才算通过）
 npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git tag
 npm publish                           # 发布到 npm（prepublishOnly 会重新构建 + 校验 dist 版本）
+
+> 签名发布：`.github/workflows/sign-release.yml` 在 Windows runner 上构建并用
+> Azure Trusted Signing / SignPath 给两个 exe 签名（凭据缺失时跳过）；publish job 用
+> `npm publish --ignore-scripts`，避免重编译覆盖已签名产物。手动签名见 `tray/README.md`。
 ```
 
 ## Lint 代码分析
