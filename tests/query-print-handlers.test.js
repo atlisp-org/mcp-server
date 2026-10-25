@@ -25,6 +25,14 @@ describe('query-print-handlers', () => {
       mockSendCommandWithResult.mockResolvedValue('"EXPORTED"');
       const result = await plotToPdf('C:/out.pdf', 'Layout1', { paperSize: 'A3', plotScale: '1:1', orientation: 'Landscape' });
       expect(result.content[0].text).toContain('已打印');
+
+      const lisp = mockSendCommandWithResult.mock.calls[0][0];
+      /* PlotToFile 必须在 AcadPlot 上，且不能把纸张名当第三个参数。 */
+      expect(lisp).toContain('(vla-get-plot doc)');
+      expect(lisp).toContain('vla-put-ConfigName');
+      expect(lisp).toContain('vla-put-CanonicalMediaName');
+      expect(lisp).toContain('(vla-PlotToFile plot');
+      expect(lisp).not.toContain('(vla-plottofile doc');
     });
 
     it('falls back to default paperSize', async () => {
@@ -41,6 +49,11 @@ describe('query-print-handlers', () => {
       mockSendCommandWithResult.mockResolvedValue('PRINTED');
       const result = await plotToPrinter('PDF Printer', 'Layout1');
       expect(result.content[0].text).toBe('已发送到打印机');
+
+      const lisp = mockSendCommandWithResult.mock.calls[0][0];
+      expect(lisp).toContain('vla-put-ConfigName');
+      expect(lisp).toContain('vla-PlotToDevice');
+      expect(lisp).not.toContain('(vla-plottofile doc');
     });
   });
 

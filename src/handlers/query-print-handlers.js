@@ -6,29 +6,85 @@ import path from 'path';
 import os from 'os';
 
 function toSafePoint(pt) {
-  const parts = (Array.isArray(pt) ? pt : String(pt).split(/[,\s]+/)).map(Number);
-  return parts.filter(n => !isNaN(n)).join(' ');
+    const parts = (Array.isArray(pt) ? pt : String(pt).split(/[,\s]+/)).map(Number);
+    return parts.filter(n => !isNaN(n)).join(' ');
+}
+
+/* 常见图幅 → DWG To PDF.pc3 的标准介质名。传完整 ISO 名时原样返回。 */
+const PDF_MEDIA_NAMES = {
+    A0: 'ISO_A0_(1189.00_x_841.00_MM)',
+    A1: 'ISO_A1_(841.00_x_594.00_MM)',
+    A2: 'ISO_A2_(594.00_x_420.00_MM)',
+    A3: 'ISO_A3_(420.00_x_297.00_MM)',
+    A4: 'ISO_A4_(210.00_x_297.00_MM)',
+};
+
+function pdfMediaName(paperSize) {
+    const raw = String(paperSize || 'A3').trim();
+    const key = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return PDF_MEDIA_NAMES[key] || raw;
+}
+
+/**
+ * 生成「按布局导出 PDF」的 AutoLISP。
+ *
+ * 关键点（2026-10-24 记忆里的打印失败根因）：
+ * - PlotToFile 是 AcadPlot 对象的方法，不是 AcadDocument；
+ * - 它只接收文件路径，不接受纸张名；
+ * - 纸张必须用 CanonicalMediaName 设置，不能靠第三个参数。
+ */
+function buildPlotToPdfLisp(outputPath, layout, style = {}) {
+    const printer = style.printerName || 'DWG To PDF.pc3';
+    const media = pdfMediaName(style.paperSize || 'A3');
+    const lineweights = style.plotLineweights === true ? ':vlax-true' : ':vlax-false';
+    const styleSheet = style.styleSheet
+        ? `(vla-put-StyleSheet plot "${escapeLispString(style.styleSheet)}")\n      `
+        : '';
+
+    return `(progn
+  (vl-load-com)
+  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
+  (setq plot (vla-get-plot doc))
+  (setq lay nil)
+  (vlax-for l (vla-get-layouts doc)
+    (if (= (strcase (vla-get-name l)) (strcase "${escapeLispString(layout)}"))
+      (setq lay l)))
+  (if (not lay)
+    "LAYOUT_NOT_FOUND"
+    (progn
+      (vla-put-active lay)
+      (vla-put-ConfigName plot "${escapeLispString(printer)}")
+      (vla-put-CanonicalMediaName plot "${escapeLispString(media)}")
+      (vla-put-PlotWithLineweights plot ${lineweights})
+      ${styleSheet}(vla-PlotToFile plot "${escapeLispString(outputPath)}")
+      "EXPORTED")))
+`;
+}
+
+function buildPlotToPrinterLisp(printerName, layout) {
+    return `(progn
+  (vl-load-com)
+  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
+  (setq plot (vla-get-plot doc))
+  (setq lay nil)
+  (vlax-for l (vla-get-layouts doc)
+    (if (= (strcase (vla-get-name l)) (strcase "${escapeLispString(layout)}"))
+      (setq lay l)))
+  (if (not lay)
+    "LAYOUT_NOT_FOUND"
+    (progn
+      (vla-put-active lay)
+      (vla-put-ConfigName plot "${escapeLispString(printerName)}")
+      (vla-PlotToDevice plot)
+      "PRINTED")))
+`;
 }
 
 export async function plotToPdf(outputPath, layout = 'Model', style = {}) {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
 
-    const paperSize = style.paperSize || 'A4';
-    const code = `(progn
-        (vl-load-com)
-        (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-        (vlax-for layout (vla-get-layouts doc)
-            (if (or (eq (vla-get-name layout) "${escapeLispString(layout)}") (eq "${escapeLispString(layout)}" "Model"))
-                (progn
-                    (vla-put-active layout)
-                    (vla-plottofile doc "${escapeLispString(outputPath)}" "${escapeLispString(paperSize)}")
-                    (setq result "EXPORTED")
-                )
-            )
-        )
-        (if result result "FAILED")
-    )`;
+    const code = buildPlotToPdfLisp(outputPath, layout, style);
     try {
         const result = await cad.sendCommandWithResult(code);
         if (result === 'EXPORTED' || result === '"EXPORTED"') {
@@ -44,23 +100,13 @@ export async function plotToPrinter(printerName, layout = 'Model') {
     if (!cad.connected) { await cad.connect(); }
     if (!cad.connected) return { content: [{ type: 'text', text: '未连接 CAD' }], isError: true };
 
-    const code = `(progn
-        (vl-load-com)
-        (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-        (vlax-for layout (vla-get-layouts doc)
-            (if (or (eq (vla-get-name layout) "${escapeLispString(layout)}") (eq "${escapeLispString(layout)}" "Model"))
-                (progn
-                    (vla-put-active layout)
-                    (vla-plottofile doc "${escapeLispString(printerName)}")
-                    (setq result "PRINTED")
-                )
-            )
-        )
-        (if result result "FAILED")
-    )`;
+    const code = buildPlotToPrinterLisp(printerName, layout);
     try {
         const result = await cad.sendCommandWithResult(code);
-        return { content: [{ type: 'text', text: result === 'PRINTED' ? '已发送到打印机' : '打印失败' }] };
+        if (result === 'PRINTED' || result === '"PRINTED"') {
+            return { content: [{ type: 'text', text: '已发送到打印机' }] };
+        }
+        return { content: [{ type: 'text', text: `打印失败: ${result}` }], isError: true };
     } catch (e) {
         return { content: [{ type: 'text', text: `错误: ${e.message}` }], isError: true };
     }
@@ -287,22 +333,10 @@ export async function publishLayouts(args) {
         ? `${outputDir}${outputPath}.${format.toLowerCase()}`
         : `${outputDir}/${outputPath}.${format.toLowerCase()}`;
 
-      const result = await cad.sendCommandWithResult(`(progn
-  (vl-load-com)
-  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-  (setq found nil)
-  (vlax-for l (vla-get-layouts doc)
-    (if (= (vla-get-name l) "${escapeLispString(layout)}")
-      (progn
-        (vla-put-active l)
-        (vla-plottofile doc "${escapeLispString(fullPath)}" "A4")
-        (setq found "ok")
-      )
-    )
-  )
-  (if found (princ found) (princ "not found"))
-)`);
-      results.push({ layout, outputPath: fullPath, success: result === 'ok' });
+      const result = await cad.sendCommandWithResult(
+        buildPlotToPdfLisp(fullPath, layout, { paperSize: args.paperSize || 'A4' }),
+      );
+      results.push({ layout, outputPath: fullPath, success: result === 'EXPORTED' });
     } catch (e) {
       results.push({ layout, outputPath: '', success: false, error: e.message });
     }
@@ -349,24 +383,16 @@ export async function batchPlotWizard(args) {
         continue;
       }
 
-      const code = `(progn
-  (vl-load-com)
-  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-  (setq found nil)
-  (vlax-for l (vla-get-layouts doc)
-    (if (= (vla-get-name l) "${escapeLispString(layout)}")
-      (progn
-        (vla-put-active l)
-        ${pageSetup ? `(vla-put-activelayout doc "${escapeLispString(pageSetup)}")` : ''}
-        (vla-plottofile doc "${escapeLispString(fullPath)}" "A4")
-        (setq found "ok")
-      )
-    )
-  )
-  (if found found "not found")
-)`;
+      let code = buildPlotToPdfLisp(fullPath, layout, { paperSize: 'A4' });
+      if (pageSetup) {
+        /* 保留原有 pageSetup 语义：在真正出图前切到命名页面设置。 */
+        code = code.replace(
+          '(vla-PlotToFile',
+          `(vla-put-activelayout doc "${escapeLispString(pageSetup)}")\n      (vla-PlotToFile`,
+        );
+      }
       const result = await cad.sendCommandWithResult(code);
-      results.push({ layout, outputPath: fullPath, status: result === 'ok' ? 'EXPORTED' : 'FAILED', raw: result });
+      results.push({ layout, outputPath: fullPath, status: result === 'EXPORTED' ? 'EXPORTED' : 'FAILED', raw: result });
     } catch (e) {
       results.push({ layout, outputPath: '', status: 'ERROR', error: e.message });
     }
@@ -460,9 +486,10 @@ export async function plotDeviceManagement(args) {
   (setq doc (vla-get-activedocument (vlax-get-acad-object)))
   ${name ? `(vla-put-activeplotconfig doc "${escapeLispString(name)}")` : ''}
   (setq cfg (vla-get-activeplotconfig doc))
+  (setq plot (vla-get-plot doc))
   (list
     "name" cfg
-    "canPlot" (if (vl-catch-all-error-p (vl-catch-all-apply 'vla-plottofile (list doc (strcat (vl-filename-mktemp) ".pdf") "A4"))) "FAIL" "OK")
+    "canPlot" (if (vl-catch-all-error-p (vl-catch-all-apply 'vla-PlotToFile (list plot (strcat (vl-filename-mktemp) ".pdf")))) "FAIL" "OK")
   )
 )`;
       const result = await cad.sendCommandWithResult(code);
@@ -572,23 +599,10 @@ export async function plotFromFileList(args) {
         }
       }
 
-      const code = `(progn
-  (vl-load-com)
-  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
-  (setq found nil)
-  (vlax-for l (vla-get-layouts doc)
-    (if (= (vla-get-name l) "${escapeLispString(layout)}")
-      (progn
-        (vla-put-active l)
-        (vla-plottofile doc "${escapeLispString(outputPath)}" "A4")
-        (setq found "ok")
-      )
-    )
-  )
-  (if found found "not found")
-)`;
-      const result = await cad.sendCommandWithResult(code);
-      results.push({ dwgPath, layout, outputPath, status: result === 'ok' ? 'EXPORTED' : 'FAILED', raw: result });
+      const result = await cad.sendCommandWithResult(
+        buildPlotToPdfLisp(outputPath, layout, { paperSize: args.paperSize || 'A4' }),
+      );
+      results.push({ dwgPath, layout, outputPath, status: result === 'EXPORTED' ? 'EXPORTED' : 'FAILED', raw: result });
     } catch (e) {
       results.push({ dwgPath: item.dwgPath || '', layout: item.layout || 'Model', outputPath: item.outputPath || '', status: 'ERROR', error: e.message });
     }
