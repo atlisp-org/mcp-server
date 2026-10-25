@@ -2,6 +2,14 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.9] - 2026-10-25
+
+### 更新内容
+
+- feat(analysis): 新增 cad_duplicates 只读重复实体检查 (efb1106)
+- fix(print): 修正 PlotToFile/PlotToDevice 的 ActiveX 调用 (0d69982)
+- ci: 新增签名 workflow（Azure Trusted Signing / SignPath），凭据缺失时跳过 (b965690)
+
 ## [1.12.8] - 2026-10-24
 
 ### 更新内容
