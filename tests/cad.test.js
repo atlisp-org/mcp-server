@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { spawn } from 'node:child_process';
+import os from 'node:os';
 
 process.env.MESSAGE_TIMEOUT = '200';
 process.env.CAD_COMMAND_TIMEOUT = '80';
@@ -140,6 +142,19 @@ describe('CadConnection', () => {
       const writeCall = JSON.parse(mockWorker.stdin.write.mock.calls[0][0]);
       expect(writeCall.type).toBe('connect');
       expect(writeCall.forceLaunch).toBeUndefined();
+    });
+
+    it('以临时目录为工作目录拉起 worker（避免 Windows 锁住 npm 包目录）', async () => {
+      const getHandler = captureHandler();
+      const connectPromise = cad.connect();
+      const handler = getHandler();
+      expect(handler).toBeTruthy();
+
+      const options = spawn.mock.calls.at(-1)[2];
+      expect(options.cwd).toBe(os.tmpdir());
+
+      handler(mockResponse({ success: true, platform: 'AutoCAD', version: '24.0' }));
+      await connectPromise;
     });
   });
 

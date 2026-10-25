@@ -337,6 +337,14 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
   - 旧版本默认是「每 1 小时自动静默升级」；升级到本版后 `tray.json` 会一次性迁移为 `AutoUpgrade=false`、`AutoUpgradeHours=24`（`ConfigVersion` 记到 `1`），需要自动升级请手动重新开启
 - 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）；自动升级不会弹 UAC，失败留给下一次或手动升级
 - 升级前如果服务正在运行，升级完成后托盘会自动重启服务
+- **包目录被占用（EBUSY）时自动释放**：npm 替换全局包的做法是把整个
+  `node_modules\@atlisp\mcp` 改名成 `.mcp-XXXXXX`，只要还有进程「在里面」Windows 就拒绝
+  （进程的当前目录在包目录里、映射了 `edge-js` 原生 DLL、或运行包内的 exe）。托盘在 npm
+  报 EBUSY 后会依次：停掉自己拉起的服务 → 停 Windows 服务 → 把自己的 CWD 移出包目录 →
+  用「改一次目录名再改回来」探测是否真的空闲 → 找出命令行/可执行文件路径指向该目录的进程
+  （MCP 客户端拉起的 server、残留 `cad-worker`、包内旧托盘）→ 手动升级时先确认再结束它们 →
+  确认空闲后重试 npm（最多 2 次）。自动升级遇到第三方进程只记日志、不弹窗、下轮再试。
+  服务现在也不再以包目录为工作目录启动（脚本路径是绝对的），从根上少一个占用源
 - 手动「检查更新」只读取 `npm view @atlisp/mcp version`，不会修改任何文件
 
 ### 托盘自动更新
@@ -431,7 +439,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 安装失败：`'node' 不是内部或外部命令` | 托盘进程继承的 `PATH` 不含 Node.js 目录（常见于「用托盘装完 Node.js 后没重启 Explorer/注销」）。新版托盘会在执行 npm 前自动把 Node.js 目录补进 `PATH`；若仍失败请重启托盘或注销后重新登录，也可在 `tray.json` 显式配置 `NodePath` |
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
-| 升级报 `EBUSY: ... rename ... node_modules\@atlisp\mcp` | npm 升级要把**整个包目录**改名，任何在用该目录的进程都会挡住它：MCP 客户端（Claude Desktop / VSCode / opencode 等）拉起的服务、从 npm 包目录直接跑的旧托盘、残留的 `cad-worker`。托盘自己启动的服务会在失败后自动停掉并重试一次；仍失败说明有托盘管不到的进程，关掉它们后重试，或关掉托盘后手动 `npm install -g @atlisp/mcp@latest` |
+| 升级报 `EBUSY: ... rename ... node_modules\@atlisp\mcp` | npm 升级要把**整个包目录**改名，任何在用该目录的进程都会挡住它：MCP 客户端（Claude Desktop / VSCode / opencode 等）拉起的服务、从 npm 包目录直接跑的旧托盘、残留的 `cad-worker`。托盘会先停自己拉起的服务并探测目录是否真的空闲；仍被占用时会列出占用进程，手动升级会问一次「是否结束它们」，同意后结束并自动重试 npm。若仍失败（例如自动升级不想杀进程、或占用者是杀软扫描），关掉占用程序后重试，或关掉托盘后手动 `npm install -g @atlisp/mcp@latest`。托盘日志里搜 `locked:` 能看到它探测到/结束了哪些进程 |
 | 升级后托盘还是旧版本 | 在托盘日志 `%APPDATA%\atlisp-mcp\logs\tray.log` 里搜 `tray-selfupdate`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
 | 提示「Node.js 安装包未通过校验」/「Python 安装包未通过校验」 | Authenticode 校验失败（下载被截断、镜像返回了错误页面、或证书链在本机不受信任）。托盘会删除该文件并拒绝执行；改用 `winget install OpenJS.NodeJS.LTS` / `winget install Python.Python.3.12`，或手动从官网下载后自行安装 |

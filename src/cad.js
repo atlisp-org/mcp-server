@@ -1,5 +1,6 @@
 // @ts-check
 import { spawn } from 'child_process';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
@@ -448,6 +449,10 @@ class CadConnection {
   _spawnWorker(type) {
     const w = spawn('node', [workerPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // CWD 用临时目录：Windows 把「进程当前目录」算作占用，worker 若继承服务端的
+      // 包目录（老托盘会把 CWD 设成 node_modules\@atlisp\mcp），npm 升级时改不了
+      // 包目录名（EBUSY）。worker 只用绝对路径，不依赖 CWD。
+      cwd: os.tmpdir(),
       env: {
         ...process.env,
         BUSY_RETRIES: String(config.busyRetries ?? 5),

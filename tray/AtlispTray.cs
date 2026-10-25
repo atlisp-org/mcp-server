@@ -1818,6 +1818,291 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>占用 npm 包目录的一个进程。</summary>
+    internal sealed class LockHolder
+    {
+        public int Pid;
+        public string Name;
+        public string Path;
+
+        public string Describe()
+        {
+            string name = string.IsNullOrEmpty(Name) ? "进程" : Name;
+            return name + "（PID " + Pid.ToString(CultureInfo.InvariantCulture) + "）";
+        }
+    }
+
+    /// <summary>
+    /// npm 包目录占用探测（Windows 特有）。
+    ///
+    /// npm 升级全局包不是原地覆盖：它先把 `node_modules\@atlisp\mcp` 改名成
+    /// `.mcp-XXXXXX`，解压新版本后再删掉旧的。Windows 不允许给「还有进程在里面」的
+    /// 目录改名，于是报：
+    ///     EBUSY: resource busy or locked, rename '...\@atlisp\mcp' -> '...\.mcp-XXXXXX'
+    /// 常见占用者：
+    ///   · 任何把该目录当工作目录的进程（托盘的旧版本直接把服务 CWD 设成包目录）；
+    ///   · 任何映射了目录内原生模块的进程（edge-js 的 .node/.dll，连过 CAD 就常驻）；
+    ///   · 正在运行的包内 AtlispTray.exe / AtlispUpdater.exe。
+    /// npm 自己不会重试，所以托盘必须先把占用清干净再让它跑。
+    ///
+    /// 这个类只做两件事：探测目录能不能改名（和 npm 那一步等价），以及找出/结束占用者。
+    /// </summary>
+    internal static class PackageDirLock
+    {
+        private const string ProbeSuffix = ".atlisp-lockprobe";
+
+        /// <summary>
+        /// 目录是否仍被占用。做法就是把目录改名再改回来——和 npm 失败的那一步完全一致，
+        /// 所以结论可靠；改不回来时（理论上不会）只记日志，不再继续操作。
+        /// </summary>
+        public static bool IsBusy(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return false;
+            string probe = dir.TrimEnd('\\') + ProbeSuffix;
+            // 上次探测改名后进程恰好被杀：先把目录复原，再判断
+            RecoverLeftover(dir, probe);
+            if (!Directory.Exists(dir)) return false;
+            try
+            {
+                Directory.Move(dir, probe);
+            }
+            catch
+            {
+                return true;
+            }
+
+            try
+            {
+                Directory.Move(probe, dir);
+            }
+            catch (Exception ex)
+            {
+                // 极端情况：改回去失败。把路径写进日志，便于用户手工改回。
+                AppLog.Write("locked: 目录改回失败，请手工把 " + probe + " 改名回 " + dir +
+                    "（" + ex.Message + "）");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 复原上一次探测留下的 `mcp.atlisp-lockprobe`：只有「探测中被强制结束」
+        /// 这种极端情况才会出现，发现了就把目录改回来，避免下次启动找不到包。
+        /// </summary>
+        private static void RecoverLeftover(string dir, string probe)
+        {
+            try
+            {
+                if (!Directory.Exists(probe) || Directory.Exists(dir)) return;
+                Directory.Move(probe, dir);
+                AppLog.Write("locked: 发现上次探测残留的 " + probe + "，已改回 " + dir);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("locked: 复原探测目录失败（" + probe + "）: " + ex.Message);
+            }
+        }
+
+        /// <summary>轮询等待目录释放（句柄/文件锁通常几百毫秒内消失）。</summary>
+        public static bool WaitFree(string dir, int timeoutMs)
+        {
+            int waited = 0;
+            while (true)
+            {
+                if (!IsBusy(dir)) return true;
+                if (waited >= timeoutMs)
+                {
+                    AppLog.Write("locked: 等待 " + timeoutMs + "ms 后目录仍不可改名 " + dir);
+                    return false;
+                }
+                Thread.Sleep(200);
+                waited += 200;
+            }
+        }
+
+        /// <summary>
+        /// 找出所有「可执行文件在包目录内，或命令行里带包目录」的进程（排除托盘自身）。
+        /// 返回 null 表示枚举手段都不可用（不能据此认定目录是空闲的）。
+        /// </summary>
+        public static List<LockHolder> Find(string packageDir)
+        {
+            if (string.IsNullOrEmpty(packageDir)) return new List<LockHolder>();
+            List<LockHolder> holders = FindByPowerShell(packageDir);
+            if (holders == null) holders = FindByWmic(packageDir);
+            if (holders == null) return null;
+
+            int self = Process.GetCurrentProcess().Id;
+            List<LockHolder> result = new List<LockHolder>();
+            for (int i = 0; i < holders.Count; i++)
+            {
+                if (holders[i].Pid != self) result.Add(holders[i]);
+            }
+            return result;
+        }
+
+        /// <summary>结束占用进程（整棵进程树：node 会带 cad-worker 子进程）。返回成功数。</summary>
+        public static int Kill(List<LockHolder> holders)
+        {
+            if (holders == null) return 0;
+            int killed = 0;
+            for (int i = 0; i < holders.Count; i++)
+            {
+                int exitCode;
+                ProcessRunner.Run("taskkill.exe",
+                    "/PID " + holders[i].Pid.ToString(CultureInfo.InvariantCulture) + " /T /F",
+                    8000, out exitCode);
+                if (exitCode == 0) killed++;
+                AppLog.Write("locked: 结束占用进程 " + holders[i].Describe() +
+                    " path=" + holders[i].Path + " exitCode=" + exitCode);
+            }
+            return killed;
+        }
+
+        /// <summary>多行描述，用于日志与对话框。</summary>
+        public static string Describe(List<LockHolder> holders)
+        {
+            if (holders == null || holders.Count == 0) return "";
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < holders.Count; i++)
+            {
+                builder.Append("  · ");
+                builder.Append(holders[i].Describe());
+                if (!string.IsNullOrEmpty(holders[i].Path))
+                {
+                    builder.Append("  ");
+                    builder.Append(holders[i].Path);
+                }
+                builder.AppendLine();
+            }
+            return builder.ToString();
+        }
+
+        /// <summary>一行描述，写日志用。</summary>
+        public static string DescribeOneLine(List<LockHolder> holders)
+        {
+            if (holders == null || holders.Count == 0) return "（未发现可疑进程）";
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < holders.Count; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.Append(holders[i].Describe());
+            }
+            return builder.ToString();
+        }
+
+        /// <summary>
+        /// 用 PowerShell 的 Win32_Process 枚举。脚本走 -EncodedCommand（base64），
+        /// 避免路径里的引号/反斜杠在 cmd 命令行上被二次解释；包目录通过环境变量传入。
+        /// </summary>
+        private static List<LockHolder> FindByPowerShell(string packageDir)
+        {
+            string script =
+                "$ErrorActionPreference = 'SilentlyContinue'\n" +
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
+                "$d = $env:ATLISP_LOCK_DIR\n" +
+                "if ([string]::IsNullOrEmpty($d)) { exit 2 }\n" +
+                "$d = $d.TrimEnd('\\')\n" +
+                "$self = 0\n" +
+                "[int]::TryParse($env:ATLISP_LOCK_SELF, [ref]$self) | Out-Null\n" +
+                "if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) { exit 3 }\n" +
+                "try { $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { exit 4 }\n" +
+                "foreach ($p in $procs) {\n" +
+                "  if ($p.ProcessId -eq $self) { continue }\n" +
+                "  $exeHit = $p.ExecutablePath -and $p.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase)\n" +
+                "  $cmdHit = $p.CommandLine -and $p.CommandLine.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0\n" +
+                "  if ($exeHit -or $cmdHit) { '{0}|{1}|{2}' -f $p.ProcessId, $p.Name, $p.ExecutablePath }\n" +
+                "}\n";
+
+            string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            string self = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+            string previousDir = Environment.GetEnvironmentVariable("ATLISP_LOCK_DIR");
+            string previousSelf = Environment.GetEnvironmentVariable("ATLISP_LOCK_SELF");
+            int exitCode;
+            string output;
+            try
+            {
+                Environment.SetEnvironmentVariable("ATLISP_LOCK_DIR", packageDir);
+                Environment.SetEnvironmentVariable("ATLISP_LOCK_SELF", self);
+                string powerShell = FindPowerShell();
+                if (string.IsNullOrEmpty(powerShell)) return null;
+                output = ProcessRunner.Run(powerShell,
+                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded,
+                    25000, out exitCode, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("locked: PowerShell 枚举进程失败: " + ex.Message);
+                return null;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("ATLISP_LOCK_DIR", previousDir);
+                Environment.SetEnvironmentVariable("ATLISP_LOCK_SELF", previousSelf);
+            }
+
+            if (exitCode != 0) return null;
+            List<LockHolder> holders = new List<LockHolder>();
+            string[] lines = output == null ? new string[0] :
+                output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string[] parts = lines[i].Trim().Split('|');
+                if (parts.Length < 2) continue;
+                int pid;
+                if (!int.TryParse(parts[0].Trim(), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out pid)) continue;
+                LockHolder holder = new LockHolder();
+                holder.Pid = pid;
+                holder.Name = parts[1].Trim();
+                holder.Path = parts.Length > 2 ? parts[2].Trim() : "";
+                holders.Add(holder);
+            }
+            return holders;
+        }
+
+        /// <summary>PowerShell 不可用（或策略挡住）时的兜底：wmic 的 csv。</summary>
+        private static List<LockHolder> FindByWmic(string packageDir)
+        {
+            int exitCode;
+            string output = ProcessRunner.Run("wmic.exe",
+                "process get ProcessId,ExecutablePath,CommandLine /format:csv",
+                25000, out exitCode, Encoding.Default);
+            if (exitCode != 0 || string.IsNullOrEmpty(output)) return null;
+
+            List<LockHolder> holders = new List<LockHolder>();
+            string[] lines = output.Split(new char[] { '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0) continue;
+                if (line.IndexOf(packageDir, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                // csv 列序：Node,CommandLine,ExecutablePath,ProcessId；命令行里可能有逗号，
+                // 但 ProcessId 永远在最后一列，ExecutablePath 在倒数第二列。
+                string[] parts = line.Split(',');
+                if (parts.Length < 3) continue;
+                int pid;
+                if (!int.TryParse(parts[parts.Length - 1].Trim(), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out pid)) continue;
+                LockHolder holder = new LockHolder();
+                holder.Pid = pid;
+                holder.Path = parts[parts.Length - 2].Trim();
+                holder.Name = Path.GetFileName(holder.Path);
+                holders.Add(holder);
+            }
+            return holders;
+        }
+
+        private static string FindPowerShell()
+        {
+            string fromPath = ProcessRunner.Where("powershell.exe");
+            if (!string.IsNullOrEmpty(fromPath)) return fromPath;
+            string system32 = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+            return File.Exists(system32) ? system32 : null;
+        }
+    }
+
     internal static class VersionUtil
     {
         public static Version Parse(string text)
@@ -2125,9 +2410,19 @@ namespace Atlisp.Tray
                 startInfo.RedirectStandardError = true;
                 startInfo.StandardOutputEncoding = Encoding.UTF8;
                 startInfo.StandardErrorEncoding = Encoding.UTF8;
-                if (!string.IsNullOrEmpty(info.PackageDir))
+                // CWD 不要设在 npm 包目录里：Windows 把「进程的当前目录」也算作占用，
+                // 服务一跑起来 `node_modules\@atlisp\mcp` 就改不了名，升级时 npm 报
+                // EBUSY（npm 替换全局包的做法是把包目录改名成 .mcp-XXXXXX）。
+                // 脚本路径是绝对的（info.ScriptPath），服务端也不按 CWD 找资源，
+                // 用数据目录当工作目录不影响任何查找，还方便用户在这里找到临时文件。
+                try
                 {
-                    startInfo.WorkingDirectory = info.PackageDir;
+                    Directory.CreateDirectory(Paths.DataDir);
+                    startInfo.WorkingDirectory = Paths.DataDir;
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write("设置服务工作目录失败: " + ex.Message);
                 }
 
                 Process process = new Process();
@@ -4632,7 +4927,9 @@ namespace Atlisp.Tray
         private const int ServerRestartMaxFailures = 5;
         private DateTime _serverRestartRetryAt = DateTime.MinValue;
         private int _serverRestartFailures;
-        // 升级/安装时不再一开始就停服务；只有替换文件被占用（Windows 文件锁）时才停服务重试一次
+        // 升级/安装时不再一开始就停服务；只有替换文件被占用（Windows 文件锁）时才
+        // 释放包目录占用并重试（见 ReleasePackageDir）。这里是最多重试次数。
+        private const int InstallStopMaxRetries = 2;
         private int _installStopRetries;
         private int _dwgKbStopRetries;
         // 用户点过「停止知识库服务」后不再自动拉起，直到手动启动或下次开托盘
@@ -7009,7 +7306,9 @@ namespace Atlisp.Tray
             bool shouldRunAfter = !info.IsInstalled || IsServerBusy();
             // 新的一轮安装：重置「文件被占用」重试计数（否则上一轮的失败会影响本轮）
             _installStopRetries = 0;
-            // 不在开始时停服务：npm 先下载，真正替换文件时若被占用，失败处理里会停服务重试
+            // 不在开始时停服务：npm 先下载，真正替换文件时若被占用，失败处理里会停服务重试；
+            // 但半装/残留的包目录同样会挡住 npm 改名，自动安装流程里静默释放一次。
+            if (!EnsurePackageDirFree(info.PackageDir, !_bootstrapMode, shouldRunAfter)) return;
             RunNpmTask("安装 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "install", true, shouldRunAfter);
@@ -7031,7 +7330,9 @@ namespace Atlisp.Tray
             bool shouldRunAfter = IsServerBusy();
             // 新的一轮升级：重置「文件被占用」重试计数
             _installStopRetries = 0;
-            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
+            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试），但先探测一次
+            // 包目录是否被别的进程占着——占着就现在处理掉，别等 npm 下完包才 EBUSY。
+            if (!EnsurePackageDirFree(info.PackageDir, true, shouldRunAfter)) return;
             RunNpmTask("升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "upgrade", true, shouldRunAfter);
@@ -7058,6 +7359,241 @@ namespace Atlisp.Tray
             finally
             {
                 Cursor.Current = Cursors.Default;
+            }
+        }
+
+        /// <summary>
+        /// 释放 npm 包目录上的所有占用，为 `npm install -g` 让路。
+        ///
+        /// npm 替换全局包的方式是把整个包目录改名（`@atlisp/mcp` → `.mcp-XXXXXX`），
+        /// 只要目录里还有进程的 CWD 或已映射的原生模块，Windows 就拒绝改名（EBUSY）。
+        /// 托盘能控制的先停（自己拉起的服务、Windows 服务、自己的 CWD），剩下的
+        /// 只能按「可执行文件路径 / 命令行里带包目录」匹配后结束——那通常是
+        /// MCP 客户端拉起的 server、残留的 cad-worker 或从包目录运行的旧托盘。
+        /// </summary>
+        /// <param name="ask">true 时结束第三方进程前先确认（手动升级）；自动升级静默处理</param>
+        /// <param name="blockers">失败时返回占用清单/原因，可直接展示给用户</param>
+        private bool ReleasePackageDir(string packageDir, bool ask, out string blockers)
+        {
+            blockers = "";
+            if (string.IsNullOrEmpty(packageDir) || !Directory.Exists(packageDir)) return true;
+
+            Cursor.Current = Cursors.WaitCursor;
+            try
+            {
+                return ReleasePackageDirCore(packageDir, ask, out blockers);
+            }
+            finally
+            {
+                Cursor.Current = Cursors.Default;
+            }
+        }
+
+        private bool ReleasePackageDirCore(string packageDir, bool ask, out string blockers)
+        {
+            blockers = "";
+            // 1) 托盘自己拉起的服务：它的 CWD 曾在包目录里，且 edge-js 原生模块已加载
+            if (IsServerBusy()) StopServerForUpdate();
+
+            // 2) 排除托盘自身的 CWD 占用（从包目录启动、自迁移又失败的情况）
+            DetachCurrentDirectory(packageDir);
+
+            // 3) Windows 服务模式：服务进程同样会锁目录
+            try
+            {
+                bool serviceExists;
+                bool serviceRunning;
+                ServiceHelper.Query(out serviceExists, out serviceRunning, true);
+                if (serviceExists && serviceRunning)
+                {
+                    string error = ServiceHelper.Stop();
+                    AppLog.Write("locked: 停止 Windows 服务 " + (error == null ? "成功" : error));
+                    int waited = 0;
+                    while (ServiceHelper.IsRunning() && waited < 15000)
+                    {
+                        Thread.Sleep(300);
+                        waited += 300;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("locked: 停止 Windows 服务失败: " + ex.Message);
+            }
+
+            // 4) 给句柄留一点释放时间（taskkill / sc stop 都是异步完成的）
+            if (PackageDirLock.WaitFree(packageDir, 2500)) return true;
+
+            // 5) 还有占用：找出来，必要时结束
+            List<LockHolder> holders = PackageDirLock.Find(packageDir);
+            if (holders == null)
+            {
+                AppLog.Write("locked: 无法枚举占用进程（PowerShell/wmic 都不可用）");
+                if (PackageDirLock.WaitFree(packageDir, 5000)) return true;
+            }
+            else if (holders.Count > 0)
+            {
+                // 只结束确定属于本包的进程（node / AtlispTray / AtlispUpdater）。
+                // 命令行里刚好带这个路径的编辑器、终端等不碰，交给用户自己关。
+                List<LockHolder> killable = new List<LockHolder>();
+                List<LockHolder> others = new List<LockHolder>();
+                for (int i = 0; i < holders.Count; i++)
+                {
+                    if (IsKillableHolder(holders[i])) killable.Add(holders[i]);
+                    else others.Add(holders[i]);
+                }
+                AppLog.Write("locked: 包目录仍被占用 " + PackageDirLock.DescribeOneLine(holders));
+                if (others.Count > 0)
+                {
+                    AppLog.Write("locked: 不自动结束的占用进程（请用户自己关）: " +
+                        PackageDirLock.DescribeOneLine(others));
+                }
+                if (killable.Count > 0)
+                {
+                    if (ask && !ConfirmEndHolders(packageDir, killable))
+                    {
+                        blockers = PackageDirLock.Describe(holders) +
+                            "（已取消，未结束这些进程）";
+                        return false;
+                    }
+                    PackageDirLock.Kill(killable);
+                    if (PackageDirLock.WaitFree(packageDir, 6000)) return true;
+                }
+            }
+
+            List<LockHolder> remaining = null;
+            if (holders != null && holders.Count > 0) remaining = PackageDirLock.Find(packageDir);
+            blockers = PackageDirLock.Describe(remaining);
+            if (string.IsNullOrEmpty(blockers))
+            {
+                blockers = "未能确定是哪个进程：可能是杀毒软件/索引服务正在扫描该目录，" +
+                    "或者有命令行窗口/编辑器的「当前目录」就在这个目录里。\r\n";
+            }
+            if (IsInsideDir(Application.ExecutablePath, packageDir))
+            {
+                blockers += "托盘正在从包目录运行（" + Application.ExecutablePath +
+                    "），结束托盘后重试，或重新执行一次 atlisp-tray 让它迁移到用户目录。\r\n";
+            }
+            return false;
+        }
+
+        /// <summary>结束第三方占用进程前的确认（手动升级才问）。</summary>
+        private static bool ConfirmEndHolders(string packageDir, List<LockHolder> holders)
+        {
+            string message =
+                "升级需要替换目录：\r\n" + packageDir + "\r\n\r\n" +
+                "但以下进程正在使用它：\r\n" + PackageDirLock.Describe(holders) + "\r\n" +
+                "结束它们才能继续升级。它们多半是 MCP 客户端（Claude Desktop / VSCode / " +
+                "opencode 等）拉起的服务或残留的 node.exe，升级后需要在对应客户端里重启一次 " +
+                "MCP 服务。\r\n\r\n是否结束这些进程并继续升级？";
+            return MessageBox.Show(message, "升级 @lisp MCP Server",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        }
+
+        /// <summary>
+        /// 升级前预检：包目录被占用就先释放（手动升级会先问一次），避免把带宽和时间
+        /// 花在一次注定失败的 npm 上（npm 是在安装末尾才去改名包目录的）。
+        /// 返回 false 表示无法释放或用户取消，调用方应直接放弃本轮升级。
+        /// </summary>
+        private bool EnsurePackageDirFree(string packageDir, bool ask, bool restartIfFailed)
+        {
+            if (string.IsNullOrEmpty(packageDir) || !Directory.Exists(packageDir)) return true;
+            // 服务正在启动时不要改名探测（它还在从包目录加载文件）；其余情况先探一下：
+            // 目录真的空闲就不必停服务，npm 一边下载一边照常提供服务。
+            if (_server.State != ServerState.Starting && !PackageDirLock.IsBusy(packageDir))
+            {
+                return true;
+            }
+
+            AppLog.Write("locked: 升级前探测到包目录被占用 dir=" + packageDir);
+            string blockers;
+            if (ReleasePackageDir(packageDir, ask, out blockers)) return true;
+
+            if (!string.IsNullOrEmpty(blockers) &&
+                blockers.IndexOf("已取消", StringComparison.Ordinal) >= 0)
+            {
+                Balloon("升级已取消", "占用的进程保留着，未执行升级。", ToolTipIcon.Info);
+            }
+            else if (!_silent)
+            {
+                ShowError("升级失败：包目录被占用",
+                    PackageDirBusyMessage(packageDir, blockers, false));
+            }
+            else
+            {
+                AppLog.Write("upgrade: 包目录被占用，稍后重试");
+            }
+            if (restartIfFailed) _server.RestartAsync();
+            return false;
+        }
+
+        /// <summary>包目录无法替换时给用户看的说明（对话框文本）。</summary>
+        private static string PackageDirBusyMessage(string packageDir, string blockers,
+            bool retriesExhausted)
+        {
+            return
+                "npm 无法替换包目录（EBUSY / 文件被占用）。\r\n\r\n" +
+                (string.IsNullOrEmpty(packageDir) ? "" : "目录：" + packageDir + "\r\n\r\n") +
+                (string.IsNullOrEmpty(blockers)
+                    ? (retriesExhausted
+                        ? "已重试 " + InstallStopMaxRetries + " 次，目录仍不可替换。\r\n\r\n"
+                        : "托盘已经停掉自己启动的服务并等待句柄释放，但仍未能释放该目录。\r\n\r\n")
+                    : "仍然占用该目录：\r\n" + blockers + "\r\n") +
+                "处理办法（任选其一）：\r\n" +
+                "1) 关闭占用它的程序（MCP 客户端 / 旧版托盘 / 残留 node.exe）后，" +
+                "在托盘菜单里重试升级；\r\n" +
+                "2) 或关掉托盘后在命令行执行：\r\n" +
+                "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
+                "查看谁在占用（PowerShell）：\r\n" +
+                "  Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" |\r\n" +
+                "    Select-Object ProcessId, CommandLine | Format-List\r\n" +
+                "  Get-Process AtlispTray | Select-Object Id, Path";
+        }
+
+        /// <summary>
+        /// 是否是可以直接结束的占用者：本包的 node 进程（server / cad-worker）、
+        /// 包内托盘与更新器。别的程序（编辑器、终端）哪怕命令行里带这个路径也不动。
+        /// </summary>
+        private static bool IsKillableHolder(LockHolder holder)
+        {
+            if (holder == null) return false;
+            string name = holder.Name ?? "";
+            if (name.IndexOf("node", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (name.IndexOf("atlisp", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// 托盘自己的当前目录如果在包目录里，Windows 会一直锁着包目录。切到临时目录即可释放。
+        /// </summary>
+        private static void DetachCurrentDirectory(string packageDir)
+        {
+            try
+            {
+                string cwd = Directory.GetCurrentDirectory();
+                if (!IsInsideDir(cwd, packageDir)) return;
+                string temp = Path.GetTempPath();
+                Directory.SetCurrentDirectory(temp);
+                AppLog.Write("locked: 托盘当前目录在包目录内，已切到 " + temp);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("locked: 切换工作目录失败: " + ex.Message);
+            }
+        }
+
+        private static bool IsInsideDir(string path, string dir)
+        {
+            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(dir)) return false;
+            try
+            {
+                string full = Path.GetFullPath(path).TrimEnd('\\');
+                string root = Path.GetFullPath(dir).TrimEnd('\\');
+                return full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -7108,7 +7644,9 @@ namespace Atlisp.Tray
             if (!info.IsInstalled) return;
             bool shouldRunAfter = IsServerBusy();
             _installStopRetries = 0;
-            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）
+            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）；
+            // 自动升级静默释放占用（不弹确认框），失败就留给下一轮。
+            if (!EnsurePackageDirFree(info.PackageDir, false, shouldRunAfter)) return;
             RunNpmTask("自动升级 @lisp MCP Server",
                 NpmRunner.InstallServerArgs(_config),
                 "upgrade-auto", false, shouldRunAfter);
@@ -7655,48 +8193,45 @@ namespace Atlisp.Tray
                 return;
             }
 
-            // 升级/安装不再一开始就停服务：npm 真正替换 edge-js 等被加载的文件时
-            // 会报 EBUSY/EPERM。这时才停服务并重试一次（见 StopServerForUpdate 注释）。
-            if (_installStopRetries < 1 && LooksLikeFileLock(text) &&
-                (action == "install" || action == "upgrade" || action == "upgrade-auto"))
+            // 升级/安装不再一开始就停服务：npm 真正替换包目录时才会撞上 Windows 文件锁
+            // （EBUSY / EPERM + rename）。命中后释放包目录占用再重试（见 ReleasePackageDir）。
+            bool npmFileLock = LooksLikeFileLock(text) &&
+                (action == "install" || action == "upgrade" || action == "upgrade-auto");
+            if (npmFileLock)
             {
                 _installStopRetries++;
+                bool autoUpgrade = action == "upgrade-auto";
                 bool wasRunning = IsServerBusy();
-                if (wasRunning) StopServerForUpdate();
-                AppLog.Write("upgrade: 替换文件被占用，停止服务后重试安装");
-                RunNpmTask(action == "upgrade-auto" ? "自动升级 @lisp MCP Server" : "升级 @lisp MCP Server",
-                    NpmRunner.InstallServerArgs(_config), action, showWindow, wasRunning);
-                return;
-            }
+                ServerInfo lockInfo = ServerLocator.Resolve(_config, false);
+                string pkgDir = lockInfo == null ? "" : lockInfo.PackageDir;
+                AppLog.Write("upgrade: 替换文件被占用（第 " + _installStopRetries + "/" +
+                    InstallStopMaxRetries + " 次），开始释放包目录 dir=" + pkgDir);
 
-            // 重试后仍被占用：npm 换包目录（rename 整个 @atlisp/mcp → .mcp-XXXX）时，
-            // 只要目录里有进程在用就会 EBUSY。托盘只能停掉自己启动的服务，停不掉
-            // MCP 客户端拉起的实例、从包目录运行的旧托盘、残留的 cad-worker。
-            if (_installStopRetries >= 1 && LooksLikeFileLock(text) &&
-                (action == "install" || action == "upgrade" || action == "upgrade-auto"))
-            {
-                ServerInfo pkgInfo = ServerLocator.Resolve(_config, false);
-                string pkgDir = pkgInfo == null ? "" : pkgInfo.PackageDir;
-                AppLog.Write("upgrade: 停服务后重试仍被占用 dir=" + pkgDir +
-                    " exitCode=" + exitCode);
-                string message =
-                    "npm 无法替换包目录（EBUSY / 文件被占用）。\r\n\r\n" +
-                    (string.IsNullOrEmpty(pkgDir) ? "" : "目录：" + pkgDir + "\r\n\r\n") +
-                    "托盘已经停掉自己启动的服务并重试过一次，仍被占用，说明还有托盘管不到的进程在用该目录：\r\n" +
-                    "  · MCP 客户端拉起的服务（Claude Desktop / VSCode / opencode 等）\r\n" +
-                    "  · 从 npm 包目录直接运行的旧版托盘（...\\node_modules\\@atlisp\\mcp\\dist\\AtlispTray.exe）\r\n" +
-                    "  · 残留的 node.exe（cad-worker 子进程）\r\n\r\n" +
-                    "处理办法（任选其一）：\r\n" +
-                    "1) 关闭上述程序 / MCP 客户端后，在托盘菜单里重试升级；\r\n" +
-                    "2) 或关掉托盘后在命令行执行：\r\n" +
-                    "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
-                    "查看谁在占用（PowerShell）：\r\n" +
-                    "  Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" |\r\n" +
-                    "    Select-Object ProcessId, CommandLine | Format-List\r\n" +
-                    "  Get-Process AtlispTray | Select-Object Id, Path";
-                if (!_silent && action != "upgrade-auto")
+                string blockers;
+                bool released = ReleasePackageDir(pkgDir, !autoUpgrade, out blockers);
+                if (released && _installStopRetries <= InstallStopMaxRetries)
                 {
-                    ShowError("升级失败：包目录被占用", message);
+                    AppLog.Write("upgrade: 包目录已释放，重新执行 npm install（原服务" +
+                        (wasRunning ? "已停止，升级后重启" : "未运行") + "）");
+                    RunNpmTask(autoUpgrade
+                            ? "自动升级 @lisp MCP Server"
+                            : "升级 @lisp MCP Server",
+                        NpmRunner.InstallServerArgs(_config), action, showWindow, wasRunning);
+                    return;
+                }
+
+                AppLog.Write("upgrade: 包目录仍被占用 dir=" + pkgDir + " exitCode=" + exitCode);
+                bool cancelled = !string.IsNullOrEmpty(blockers) &&
+                    blockers.IndexOf("已取消", StringComparison.Ordinal) >= 0;
+                if (cancelled)
+                {
+                    Balloon("升级已取消", "占用的进程保留着，未执行升级。", ToolTipIcon.Info);
+                }
+                else if (!_silent && !autoUpgrade)
+                {
+                    ShowError("升级失败：包目录被占用",
+                        PackageDirBusyMessage(pkgDir, blockers,
+                            _installStopRetries > InstallStopMaxRetries));
                 }
                 else
                 {
@@ -7833,6 +8368,11 @@ namespace Atlisp.Tray
 
             ShowError("操作失败", string.IsNullOrEmpty(detail) ? "命令执行失败，请查看日志。" : detail);
 
+            // 预检/重试时可能已经把服务停了（为了释放包目录），失败后要把旧版本的服务拉回来
+            if ((action == "install" || action == "upgrade") && restartAfter)
+            {
+                _server.RestartAsync();
+            }
             if (action == "node" && _restartAfterNodeInstall)
             {
                 _restartAfterNodeInstall = false;
