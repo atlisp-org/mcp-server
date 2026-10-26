@@ -1116,4 +1116,29 @@ atlisp-mcp --version
 
 ## 许可证
 
-ISC
+[ISC License](LICENSE) — 见仓库根目录 `LICENSE` 文件。
+
+## Code signing policy
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+Windows 二进制（`dist/AtlispTray.exe`、`dist/AtlispUpdater.exe`）通过
+[SignPath Foundation](https://signpath.org) 的开源免费计划做 Authenticode 签名，
+发布流程见 `.github/workflows/sign-release.yml`（签名 → `signtool verify` →
+`npm publish --ignore-scripts`）。签名后的产物即为最终发布产物，不重新编译。
+
+**团队角色**（单人项目，以下角色均由 maintainer 承担）：
+
+- **Authors / Committers & Reviewers**：vitalgg（仓库 owner，所有变更经其审查）
+- **Approvers**（签名审批人，每次发布在 SignPath 控制台批准签名请求）：vitalgg
+
+**隐私声明**：
+
+- 服务默认开启错误上报（ERROR 级日志，含错误消息与运行环境摘要），发送至
+  `https://atlisp.cn/api/error/report`；可用环境变量 `ERROR_REPORT_ENABLED=false`
+  或配置文件 `errorReportEnabled: false` 关闭（见「环境变量」一节）。
+- 托盘（`AtlispTray.exe`）在用户缺省运行环境时，会从官方镜像下载 Node.js /
+  Python 安装包（npmmirror / python.org），下载后校验 SHA256 / Authenticode
+  签名，校验不过拒绝执行；详见 `tray/README.md`。
+- 除上述明确说明的情况外，本程序不会向其他网络系统传输用户信息。
+  云功能（应用包发布、图库等）仅在用户显式操作时访问 `atlisp.cn`。
