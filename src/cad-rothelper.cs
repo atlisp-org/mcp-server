@@ -259,28 +259,42 @@ namespace CadRotHelper
                 userCodeFile = System.IO.Path.Combine(tempDir, "atlisp_user_" + fileKey + ".lsp");
                 lispFile = System.IO.Path.Combine(tempDir, "atlisp_code_" + fileKey + ".lsp");
 
-                System.IO.File.WriteAllText(userCodeFile, code,
-                    System.Text.Encoding.GetEncoding(
-                        System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
-
-                string lispCode = "(progn"
-                    + "(setq f(open \"" + tempFile.Replace("\\", "\\\\") + "\" \"w\"))"
-                    + "(setq r(vl-catch-all-apply '(lambda ()(load \"" + userCodeFile.Replace("\\", "\\\\") + "\"))))"
-                    + "(if (vl-catch-all-error-p r)"
-                    + "(princ(strcat \"ERROR:\"(vl-catch-all-error-message r)) f)"
-                    + "(princ r f))"
-                    + "(close f)"
-                    + "(princ))";
-
-                System.IO.File.WriteAllText(lispFile, lispCode,
-                    System.Text.Encoding.GetEncoding(
-                        System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
-
                 dynamic doc = cad.ActiveDocument;
                 if (doc == null)
                     return Task.FromResult<object>(new Dictionary<string, object> { { "success", false }, { "error", "No active document" } });
 
-                doc.SendCommand("(load \"" + lispFile.Replace("\\", "\\\\") + "\")\n");
+                if (EnsureTrustedPaths(doc, tempDir))
+                {
+                    // ── 文件方式：临时 .lsp + (load ...)，要求 tempDir 已在受信任路径里 ──
+                    System.IO.File.WriteAllText(userCodeFile, code,
+                        System.Text.Encoding.GetEncoding(
+                            System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
+
+                    string lispCode = "(progn"
+                        + "(setq f(open \"" + tempFile.Replace("\\", "\\\\") + "\" \"w\"))"
+                        + "(setq r(vl-catch-all-apply '(lambda ()(load \"" + userCodeFile.Replace("\\", "\\\\") + "\"))))"
+                        + "(if (vl-catch-all-error-p r)"
+                        + "(princ(strcat \"ERROR:\"(vl-catch-all-error-message r)) f)"
+                        + "(princ r f))"
+                        + "(close f)"
+                        + "(princ))";
+
+                    System.IO.File.WriteAllText(lispFile, lispCode,
+                        System.Text.Encoding.GetEncoding(
+                            System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage));
+
+                    doc.SendCommand("(load \"" + lispFile.Replace("\\", "\\\\") + "\")\n");
+                }
+                else
+                {
+                    // ── 分块方式：不 load 文件，所以不触发任何信任检查 ──
+                    // 中望/浩辰可能没有 TRUSTEDPATHS，BricsCAD 的该变量只读，AutoCAD 也可能被管理员锁定。
+                    foreach (string chunkCmd in BuildChunkCommands(code, tempFile))
+                    {
+                        doc.SendCommand(chunkCmd + "\n");
+                        System.Threading.Thread.Sleep(10);
+                    }
+                }
 
                 int retries = 10;
                 while (retries > 0 && !System.IO.File.Exists(tempFile))
@@ -370,6 +384,123 @@ namespace CadRotHelper
             {
                 if (f != null) { try { if (System.IO.File.Exists(f)) System.IO.File.Delete(f); } catch { } }
             }
+        }
+
+        // ── 信任目录：把 tempDir 追加进 TRUSTEDPATHS ──
+        // 参照 kernel/src/setup.lsp 的 @::add-path-in-trustedpaths 语义。
+        // 返回 true 表示 tempDir 已被信任（可以安全 load 临时文件）；
+        // false 表示该系统变量不可用 —— 中望/浩辰可能没有这个变量，BricsCAD 的该变量只读，
+        // AutoCAD 也可能被管理员锁定 —— 调用方必须改走分块通道（不 load 文件，不触发信任检查）。
+        static bool EnsureTrustedPaths(dynamic doc, string tempDir)
+        {
+            string currentTrust;
+            try
+            {
+                object trustValue = doc.GetVariable("TRUSTEDPATHS");
+                currentTrust = trustValue as string ?? "";
+            }
+            catch (Exception ex)
+            {
+                // 读不到就绝不写：否则会用「空值 + tempDir」覆盖用户已有的整串受信任路径
+                System.Diagnostics.Debug.WriteLine("TRUSTEDPATHS unavailable: " + ex.Message);
+                return false;
+            }
+
+            foreach (string trustEntry in currentTrust.Split(';'))
+            {
+                if (string.Equals(trustEntry.Trim(), tempDir, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            try
+            {
+                string newTrust = string.IsNullOrEmpty(currentTrust)
+                    ? tempDir
+                    : currentTrust.TrimEnd(';') + ";" + tempDir;
+                doc.SetVariable("TRUSTEDPATHS", newTrust);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("TRUSTEDPATHS not writable: " + ex.Message);
+                return false;
+            }
+        }
+
+        // ── 分块命令：不 load 文件也能执行代码 ──
+        // 把代码按「LISP 字符串常量分块累积」注入命令行，最后用
+        // (eval (read (strcat "(progn " *atlisp_chunk* ")"))) 在内存里执行。
+        // 每条命令控制在 250 字符内（命令行 255 上限）。
+        // AutoLISP 字符串字面量只保证 \\ 和 \" 两种转义，换行必须用 (chr 10) 还原；
+        // 按行拆、按 180 硬切都只切字符串常量内容，不改变语义。
+        static List<string> BuildChunkCommands(string code, string tempFile)
+        {
+            var commands = new List<string>();
+            var tokens = new List<string>();
+            string[] codeLines = code.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+
+            for (int li = 0; li < codeLines.Length; li++)
+            {
+                if (li > 0) tokens.Add("(chr 10)");
+                string codeLine = codeLines[li];
+                int pos = 0;
+                while (pos < codeLine.Length)
+                {
+                    int take = Math.Min(180, codeLine.Length - pos);
+                    string lit = "\"" + EscapeLispString(codeLine.Substring(pos, take)) + "\"";
+                    while (take > 1 && lit.Length > 180)
+                    {
+                        take--;
+                        lit = "\"" + EscapeLispString(codeLine.Substring(pos, take)) + "\"";
+                    }
+                    tokens.Add(lit);
+                    pos += take;
+                }
+            }
+
+            string expr = "";
+            bool firstCmd = true;
+            foreach (string token in tokens)
+            {
+                string candidate = expr.Length == 0 ? token : expr + " " + token;
+                if (expr.Length > 0 && candidate.Length > 180)
+                {
+                    commands.Add(MakeChunkCommand(expr, firstCmd));
+                    firstCmd = false;
+                    expr = token;
+                }
+                else
+                {
+                    expr = candidate;
+                }
+            }
+            if (expr.Length > 0)
+                commands.Add(MakeChunkCommand(expr, firstCmd));
+            if (commands.Count == 0)
+                commands.Add("(progn (setq *atlisp_chunk* \"\") (princ))");
+
+            commands.Add("(setq *atlisp_ar* (vl-catch-all-apply '(lambda () (eval (read (strcat \"(progn \" *atlisp_chunk* \")\"))))))");
+            commands.Add("(setq *atlisp_ar* (if (vl-catch-all-error-p *atlisp_ar*) (strcat \"ERROR:\" (vl-catch-all-error-message *atlisp_ar*)) *atlisp_ar*))");
+            // 结果文件必须等 eval 结束才创建：open/写/close 放同一条命令，
+            // 否则轮询会在 eval 期间读到空文件（和文件方式的行为对齐）
+            commands.Add("(progn (setq *atlisp_af* (open \"" + tempFile.Replace("\\", "\\\\")
+                + "\" \"w\")) (princ *atlisp_ar* *atlisp_af*) (close *atlisp_af*) (princ))");
+            commands.Add("(progn (setq *atlisp_chunk* nil) (princ))");
+            return commands;
+        }
+
+        static string MakeChunkCommand(string expr, bool firstCmd)
+        {
+            return firstCmd
+                ? "(progn (setq *atlisp_chunk* (strcat " + expr + ")) (princ))"
+                : "(progn (setq *atlisp_chunk* (strcat *atlisp_chunk* " + expr + ")) (princ))";
+        }
+
+        static string EscapeLispString(string s)
+        {
+            // AutoLISP 字符串字面量只保证 \\ 和 \" 两种转义，换行由 BuildChunkCommands
+            // 用 (chr 10) 还原；反斜杠必须先替换，否则新插入的反斜杠会被二次转义。
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
         // ── 检查是否忙 ──

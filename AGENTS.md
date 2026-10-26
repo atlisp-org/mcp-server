@@ -28,7 +28,7 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **Docker 仅 stdio 模式**——Docker 下无法连接 Windows CAD，仅用于 `TRANSPORT=stdio` 模式测试
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
-- **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）
+- **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）；临时文件方式会先把 tmp 目录写进 `TRUSTEDPATHS` 免弹信任框，写不进去（中望/浩辰等）则改走内存分块注入，见下文「信任弹窗与 TRUSTEDPATHS」
 - **工具定义**：`src/tools/` 下 47 个文件定义工具 Schema（共 379 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
 - **协议版本**：`src/constants.js` 的 `PROTOCOL_VERSION` 取自 SDK 的 `LATEST_PROTOCOL_VERSION`（不再写死，当前 2025-11-25）；Server 握手按 SDK `SUPPORTED_PROTOCOL_VERSIONS` 协商，旧客户端仍可回退 2024-11-05（`mcp-scanner.js` 用该常量做探测）
 - **结构化输出**：查询类工具在定义中声明 `outputSchema`，对应 handler 同时返回 `content`（文本，向后兼容）与 `structuredContent`（JSON）；`src/tool-executor.js` 统一透传 structuredContent，并在缺少 content 时回填 JSON 文本块（解析辅助见 `src/handlers/structured-output.js`）
@@ -91,6 +91,18 @@ mcp-server 生成的 LISP **不能假设执行它的 CAD 会话加载了 @lisp l
 - **结果只能是返回值**：worker 只把被加载代码的**表达式返回值**写进结果文件（`(princ r f)`），`princ` 到命令行/回显的内容不会出现在 `sendCommandWithResult` 的结果里。探测类代码（如 @lisp 的 token）必须让 token 作为最终返回值，不能用 `(princ "TOKEN")` 后返回 nil
 - **标志位用 nil 不用 0**：AutoLISP 里只有 nil 为假，`0` 是真值。`(setq flag 0)` 后再 `(if flag ...)` 会恒真，未保存图纸判断踩过这个坑
 - **冻结表跨仓同步**：图框标准表 `frame-standards.js` ↔ lib `frame:` ↔ `packages/at-plot`；属性别名表 `frame-aliases.js` ↔ lib `frame:aliases`（单测有跨仓守卫）
+- **信任弹窗与 TRUSTEDPATHS**：长代码（>255 字符或要结果）走 `%USERPROFILE%\@lisp\tmp` 的临时 `.lsp` + `(load ...)`，
+  在非受信任目录会弹「无法验证该可执行文件的发布者，且该文件不在受信任文件夹内」，阻断非交互执行。
+  `cad-worker.js` 的 `cadSendWithResult` 与 `cad-rothelper.cs` 的 `RotSendWithResult` 都必须先用 COM
+  `doc.GetVariable("TRUSTEDPATHS")` / `SetVariable` 把 tmp 目录追加进去（对照 `kernel/src/setup.lsp` 的
+  `@::add-path-in-trustedpaths`：分号分隔、大小写不敏感比对、只追加）——**不能用命令行 `setvar`**，
+  那条代码加路径必然超 255 字符，又会绕回文件方式（鸡生蛋）。
+  **读失败时绝不能写**：内层 catch 若把值当成 `""` 再 SetVariable，会用「空值 + tmp」覆盖用户已有的整串信任路径。
+  中望/浩辰可能根本没有这个变量、BricsCAD 的该变量只读、AutoCAD 也可能被管理员锁定，
+  所以 `trustReady=false` 时改走**分块通道**：代码按 LISP 字符串常量分块注入命令行（`(chr 10)` 还原换行，
+  别依赖 `\n` 转义；只转义 `\\` 和 `\"`，反斜杠先转），末尾
+  `(eval (read (strcat "(progn " *atlisp_chunk* ")")))` 在内存执行——全程不 load 文件，任何 CAD 都不会弹信任框。
+  单条命令控制在 250 字符内（packing 预算 180）；单测 `tests/cad-trusted-paths.test.js` 守这些不变式
 - **@lisp 自动引导**：默认 `AUTO_INSTALL_ATLISP=true`。`cad.connect()` 成功后通过连接事件（`onCadConnected`，覆盖所有连接路径与连接池切换实例）统一触发探测 `@::init-once` / `@::load-module`，未安装先检查未保存图纸，再从 `https://atlisp.cn/@` 安装、`https://atlisp.cn/cloud` 加载函数库，等待 `BASE:INIT`。未保存图纸会**跳过**自动安装（安装脚本会弹窗/exit）。生成 LISP 仍保持自包含，不能假设引导一定成功。
 
 ## 远程 Peer 转发（Linux → Windows CAD）
