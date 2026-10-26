@@ -1121,16 +1121,17 @@ atlisp-mcp --version
 ## Code signing policy
 
 The Windows binaries (`dist/AtlispTray.exe`, `dist/AtlispUpdater.exe`) are
-Authenticode-signed via
-[Azure Artifact Signing](https://azure.microsoft.com/en-us/products/artifact-signing)
-（原 Azure Trusted Signing）：证书由 Microsoft 托管 CA 自动签发，
-证书主体 = Azure 订阅的认证身份。
+Authenticode-signed for free by
+[SignPath.io](https://signpath.org)（SignPath Foundation 计划）：证书由
+**SignPath Foundation** 的 CA 签发（证书主体是基金会而非个人，依赖其品牌信誉），
+每次发版需在 SignPath 控制台人工批准签名请求后自动完成签名。
 
-Windows 二进制（`dist/AtlispTray.exe`、`dist/AtlispUpdater.exe`）通过
-Azure Artifact Signing 做 Authenticode 签名，
-发布流程见 `.github/workflows/sign-release.yml`（构建 → 签名 → `signtool verify` →
-`npm publish --ignore-scripts`）。签名后的产物即为最终发布产物，不重新编译。
-配置指南见 `docs/azure-artifact-signing.md`。
+Windows 二进制（`dist/AtlispTray.exe`、`dist/AtlispUpdater.exe`）通过 SignPath
+Foundation 做 Authenticode 签名，发布流程见
+`.github/workflows/sign-release.yml`（构建 → 上传 → SignPath 控制台批准 →
+签名 → `signtool verify` → `npm publish --ignore-scripts`）。签名后的产物即为
+最终发布产物，不重新编译。备选渠道：Azure Artifact Signing（需自有订阅，
+配置指南见 `docs/azure-artifact-signing.md`）。
 
 **团队角色**（单人项目，以下角色均由 maintainer 承担）：
 
