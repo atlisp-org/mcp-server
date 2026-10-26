@@ -110,7 +110,12 @@ export const TOOL_HANDLERS = {
         const data = await funMod.loadAtlibFunctionLib();
         if (!data) return { content: [{ type: 'text', text: '加载函数库失败' }], isError: true };
         if (a.format === 'list') {
-            const items = Object.values(data.all_functions || {}).map(f => `${f.name}: ${f.description || ''}`);
+            /* 函数名后带参数列表：只给名字的列表让调用方猜不到 arity
+               （2026-10-26 事故：entity:make-text 需要 7 参，生成代码按 3~4 参调用被拦截）。 */
+            const items = Object.values(data.all_functions || {}).map(f => {
+                const params = (f.params || []).join(' ');
+                return `${params ? `${f.name}(${params})` : f.name}: ${f.description || ''}`;
+            });
             return { content: [{ type: 'text', text: items.join('\n') }] };
         }
         return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };

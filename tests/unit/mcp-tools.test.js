@@ -433,6 +433,18 @@ describe('import_funlib', () => {
     const result = await TOOL_HANDLERS.import_funlib({ format: 'list' });
     expect(result.content[0].text).toBe('A: Draw');
   });
+
+  it('list 格式带参数列表（调用方据此对齐 arity）', async () => {
+    const data = {
+      all_functions: {
+        'entity:make-text': { name: 'entity:make-text', params: ['str', 'pt1', 'fontsize', 'ang', 'kgb', 'qx', 'dqys'], description: '生成TEXT' },
+      },
+    };
+    m.getHandlerModule.mockResolvedValue({ loadAtlibFunctionLib: m.loadAtlibFunctionLib });
+    m.loadAtlibFunctionLib.mockResolvedValue(data);
+    const result = await TOOL_HANDLERS.import_funlib({ format: 'list' });
+    expect(result.content[0].text).toBe('entity:make-text(str pt1 fontsize ang kgb qx dqys): 生成TEXT');
+  });
 });
 
 describe('meta/skill passthrough handlers', () => {

@@ -27,7 +27,7 @@ export const tools = [
         inputSchema: {
             type: 'object',
             properties: {
-                format: { type: 'string', enum: ['json', 'list'], description: '返回格式：json（完整JSON含参数详情，信息更全）或 list（"函数名: 描述"简洁列表，节省 token）。默认 json' }
+                format: { type: 'string', enum: ['json', 'list'], description: '返回格式：json（完整JSON含参数详情，信息更全）或 list（"函数名(参数列表): 描述"简洁列表，节省 token，参数列表可直接用于对齐调用 arity）。默认 json' }
             }
         }
     },
