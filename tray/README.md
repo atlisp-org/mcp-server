@@ -415,7 +415,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 
    | 渠道 | 适用 | 需要的 secrets |
    |---|---|---|
-   | **Azure Trusted Signing** | 付费（约 $9.99/月起），CI 最省事，私钥不在本地 | `AZURE_CLIENT_ID` `AZURE_TENANT_ID` `AZURE_SUBSCRIPTION_ID` `AZURE_CLIENT_SECRET` `AZURE_TS_ENDPOINT` `AZURE_TS_ACCOUNT` `AZURE_TS_CERT_PROFILE` |
+   | **Azure Artifact Signing**（2026-01 由 Trusted Signing 更名，功能不变） | 付费（Basic 档 $9.99/月含 5000 次签名），CI 全自动、无需每次发版人工审批，私钥在 Azure HSM；**证书主体 = Azure 订阅的认证身份**（个人实名或公司） | `AZURE_CLIENT_ID` `AZURE_TENANT_ID` `AZURE_SUBSCRIPTION_ID` `AZURE_TS_ENDPOINT` `AZURE_TS_ACCOUNT` `AZURE_TS_CERT_PROFILE`（OIDC 联合身份，不需要客户端密钥） |
    | **SignPath Foundation** | 开源项目免费（需公开仓库 + OSI 协议，本项目 ISC 符合） | `SIGNPATH_API_TOKEN` `SIGNPATH_ORGANIZATION_ID` `SIGNPATH_PROJECT_SLUG` `SIGNPATH_SIGNING_POLICY_SLUG` `SIGNPATH_ARTIFACT_CONFIG_SLUG` |
 
    > **坑**：签名后的 exe 必须是最终发布的那一份。CI 的 publish job 因此用

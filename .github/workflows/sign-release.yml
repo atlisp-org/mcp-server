@@ -7,10 +7,12 @@ name: Sign release binaries
 #
 # 两个渠道二选一，凭据都没有时整个 job 直接跳过（成功退出，不报警）：
 #
-#   A. Azure Trusted Signing（付费，约 $9.99/月起，CI 友好）
-#      需要的 secrets：
-#        AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID  OIDC 联邦凭据
-#        AZURE_TS_ENDPOINT            例 https://eus.codesigning.azure.net
+#   A. Azure Artifact Signing（原 Trusted Signing，2026-01 更名；付费，Basic 档
+#      $9.99/月含 5000 次签名，CI 友好，全自动无需人工审批；证书主体 = Azure
+#      订阅的认证身份）
+#      需要的 secrets（OIDC 联合身份，不需要客户端密钥）：
+#        AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
+#        AZURE_TS_ENDPOINT            例 https://eus.codesigning.azure.net（须与账户区域一致）
 #        AZURE_TS_ACCOUNT             签名账户名
 #        AZURE_TS_CERT_PROFILE        证书配置档名
 #
@@ -89,7 +91,7 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
 
-      # ---------- A. Azure Trusted Signing ----------
+      # ---------- A. Azure Artifact Signing（原 Trusted Signing，2026-01 更名，功能不变）----------
       - name: Azure 登录（OIDC）
         if: steps.pick.outputs.signer == 'azure'
         uses: azure/login@v2
@@ -98,25 +100,22 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: 用 Azure Trusted Signing 签名
+      - name: 用 Azure Artifact Signing 签名
         if: steps.pick.outputs.signer == 'azure'
-        uses: Azure/trusted-signing-action@v0
+        uses: Azure/artifact-signing-action@v2
         with:
-          # 认证：优先用上面的 OIDC（azure/login 拿到的凭据）。
-          # 该 action 的部分版本要求显式凭据，届时再加一个 AZURE_CLIENT_SECRET secret：
-          #   azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          #   azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          #   azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # 认证：走 OIDC 联合身份（federated credential），不需要客户端密钥。
+          # azure/login 已把 AZURE_ACCESS_TOKEN 注入环境，action 的
+          # DefaultAzureCredential 会直接使用；无需 AZURE_CLIENT_SECRET。
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           endpoint: ${{ secrets.AZURE_TS_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_TS_ACCOUNT }}
+          signing-account-name: ${{ secrets.AZURE_TS_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_TS_CERT_PROFILE }}
           files-folder: ${{ github.workspace }}\dist
           files-folder-filter: exe
           file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.digicert.com
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
       # ---------- B. SignPath Foundation ----------
