@@ -1185,6 +1185,96 @@ namespace Atlisp.Tray
             lock (output) return output.ToString();
         }
 
+        /// <summary>
+        /// 同 Run，但向子进程 stdin 写入内容后关闭（子进程读到 EOF 后继续执行）。
+        /// 用于把 PowerShell 脚本经 stdin 传给 powershell -Command -，
+        /// 替代 -EncodedCommand（base64 命令行是杀软误报的高权重特征）。
+        /// </summary>
+        public static string RunWithInput(string fileName, string arguments, string input,
+            int timeoutMs, out int exitCode, Encoding encoding)
+        {
+            Process process = null;
+            StringBuilder output = new StringBuilder();
+            try
+            {
+                ProcessStartInfo info = new ProcessStartInfo();
+                info.FileName = fileName;
+                info.Arguments = arguments;
+                info.UseShellExecute = false;
+                info.CreateNoWindow = true;
+                info.RedirectStandardOutput = true;
+                info.RedirectStandardError = true;
+                info.RedirectStandardInput = true;
+                if (encoding != null)
+                {
+                    info.StandardOutputEncoding = encoding;
+                    info.StandardErrorEncoding = encoding;
+                }
+
+                process = new Process();
+                process.StartInfo = info;
+                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null)
+                    {
+                        lock (output) output.AppendLine(e.Data);
+                    }
+                };
+                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null)
+                    {
+                        lock (output) output.AppendLine(e.Data);
+                    }
+                };
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                // 脚本很短（&lt;1KB，远小于管道缓冲区），直接写满即关 stdin。
+                // 写 BaseStream 原始字节（UTF-8），不经过 StreamWriter 编码层
+                //（.NET Framework 的 StandardInput.Encoding 不可写）。
+                try
+                {
+                    byte[] inputBytes = Encoding.UTF8.GetBytes(input);
+                    process.StandardInput.BaseStream.Write(inputBytes, 0, inputBytes.Length);
+                    process.StandardInput.BaseStream.Flush();
+                    process.StandardInput.Close();
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write("locked: 写入子进程 stdin 失败: " + ex.Message);
+                }
+
+                if (!process.WaitForExit(timeoutMs))
+                {
+                    try { process.Kill(); } catch { }
+                    exitCode = -1;
+                    lock (output) output.AppendLine("[timeout] 命令执行超时");
+                }
+                else
+                {
+                    try { process.WaitForExit(2000); } catch { }
+                    exitCode = process.ExitCode;
+                }
+            }
+            catch (Exception ex)
+            {
+                exitCode = -1;
+                lock (output) output.AppendLine("[error] " + ex.Message);
+            }
+            finally
+            {
+                if (process != null)
+                {
+                    try { process.Dispose(); } catch { }
+                }
+            }
+
+            lock (output) return output.ToString();
+        }
+
         public static string RunCmd(string commandLine, int timeoutMs, out int exitCode)
         {
             string comspec = Environment.GetEnvironmentVariable("ComSpec");
@@ -1921,13 +2011,12 @@ namespace Atlisp.Tray
 
         /// <summary>
         /// 找出所有「可执行文件在包目录内，或命令行里带包目录」的进程（排除托盘自身）。
-        /// 返回 null 表示枚举手段都不可用（不能据此认定目录是空闲的）。
+        /// 返回 null 表示枚举手段不可用（不能据此认定目录是空闲的）。
         /// </summary>
         public static List<LockHolder> Find(string packageDir)
         {
             if (string.IsNullOrEmpty(packageDir)) return new List<LockHolder>();
             List<LockHolder> holders = FindByPowerShell(packageDir);
-            if (holders == null) holders = FindByWmic(packageDir);
             if (holders == null) return null;
 
             int self = Process.GetCurrentProcess().Id;
@@ -1990,8 +2079,9 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 用 PowerShell 的 Win32_Process 枚举。脚本走 -EncodedCommand（base64），
-        /// 避免路径里的引号/反斜杠在 cmd 命令行上被二次解释；包目录通过环境变量传入。
+        /// 用 PowerShell 的 Win32_Process 枚举。脚本经 stdin 传入（powershell -Command -），
+        /// 避免路径里的引号/反斜杠在命令行上被二次解释，也不产生 base64 命令行
+        /// （-EncodedCommand 是杀软误报的高权重特征）。包目录通过环境变量传入。
         /// </summary>
         private static List<LockHolder> FindByPowerShell(string packageDir)
         {
@@ -2012,7 +2102,6 @@ namespace Atlisp.Tray
                 "  if ($exeHit -or $cmdHit) { '{0}|{1}|{2}' -f $p.ProcessId, $p.Name, $p.ExecutablePath }\n" +
                 "}\n";
 
-            string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
             string self = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
             string previousDir = Environment.GetEnvironmentVariable("ATLISP_LOCK_DIR");
             string previousSelf = Environment.GetEnvironmentVariable("ATLISP_LOCK_SELF");
@@ -2024,8 +2113,9 @@ namespace Atlisp.Tray
                 Environment.SetEnvironmentVariable("ATLISP_LOCK_SELF", self);
                 string powerShell = FindPowerShell();
                 if (string.IsNullOrEmpty(powerShell)) return null;
-                output = ProcessRunner.Run(powerShell,
-                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded,
+                output = ProcessRunner.RunWithInput(powerShell,
+                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
+                    script,
                     25000, out exitCode, Encoding.UTF8);
             }
             catch (Exception ex)
@@ -2054,39 +2144,6 @@ namespace Atlisp.Tray
                 holder.Pid = pid;
                 holder.Name = parts[1].Trim();
                 holder.Path = parts.Length > 2 ? parts[2].Trim() : "";
-                holders.Add(holder);
-            }
-            return holders;
-        }
-
-        /// <summary>PowerShell 不可用（或策略挡住）时的兜底：wmic 的 csv。</summary>
-        private static List<LockHolder> FindByWmic(string packageDir)
-        {
-            int exitCode;
-            string output = ProcessRunner.Run("wmic.exe",
-                "process get ProcessId,ExecutablePath,CommandLine /format:csv",
-                25000, out exitCode, Encoding.Default);
-            if (exitCode != 0 || string.IsNullOrEmpty(output)) return null;
-
-            List<LockHolder> holders = new List<LockHolder>();
-            string[] lines = output.Split(new char[] { '\r', '\n' },
-                StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string line = lines[i].Trim();
-                if (line.Length == 0) continue;
-                if (line.IndexOf(packageDir, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                // csv 列序：Node,CommandLine,ExecutablePath,ProcessId；命令行里可能有逗号，
-                // 但 ProcessId 永远在最后一列，ExecutablePath 在倒数第二列。
-                string[] parts = line.Split(',');
-                if (parts.Length < 3) continue;
-                int pid;
-                if (!int.TryParse(parts[parts.Length - 1].Trim(), NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out pid)) continue;
-                LockHolder holder = new LockHolder();
-                holder.Pid = pid;
-                holder.Path = parts[parts.Length - 2].Trim();
-                holder.Name = Path.GetFileName(holder.Path);
                 holders.Add(holder);
             }
             return holders;
@@ -7428,7 +7485,7 @@ namespace Atlisp.Tray
             List<LockHolder> holders = PackageDirLock.Find(packageDir);
             if (holders == null)
             {
-                AppLog.Write("locked: 无法枚举占用进程（PowerShell/wmic 都不可用）");
+                AppLog.Write("locked: 无法枚举占用进程（PowerShell 不可用或被策略限制）");
                 if (PackageDirLock.WaitFree(packageDir, 5000)) return true;
             }
             else if (holders.Count > 0)
