@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.15] - 2026-10-27
+
+### 更新内容
+
+- fix(tray): 削减静态特征——不落 .cmd 提权、去掉 PowerShell（改 WMI）、WebClient 改 HttpWebRequest、知识库默认不自动升级 (2f9065d)
+
 ## [1.12.14] - 2026-10-27
 
 ### 更新内容
