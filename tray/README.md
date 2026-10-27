@@ -388,8 +388,18 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
   `FileDescription`、`Copyright`、`LegalTrademarks`（之前只有版本号，发布者字段是空的，是 ML 模型的强特征）。
 - **不再生成任何 `.cmd`/`.bat` 脚本**：自我更新改为「新版 exe 暂存 → 副本自己覆盖目标 → 启动」，
   彻底去掉「`tasklist` 轮询父进程 + `copy /y` 覆盖 exe + `start`」这套恶意软件自我更新的经典形态。
+  提权安装 npm 包也不再往 `%TEMP%` 落批处理：直接把命令行交给提权后的 `cmd`（参数里带输出重定向），
+  并且**不隐藏控制台窗口**（隐藏提权执行本身就是可疑特征）。
+- **不再调用 PowerShell**：升级前探测「谁占着包目录」原来靠
+  `powershell -ExecutionPolicy Bypass` + 经 stdin 灌 `Get-CimInstance Win32_Process`，
+  现在改成进程内 `System.Management` 直接查 WMI。`-ExecutionPolicy Bypass` 是杀软静态特征里
+  命中率极高的字符串，顺带也少了一个隐藏子进程。
+- **不再用 `WebClient`**：下载 Node.js / Python 安装包改用 `HttpWebRequest` + 工作线程自己写流，
+  先落 `.part` 再改名（`.NET` 里 `WebClient.DownloadFile` + 随后 `Process.Start` 是
+  「下载并执行」的标准组合，静态权重很高）。
 - **默认不再自动安装新版本**：`AutoUpgrade` 默认 `false`、间隔默认 24h，只检查并提示，避免开机后
-  静默联网并在后台执行 `npm install -g`（「下载并执行」形态）。
+  静默联网并在后台执行 `npm install -g`（「下载并执行」形态）。知识库的
+  `DwgKbAutoUpgrade`（后台 `pip install` 并重启服务）同样改为默认 `false`（配置版本 v2 会自动迁移）。
 - **迁移/重启不再借道 `cmd.exe`**：自迁移只做「复制 + `Process.Start` 副本」。
 - **替换 exe 的动作交给固定二进制**：新增 `dist/AtlispUpdater.exe`，它几乎永不变（hash 稳定），
   由它校验并替换托盘；托盘不再自己改自己。
@@ -400,6 +410,11 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
   winget（清单本身带哈希校验）。
 
 仍然需要做（代码层面已无能为力）：
+
+> **如果 Defender 是在 `npm install` 阶段（exe 还没运行）就报的**，那说明命中来自**静态扫描**，
+> 上面这些运行期行为改动都影响不到它——静态模型只看文件的 PE 结构、IL 里出现的 API/字符串和
+> 有无签名。只有两件事能改变判定：**签名**（见下）和**向微软提交误报**。想把「包内 exe 被扫」
+> 这条路彻底去掉，只能不把 exe 放进 npm 包（改为单独下载安装）。
 
 1. **代码签名**（唯一根治手段，也是更新器校验链的最后一环）。OV/EV 证书需硬件 token/HSM，签名后用同一主体持续发布才能积累发布者信誉：
    ```bat
@@ -440,6 +455,8 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 启动后一直是黄色 | 右键 → 查看服务器日志，确认端口是否被占用、CAD 是否已启动 |
 | 升级提示 EPERM/EACCES | 同意以管理员身份重试，或把 Node.js 安装到用户目录 |
 | 升级报 `EBUSY: ... rename ... node_modules\@atlisp\mcp` | npm 升级要把**整个包目录**改名，任何在用该目录的进程都会挡住它：MCP 客户端（Claude Desktop / VSCode / opencode 等）拉起的服务、从 npm 包目录直接跑的旧托盘、残留的 `cad-worker`。托盘会先停自己拉起的服务并探测目录是否真的空闲；仍被占用时会列出占用进程，手动升级会问一次「是否结束它们」，同意后结束并自动重试 npm。若仍失败（例如自动升级不想杀进程、或占用者是杀软扫描），关掉占用程序后重试，或关掉托盘后手动 `npm install -g @atlisp/mcp@latest`。托盘日志里搜 `locked:` 能看到它探测到/结束了哪些进程 |
+| 升级时弹出一个黑色控制台窗口 | 正常：提权安装 npm 包现在直接执行 `cmd`（不再往 `%TEMP%` 落 `.cmd` 临时文件），刻意不隐藏窗口。进度仍在托盘的任务窗口里，那个控制台可以最小化，别关它 |
+| 知识库不再自动升级了 | 配置版本 v2 起 `DwgKbAutoUpgrade` 默认 `false`（后台静默 `pip install` 属于杀软敏感形态）。右键菜单 → 图纸知识库 → 勾选「自动检查新版本」即可恢复 |
 | 升级后托盘还是旧版本 | 在托盘日志 `%APPDATA%\atlisp-mcp\logs\tray.log` 里搜 `tray-selfupdate`；若提示“不在受管目录”，手动关闭托盘后重新运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` |
 | 托盘没有随 Windows 启动 | 右键勾选“随 Windows 启动托盘”，检查 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `atlisp-mcp-tray` |
 | 提示「Node.js 安装包未通过校验」/「Python 安装包未通过校验」 | Authenticode 校验失败（下载被截断、镜像返回了错误页面、或证书链在本机不受信任）。托盘会删除该文件并拒绝执行；改用 `winget install OpenJS.NodeJS.LTS` / `winget install Python.Python.3.12`，或手动从官网下载后自行安装 |

@@ -107,7 +107,8 @@ function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManife
         '/r:System.Windows.Forms.dll',
         '/r:System.Web.Extensions.dll',
         '/r:System.Xml.dll',
-        '/r:System.IO.Compression.dll'
+        '/r:System.IO.Compression.dll',
+        '/r:System.Management.dll'
     )
     if (-not $NoOptimize) { $compileArgs += '/optimize+' }
     if (Test-Path $icon) { $compileArgs += ('/win32icon:"' + $icon + '"') }

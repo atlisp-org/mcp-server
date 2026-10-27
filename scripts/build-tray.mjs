@@ -85,7 +85,8 @@ async function buildWithDotnet() {
     'System.Windows.Forms.dll',
     'System.Web.Extensions.dll',
     'System.Xml.dll',
-    'System.IO.Compression.dll'
+    'System.IO.Compression.dll',
+    'System.Management.dll'
   ];
 
   log(`使用 .NET SDK ${tool.version} 的 Roslyn 编译器编译（v${packageVersion}）...`);

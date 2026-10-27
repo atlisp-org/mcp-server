@@ -18,6 +18,7 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.Management;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -580,8 +581,8 @@ namespace Atlisp.Tray
 
     public sealed class TrayConfig
     {
-        /// <summary>配置结构版本；0 表示旧版配置（用于一次性迁移默认值）。</summary>
-        public const int ConfigVersionCurrent = 1;
+        /// <summary>配置结构版本；小于当前值表示需要一次性迁移默认值。</summary>
+        public const int ConfigVersionCurrent = 2;
 
         /// <summary>写入 tray.json 的配置版本，见 <see cref="ConfigVersionCurrent"/>。</summary>
         public int ConfigVersion { get; set; }
@@ -644,7 +645,9 @@ namespace Atlisp.Tray
             PythonMirror = "https://registry.npmmirror.com/-/binary/python";
             PythonPath = "";
             DwgKbAutoStart = true;
-            DwgKbAutoUpgrade = true;
+            // 与 AutoUpgrade 同理：后台静默 `pip install` 再重启服务是「下载并执行」
+            // 形态，默认关掉，只在菜单里手动升级。
+            DwgKbAutoUpgrade = false;
         }
 
         public static TrayConfig Load()
@@ -669,10 +672,16 @@ namespace Atlisp.Tray
             // 旧版默认是「每 1 小时自动静默升级」，新默认改为「只检查并提示」。
             // 已装了旧版托盘的机器不需要手动清 tray.json：这里一次性迁移到新默认，
             // 避免继续每小时联网查版本并在后台静默执行 npm 安装。
+            // v2 同理：知识库的自动 `pip install` 也改成默认关闭（旧版一律是 true，
+            // 分不清用户是否亲手打开过，宁可让他们手动再勾一次）。
             if (config.ConfigVersion < ConfigVersionCurrent)
             {
-                config.AutoUpgrade = false;
-                if (config.AutoUpgradeHours <= 1) config.AutoUpgradeHours = 24;
+                if (config.ConfigVersion < 1)
+                {
+                    config.AutoUpgrade = false;
+                    if (config.AutoUpgradeHours <= 1) config.AutoUpgradeHours = 24;
+                }
+                config.DwgKbAutoUpgrade = false;
                 config.ConfigVersion = ConfigVersionCurrent;
                 config.Save();
             }
@@ -1185,96 +1194,6 @@ namespace Atlisp.Tray
             lock (output) return output.ToString();
         }
 
-        /// <summary>
-        /// 同 Run，但向子进程 stdin 写入内容后关闭（子进程读到 EOF 后继续执行）。
-        /// 用于把 PowerShell 脚本经 stdin 传给 powershell -Command -，
-        /// 替代 -EncodedCommand（base64 命令行是杀软误报的高权重特征）。
-        /// </summary>
-        public static string RunWithInput(string fileName, string arguments, string input,
-            int timeoutMs, out int exitCode, Encoding encoding)
-        {
-            Process process = null;
-            StringBuilder output = new StringBuilder();
-            try
-            {
-                ProcessStartInfo info = new ProcessStartInfo();
-                info.FileName = fileName;
-                info.Arguments = arguments;
-                info.UseShellExecute = false;
-                info.CreateNoWindow = true;
-                info.RedirectStandardOutput = true;
-                info.RedirectStandardError = true;
-                info.RedirectStandardInput = true;
-                if (encoding != null)
-                {
-                    info.StandardOutputEncoding = encoding;
-                    info.StandardErrorEncoding = encoding;
-                }
-
-                process = new Process();
-                process.StartInfo = info;
-                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null)
-                    {
-                        lock (output) output.AppendLine(e.Data);
-                    }
-                };
-                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null)
-                    {
-                        lock (output) output.AppendLine(e.Data);
-                    }
-                };
-
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                // 脚本很短（&lt;1KB，远小于管道缓冲区），直接写满即关 stdin。
-                // 写 BaseStream 原始字节（UTF-8），不经过 StreamWriter 编码层
-                //（.NET Framework 的 StandardInput.Encoding 不可写）。
-                try
-                {
-                    byte[] inputBytes = Encoding.UTF8.GetBytes(input);
-                    process.StandardInput.BaseStream.Write(inputBytes, 0, inputBytes.Length);
-                    process.StandardInput.BaseStream.Flush();
-                    process.StandardInput.Close();
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Write("locked: 写入子进程 stdin 失败: " + ex.Message);
-                }
-
-                if (!process.WaitForExit(timeoutMs))
-                {
-                    try { process.Kill(); } catch { }
-                    exitCode = -1;
-                    lock (output) output.AppendLine("[timeout] 命令执行超时");
-                }
-                else
-                {
-                    try { process.WaitForExit(2000); } catch { }
-                    exitCode = process.ExitCode;
-                }
-            }
-            catch (Exception ex)
-            {
-                exitCode = -1;
-                lock (output) output.AppendLine("[error] " + ex.Message);
-            }
-            finally
-            {
-                if (process != null)
-                {
-                    try { process.Dispose(); } catch { }
-                }
-            }
-
-            lock (output) return output.ToString();
-        }
-
         public static string RunCmd(string commandLine, int timeoutMs, out int exitCode)
         {
             string comspec = Environment.GetEnvironmentVariable("ComSpec");
@@ -1317,40 +1236,32 @@ namespace Atlisp.Tray
             return "\"" + value.Replace("\"", "\\\"") + "\"";
         }
 
-        public static Process StartElevated(string commandLine, string logFile,
-            string nodePath, out string error)
+        /// <summary>
+        /// 以管理员身份执行 cmd 命令行（npm 全局安装等），输出重定向到 logFile。
+        ///
+        /// 刻意**不再**往 %TEMP% 写 `.cmd` 再提权运行——「落一个批处理文件、再把它隐藏着
+        /// 提权执行」是杀软眼里的投放器形态。现在直接把命令行交给提权后的 cmd，
+        /// 也不隐藏窗口（提权进程弹个控制台是正常的，隐藏反而像在躲）。
+        /// 命令行里的 node / npm 都用绝对路径，因此不依赖提升进程的 PATH。
+        /// </summary>
+        public static Process StartElevated(string commandLine, string logFile, out string error)
         {
             error = null;
             try
             {
-                string batchFile = Path.Combine(
-                    Path.GetTempPath(),
-                    "atlisp-mcp-" + Guid.NewGuid().ToString("N") + ".cmd");
-                StringBuilder content = new StringBuilder();
-                content.AppendLine("@echo off");
-                content.AppendLine("chcp 65001 >nul");
-                // UAC 提升的进程不一定继承托盘的 PATH，npm 安装脚本需要能找到 node
-                if (!string.IsNullOrEmpty(nodePath))
-                {
-                    string nodeDir = Path.GetDirectoryName(Path.GetFullPath(nodePath));
-                    if (!string.IsNullOrEmpty(nodeDir))
-                    {
-                        content.AppendLine("set \"PATH=" + nodeDir + ";%PATH%\"");
-                    }
-                }
-                content.AppendLine("call " + commandLine + " > " + Quote(logFile) + " 2>&1");
-                content.AppendLine("exit /b %ERRORLEVEL%");
-                File.WriteAllText(batchFile, content.ToString(), Encoding.Default);
-
                 string comspec = Environment.GetEnvironmentVariable("ComSpec");
                 if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
 
+                // /s + 首尾引号：cmd 会去掉最外层一对引号，剩下的就是原始命令行 + 重定向。
+                // chcp 65001 保留旧 `.cmd` 里的 UTF-8 输出，日志按 UTF-8 读回。
                 ProcessStartInfo info = new ProcessStartInfo();
                 info.FileName = comspec;
-                info.Arguments = "/d /s /c " + Quote(batchFile);
+                info.Arguments = "/d /s /c \"chcp 65001 >nul & " + commandLine +
+                    " > " + Quote(logFile) + " 2>&1\"";
                 info.Verb = "runas";
                 info.UseShellExecute = true;
-                info.WindowStyle = ProcessWindowStyle.Hidden;
+                info.WorkingDirectory = Environment.GetFolderPath(
+                    Environment.SpecialFolder.UserProfile);
                 return Process.Start(info);
             }
             catch (Win32Exception ex)
@@ -2016,7 +1927,7 @@ namespace Atlisp.Tray
         public static List<LockHolder> Find(string packageDir)
         {
             if (string.IsNullOrEmpty(packageDir)) return new List<LockHolder>();
-            List<LockHolder> holders = FindByPowerShell(packageDir);
+            List<LockHolder> holders = FindByWmi(packageDir);
             if (holders == null) return null;
 
             int self = Process.GetCurrentProcess().Id;
@@ -2079,84 +1990,63 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 用 PowerShell 的 Win32_Process 枚举。脚本经 stdin 传入（powershell -Command -），
-        /// 避免路径里的引号/反斜杠在命令行上被二次解释，也不产生 base64 命令行
-        /// （-EncodedCommand 是杀软误报的高权重特征）。包目录通过环境变量传入。
+        /// 用 WMI 的 Win32_Process 枚举。需要命令行才能认出「把包目录当参数或工作目录的
+        /// node 进程」，而 .NET Framework 的 Process 类读不到别的进程的命令行。
+        ///
+        /// 直接在进程内查 WMI（System.Management），不再启动 powershell 并把脚本经 stdin
+        /// 灌进去：`powershell -ExecutionPolicy Bypass` 是杀软静态特征的常见命中项，
+        /// 少一次隐藏子进程也少一条行为证据。
         /// </summary>
-        private static List<LockHolder> FindByPowerShell(string packageDir)
+        private static List<LockHolder> FindByWmi(string packageDir)
         {
-            string script =
-                "$ErrorActionPreference = 'SilentlyContinue'\n" +
-                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
-                "$d = $env:ATLISP_LOCK_DIR\n" +
-                "if ([string]::IsNullOrEmpty($d)) { exit 2 }\n" +
-                "$d = $d.TrimEnd('\\')\n" +
-                "$self = 0\n" +
-                "[int]::TryParse($env:ATLISP_LOCK_SELF, [ref]$self) | Out-Null\n" +
-                "if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) { exit 3 }\n" +
-                "try { $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { exit 4 }\n" +
-                "foreach ($p in $procs) {\n" +
-                "  if ($p.ProcessId -eq $self) { continue }\n" +
-                "  $exeHit = $p.ExecutablePath -and $p.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase)\n" +
-                "  $cmdHit = $p.CommandLine -and $p.CommandLine.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0\n" +
-                "  if ($exeHit -or $cmdHit) { '{0}|{1}|{2}' -f $p.ProcessId, $p.Name, $p.ExecutablePath }\n" +
-                "}\n";
-
-            string self = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
-            string previousDir = Environment.GetEnvironmentVariable("ATLISP_LOCK_DIR");
-            string previousSelf = Environment.GetEnvironmentVariable("ATLISP_LOCK_SELF");
-            int exitCode;
-            string output;
+            string dir = packageDir.TrimEnd('\\');
+            List<LockHolder> holders = new List<LockHolder>();
             try
             {
-                Environment.SetEnvironmentVariable("ATLISP_LOCK_DIR", packageDir);
-                Environment.SetEnvironmentVariable("ATLISP_LOCK_SELF", self);
-                string powerShell = FindPowerShell();
-                if (string.IsNullOrEmpty(powerShell)) return null;
-                output = ProcessRunner.RunWithInput(powerShell,
-                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
-                    script,
-                    25000, out exitCode, Encoding.UTF8);
+                using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
+                    "SELECT ProcessId, Name, ExecutablePath, CommandLine FROM Win32_Process"))
+                {
+                    foreach (ManagementBaseObject row in searcher.Get())
+                    {
+                        using (row)
+                        {
+                            try
+                            {
+                                object value = row["ProcessId"];
+                                int pid = value == null ? 0 :
+                                    Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                                if (pid <= 0) continue;
+
+                                string name = row["Name"] as string;
+                                string exePath = row["ExecutablePath"] as string;
+                                string commandLine = row["CommandLine"] as string;
+
+                                bool hit = (!string.IsNullOrEmpty(exePath) &&
+                                        exePath.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) ||
+                                    (!string.IsNullOrEmpty(commandLine) &&
+                                        commandLine.IndexOf(dir, StringComparison.OrdinalIgnoreCase) >= 0);
+                                if (!hit) continue;
+
+                                LockHolder holder = new LockHolder();
+                                holder.Pid = pid;
+                                holder.Name = name;
+                                holder.Path = string.IsNullOrEmpty(exePath) ? "" : exePath;
+                                holders.Add(holder);
+                            }
+                            catch (Exception)
+                            {
+                                // 别的用户的进程读不到 ExecutablePath/CommandLine，跳过
+                            }
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
-                AppLog.Write("locked: PowerShell 枚举进程失败: " + ex.Message);
+                AppLog.Write("locked: WMI 枚举进程失败: " + ex.Message);
                 return null;
             }
-            finally
-            {
-                Environment.SetEnvironmentVariable("ATLISP_LOCK_DIR", previousDir);
-                Environment.SetEnvironmentVariable("ATLISP_LOCK_SELF", previousSelf);
-            }
-
-            if (exitCode != 0) return null;
-            List<LockHolder> holders = new List<LockHolder>();
-            string[] lines = output == null ? new string[0] :
-                output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
-            {
-                string[] parts = lines[i].Trim().Split('|');
-                if (parts.Length < 2) continue;
-                int pid;
-                if (!int.TryParse(parts[0].Trim(), NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out pid)) continue;
-                LockHolder holder = new LockHolder();
-                holder.Pid = pid;
-                holder.Name = parts[1].Trim();
-                holder.Path = parts.Length > 2 ? parts[2].Trim() : "";
-                holders.Add(holder);
-            }
             return holders;
-        }
-
-        private static string FindPowerShell()
-        {
-            string fromPath = ProcessRunner.Where("powershell.exe");
-            if (!string.IsNullOrEmpty(fromPath)) return fromPath;
-            string system32 = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-            return File.Exists(system32) ? system32 : null;
         }
     }
 
@@ -3818,12 +3708,22 @@ namespace Atlisp.Tray
         }
     }
 
+    /// <summary>
+    /// 后台下载（Node.js zip/MSI、Python 安装包）。
+    ///
+    /// 用 HttpWebRequest + 工作线程，而不是 WebClient.DownloadFileAsync：
+    /// 「WebClient + DownloadFile + 随后 Process.Start」是杀软 ML 里权重很高的
+    /// 下载器组合，而这个类做的本来就是普通的 HTTP GET + 自己写文件。
+    /// 先写 `.part` 再改名，下载中断不会留下半截文件被后续步骤当成成品。
+    /// </summary>
     internal sealed class DownloadJob : IDisposable
     {
         private readonly object _sync = new object();
         private readonly string _url;
         private readonly string _filePath;
-        private WebClient _client;
+        private HttpWebRequest _request;
+        private Stream _stream;
+        private volatile bool _cancelled;
         private long _received;
         private long _total;
         private bool _finished;
@@ -3873,92 +3773,116 @@ namespace Atlisp.Tray
 
         public void Start()
         {
+            Thread worker = new Thread(Download);
+            worker.IsBackground = true;
+            worker.Name = "atlisp-download";
+            worker.Start();
+        }
+
+        private void Download()
+        {
+            string temp = _filePath + ".part";
+            bool ok = false;
+            string error = null;
             try
             {
                 string directory = Path.GetDirectoryName(_filePath);
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
-                if (File.Exists(_filePath))
+                if (File.Exists(temp))
                 {
-                    File.Delete(_filePath);
+                    try { File.Delete(temp); } catch { }
                 }
 
-                _client = new WebClient();
-                _client.Headers.Add("User-Agent", "atlisp-tray/" + Program.AppVersion);
-                _client.DownloadProgressChanged += OnProgress;
-                _client.DownloadFileCompleted += OnCompleted;
-                _client.DownloadFileAsync(new Uri(_url), _filePath);
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(new Uri(_url));
+                request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+                request.Timeout = 60000;
+                request.ReadWriteTimeout = 60000;
+                request.AllowAutoRedirect = true;
+                _request = request;
+
+                using (WebResponse response = request.GetResponse())
+                {
+                    long total = response.ContentLength;
+                    lock (_sync) _total = total;
+
+                    using (Stream remote = response.GetResponseStream())
+                    {
+                        _stream = remote;
+                        using (FileStream local = new FileStream(temp, FileMode.Create,
+                            FileAccess.Write, FileShare.None, 81920))
+                        {
+                            byte[] buffer = new byte[81920];
+                            while (true)
+                            {
+                                if (_cancelled) throw new OperationCanceledException();
+                                int read = remote.Read(buffer, 0, buffer.Length);
+                                if (read <= 0) break;
+                                local.Write(buffer, 0, read);
+                                lock (_sync) _received += read;
+                            }
+                        }
+                    }
+                }
+
+                FileInfo info = new FileInfo(temp);
+                if (!info.Exists || info.Length <= 0)
+                {
+                    throw new IOException("下载文件为空。");
+                }
+                if (_total > 0 && info.Length != _total)
+                {
+                    throw new IOException("下载不完整（" + info.Length + " / " + _total + " 字节）。");
+                }
+                if (File.Exists(_filePath)) File.Delete(_filePath);
+                File.Move(temp, _filePath);
+                ok = true;
             }
             catch (Exception ex)
             {
+                error = _cancelled ? "下载已取消" : ex.Message;
+            }
+            finally
+            {
+                _stream = null;
+                _request = null;
+                if (!ok) TryDelete(temp);
                 lock (_sync)
                 {
+                    _success = ok;
+                    if (!ok) _error = error ?? "下载失败。";
                     _finished = true;
-                    _success = false;
-                    _error = ex.Message;
                 }
             }
         }
 
-        private void OnProgress(object sender, DownloadProgressChangedEventArgs e)
+        private static void TryDelete(string path)
         {
-            lock (_sync)
+            try
             {
-                _received = e.BytesReceived;
-                _total = e.TotalBytesToReceive;
+                if (File.Exists(path)) File.Delete(path);
             }
-        }
-
-        private void OnCompleted(object sender, AsyncCompletedEventArgs e)
-        {
-            lock (_sync)
+            catch (Exception)
             {
-                _finished = true;
-
-                if (e.Cancelled)
-                {
-                    _success = false;
-                    _error = "下载已取消";
-                    return;
-                }
-                if (e.Error != null)
-                {
-                    _success = false;
-                    _error = e.Error.Message;
-                    return;
-                }
-
-                try
-                {
-                    FileInfo file = new FileInfo(_filePath);
-                    if (!file.Exists || file.Length <= 0)
-                    {
-                        _success = false;
-                        _error = "下载文件为空。";
-                        return;
-                    }
-                    if (_total > 0 && file.Length != _total)
-                    {
-                        _success = false;
-                        _error = "下载不完整（" + file.Length + " / " + _total + " 字节）。";
-                        return;
-                    }
-                    _success = true;
-                }
-                catch (Exception ex)
-                {
-                    _success = false;
-                    _error = ex.Message;
-                }
+                // 文件被占用时留给下次下载覆盖，不打扰用户
             }
         }
 
         public void Dispose()
         {
-            if (_client != null)
+            _cancelled = true;
+            try
             {
-                try { _client.Dispose(); } catch { }
-                _client = null;
+                if (_request != null) _request.Abort();
+            }
+            catch (Exception)
+            {
+            }
+            try
+            {
+                if (_stream != null) _stream.Close();
+            }
+            catch (Exception)
+            {
             }
         }
     }
@@ -7601,10 +7525,9 @@ namespace Atlisp.Tray
                 "在托盘菜单里重试升级；\r\n" +
                 "2) 或关掉托盘后在命令行执行：\r\n" +
                 "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
-                "查看谁在占用（PowerShell）：\r\n" +
-                "  Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" |\r\n" +
-                "    Select-Object ProcessId, CommandLine | Format-List\r\n" +
-                "  Get-Process AtlispTray | Select-Object Id, Path";
+                "查看谁在占用：任务管理器 → 详细信息，找 node.exe / AtlispTray.exe / " +
+                "AtlispUpdater.exe，\r\n" +
+                "  右键「打开文件所在位置」，确认路径是否在 @atlisp\\mcp 目录内。";
         }
 
         /// <summary>
@@ -7861,7 +7784,7 @@ namespace Atlisp.Tray
             string logFile = NewTaskLogFile("npm-elevated");
             LongTask task = new LongTask(title + "（管理员）", logFile);
             string error;
-            Process process = ProcessRunner.StartElevated(commandLine, logFile, info.NodePath, out error);
+            Process process = ProcessRunner.StartElevated(commandLine, logFile, out error);
             if (process == null)
             {
                 task.Dispose();
