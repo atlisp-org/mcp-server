@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.17] - 2026-10-27
+
+### 更新内容
+
+- feat(tray): 移除 AtlispUpdater.exe，托盘更新交给 atlisp-tray (67cbafb)
+
 ## [1.12.16] - 2026-10-27
 
 ### 更新内容
