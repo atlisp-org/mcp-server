@@ -8,10 +8,10 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **检查更新**：对比本机版本与 npm 上的最新版本，默认启动后检查一次并**只提示、不自动安装**；可在设置里开启定时自动升级（默认间隔 24 小时，用户确认后才执行 npm 安装）
 - **知识库全自动**：默认随托盘启动本地知识库，缺 Python / `atlisp-dwg-kb` 时自动下载安装；定时查 PyPI 新版本并静默升级（升级前停服务、完成后自动拉起）
 - **异常自愈**：MCP 或知识库进程异常退出后自动拉起（带退避，最多 5 次），用户主动停止的不会被拉起
-- **托盘自动更新**：从 npm 包目录启动时先迁移到用户目录（避免升级时 exe 被锁）；升级 @lisp/mcp 后由**独立的 `AtlispUpdater.exe`**（固定二进制、校验 SHA256 + 签名）替换托盘并重启，不自写脚本、不边跑边改自己（见「杀软误报」）
+- **托盘自动更新**：`atlisp-tray` 首次运行时把 exe 安装到 `%LOCALAPPDATA%\Programs\atlisp-mcp`（不再从包目录复制自身）；升级 @lisp/mcp 后由**独立的 `AtlispUpdater.exe`**（固定二进制、校验 SHA256 + 签名）替换托盘并重启，不自写脚本、不边跑边改自己（见「杀软误报」）
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
-- **开机自启**：首次启动自动加入 Windows 启动项（之后尊重手动开关）；可选托盘启动时自动启动服务
+- **开机自启**：首次启动**询问**是否加入 Windows 启动项（默认按钮在「否」，之后可在右键菜单随时开关）；可选托盘启动时自动启动服务
 - **环境诊断**：Node/npm 路径、安装位置、服务状态、健康检查一屏查看
 - **npm 镜像**：一键切换 npmmirror（国内网络）
 
@@ -58,9 +58,31 @@ npm publish
 会自动把以下文件打进 `@atlisp/mcp`：
 
 - `dist/atlisp-mcp.js` 等主程序
-- `dist/AtlispTray.exe`
+- `dist/tray-manifest.json`（托盘二进制的下载地址与 SHA256）
 - `tray/atlisp-tray.js`（注册为 `atlisp-tray` 命令）
+- `tray/tray-download.js`
 - `tray/README.md`
+
+**不再包含** `dist/AtlispTray.exe` / `dist/AtlispUpdater.exe`（`package.json` 的 `files` 里有
+`!dist/*.exe`）：未签名 PE 在 `npm install` 阶段就会被 Defender 扫描，容易触发
+`Trojan:Win32/Wacatac.!ml`。exe 改为打 tag 后上传到两个地方，首次运行 `atlisp-tray`
+时按 manifest 的 SHA256 校验后下载到 `%LOCALAPPDATA%\Programs\atlisp-mcp`：
+
+1. **atlisp.cn**（主源，国内）：`https://atlisp.cn/download/<文件名>`（客户端带 `?v=<版本>` 防缓存），
+   由 `scripts/upload-tray.mjs` 调用 atlisp.cn 的 `/upload` 上传到 `public_html/download/`
+2. **GitHub Releases**（兜底）：`.../releases/download/v<版本>/`
+
+两个源按顺序尝试，任一可用即可；SHA256 必须与 manifest 一致，否则拒绝执行。
+
+> `atlisp.cn/download/` 是**扁平目录**（同名文件按版本覆盖），所以客户端下载时会带
+> `?v=<版本>` 防缓存。发布时必须把 `AtlispTray.exe` 和 `AtlispUpdater.exe` **都**上传，
+> 只传一个会导致该文件回退到 GitHub（GitHub 也没有 Release 时直接失败）。
+
+```bash
+atlisp-tray --check            # 打印路径/版本/所有下载源
+atlisp-tray --force-download   # 强制重新下载
+ATLISP_TRAY_BASE_URL=https://your-mirror/tray/v{version} atlisp-tray   # 只用指定源
+```
 
 发布前可以用以下命令检查包内容：
 
@@ -349,12 +371,12 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 
 ### 托盘自动更新
 
-托盘 exe 随 `@lisp/mcp` 一起发布（`dist/AtlispTray.exe`），所以升级包时托盘也要跟着换新：
+托盘 exe 不再随 `@lisp/mcp` 发布，而是由 `atlisp-tray` 首次运行时下载安装到
+`%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe`。升级包后托盘仍要跟着换新：
 
-1. **自迁移**：如果托盘是从 npm 包目录启动的（`atlisp-tray`，路径含 `node_modules`），启动时把自身复制到
-   `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe` 并直接启动副本（带 `--wait-pid` 等旧进程让出互斥体），
-   同时把开机自启项改到新路径、写 `AtlispTray.version`。
-   这样 `npm install -g` 不会再因为运行中的 exe 被 Windows 锁定（EBUSY/EPERM）而失败。
+1. **安装位置固定**：`atlisp-tray` 负责把 exe 落到用户目录（带 SHA256 校验），
+   包目录里不再有运行中的 exe，`npm install -g` 不会因文件被锁而 EBUSY/EPERM。
+   托盘自己**不再做「复制自身再启动」的自迁移**。
 2. **交给独立更新器**：升级 @lisp/mcp 成功后，托盘比较包内 `dist\AtlispTray.exe` 与当前 exe 的 SHA256；
    不同则把新 exe 复制成同目录的 `.AtlispTray.update.exe`，然后启动 **`AtlispUpdater.exe`**：
 
@@ -400,7 +422,13 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 - **默认不再自动安装新版本**：`AutoUpgrade` 默认 `false`、间隔默认 24h，只检查并提示，避免开机后
   静默联网并在后台执行 `npm install -g`（「下载并执行」形态）。知识库的
   `DwgKbAutoUpgrade`（后台 `pip install` 并重启服务）同样改为默认 `false`（配置版本 v2 会自动迁移）。
-- **迁移/重启不再借道 `cmd.exe`**：自迁移只做「复制 + `Process.Start` 副本」。
+- **不再静默写开机自启**：首次启动改为询问（默认按钮在「否」）。「未告知就设置自启」是 ML 模型里
+  权重很高的行为；静默启动（`--silent`）不询问也不写标记。
+- **不再有自我复制/自迁移**：exe 由 `atlisp-tray` 安装到用户目录，托盘启动时不会复制自身再执行。
+- **不再调用 `where.exe` / `taskkill.exe`**：PATH 查找与进程树终止都在进程内完成
+  （`ProcessRunner.Where` 扫描 PATH，`ProcessKiller` 用 Toolhelp 快照 + `Process.Kill`），
+  少两次 `CreateProcess`，也少了两个常被恶意软件滥用的命令行。
+- **完全移除 `WebClient`**：连 SHASUMS 文本也改用 `HttpWebRequest`，IL 里不再出现该类。
 - **替换 exe 的动作交给固定二进制**：新增 `dist/AtlispUpdater.exe`，它几乎永不变（hash 稳定），
   由它校验并替换托盘；托盘不再自己改自己。
 - **不再把版本号编译进 exe**：版本资源固定 `1.0.0.0`，真实版本写 `AtlispTray.version`。
@@ -416,7 +444,12 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 > 有无签名。只有两件事能改变判定：**签名**（见下）和**向微软提交误报**。想把「包内 exe 被扫」
 > 这条路彻底去掉，只能不把 exe 放进 npm 包（改为单独下载安装）。
 
-1. **代码签名**（唯一根治手段，也是更新器校验链的最后一环）。OV/EV 证书需硬件 token/HSM，签名后用同一主体持续发布才能积累发布者信誉：
+1. **代码签名**（唯一根治手段，也是更新器校验链的最后一环）。本项目走
+   **SignPath Foundation**（免费、开源、无地区限制；证书主体是 SignPath Foundation，
+   用户看到的发布者也是它），配置见 `docs/signpath-signing.md`，制品配置源文件
+   `signpath/artifact-configuration.xml`。Azure Artifact Signing 是备选，但
+   **Public Trust 有地区限制（个人仅限美国/加拿大）**，中国大陆主体用不了。
+   自购 OV/EV 证书需硬件 token/HSM，签名后用同一主体持续发布才能积累发布者信誉：
    ```bat
    set ATLISP_TRAY_SIGN_THUMBPRINT=<证书指纹，无空格>
    npm run build:tray
@@ -476,7 +509,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 - `DwgKbServer` / `DwgKbClient` / `DwgKbSettingsForm`：知识库本地服务启停（PID 记录）、状态探活、`/build` 提交、地址与 API Key 设置
 - `ZipInstaller` / `PortableInstallJob`：portable Node.js zip 的剥根解压（后台线程）
 - `NpmRunner` / `LongTask`：npm 安装、升级、检查更新的异步执行与日志
-- `TraySelfUpdate`：托盘自迁移（npm 包目录 → 用户目录）、调用更新器完成自我替换
+- `TraySelfUpdate`：按 `tray-manifest.json` 下载/校验新托盘、调用更新器完成自我替换
 - `DownloadVerifier`：下载物校验（Node zip 比对官方 SHASUMS256.txt；安装包校验 Authenticode）
 - `CodeSign`（`tray/CodeSign.cs`）：WinVerifyTrust 封装，托盘与更新器共用
 - `DownloadJob`：npmmirror 下载、进度与文件大小校验

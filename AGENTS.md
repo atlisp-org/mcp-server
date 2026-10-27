@@ -257,11 +257,14 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
-| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、托盘自迁移（交给更新器替换自身）、知识库（Python）自动安装/升级/自愈、Node.js 安装（zip 校 SHA256 / MSI 校签名 / 手动优先 winget）、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
+| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、按 manifest 下载并交给更新器替换自身、知识库（Python）自动安装/升级/自愈、Node.js 安装（zip 校 SHA256 / MSI 校签名 / 手动优先 winget）、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
 | `tray/AtlispUpdater.cs` | 独立更新器 `AtlispUpdater.exe`：等旧托盘退出 → 校验 SHA256 + Authenticode → 覆盖 → 启动。**刻意几乎不修改**，hash 长期稳定以积累杀软信誉；不自更新、不联网、不写注册表 |
 | `tray/CodeSign.cs` | `WinVerifyTrust` 封装（托盘与更新器共用）：校验下载的安装包/待替换的 exe 的 Authenticode 签名 |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
+| `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小 + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成 |
+| `scripts/upload-tray.mjs` | 把签名后的 exe/manifest 上传到 atlisp.cn `/upload`，对外地址 `https://atlisp.cn/download/<文件名>`（国内主源） |
+| `tray/tray-download.js` | 托盘二进制下载器：按 manifest 校验 SHA256 后落到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；下载源按 `baseUrls` 顺序尝试（atlisp.cn/download → GitHub），`ATLISP_TRAY_BASE_URL` 可强制单源 |
+| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：解包后的包内没有 exe，首次运行下载并校验，然后启动 |
 | `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |
 | `scripts/net48-refs.mjs` | net48 交叉编译公共辅助：Roslyn csc 定位 + 参考程序集下载/缓存 |
-| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：Windows 上启动 `dist/AtlispTray.exe` |

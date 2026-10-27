@@ -206,9 +206,13 @@ For more info: https://atlisp.cn
             const s = autostartStatus();
             if (s.installed) {
                 console.error(`自动启动: 已安装`);
-                if (s.command) console.error(`  命令: ${s.command}`);
+                console.error(`  命令: ${s.fullCommand || s.command}`);
+                if (s.trayInstalled) {
+                    console.error('  注意: 托盘也注册了开机自启（atlisp-mcp-tray），两者会抢同一个端口');
+                }
             } else {
                 console.error(`自动启动: 未安装`);
+                if (s.trayInstalled) console.error('  （托盘自启已安装：atlisp-mcp-tray）');
             }
             process.exit(0);
         }

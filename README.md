@@ -223,7 +223,7 @@ atlisp-mcp --autostart-status
 
 - 启动 / 停止 / 重启服务，自动识别 `service.ps1` 安装的 Windows 服务
 - 检查更新、通过 npm 下载安装 / 升级 `@atlisp/mcp@latest`；默认每小时自动检查并静默升级
-- 托盘自我更新：从 npm 包目录启动时迁移到 `%LOCALAPPDATA%\Programs\atlisp-mcp`，升级包后自动替换托盘 exe 并重启
+- 托盘自我更新：exe 由 `atlisp-tray` 安装到 `%LOCALAPPDATA%\Programs\atlisp-mcp`，升级包后按 manifest 校验下载并替换
 - 检测不到 Node.js 时，从 npmmirror 下载官方 MSI 并静默安装（UAC 授权）
 - 显示端口、CAD 连接状态、版本；异常退出气泡提醒
 - 一键打开调试面板、API 文档、Playground、服务器日志
@@ -236,15 +236,30 @@ atlisp-mcp --autostart-status
 npm run build:tray
 ```
 
-`npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘，把 `dist/AtlispTray.exe` 和 `atlisp-tray` 启动器一起发布到 npm。
+`npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘并生成 `dist/tray-manifest.json`（含 SHA256）。
 
-> 不要用 `npm publish --ignore-scripts`：它会跳过构建，把旧 `dist/` 发出去。服务端启动时和 `get_system_status` 的 `mcp.distMismatch` 都会提示这种不一致。
+> **exe 不再随 npm 包发布**：`dist/AtlispTray.exe` / `dist/AtlispUpdater.exe` 会在打 tag 后
+> 上传到 **atlisp.cn/download**（主源，`scripts/upload-tray.mjs`）和 **GitHub Release**（兜底），
+> npm 包里只有 `atlisp-tray` 启动器、下载器和 manifest —— 这样 `npm install` 阶段不会再出现
+> 未签名 PE 被 Defender 扫描的情况。首次运行 `atlisp-tray` 时按 manifest 的 SHA256 校验后
+> 下载到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；两个源自动依次尝试，也可用
+> `ATLISP_TRAY_BASE_URL` 强制指定。
+
+> 不要用 `npm publish --ignore-scripts`：它会跳过构建，把旧 `dist/` 发出去。服务端启动时和
+> `get_system_status` 的 `mcp.distMismatch` 都会提示这种不一致。
+> （签名 workflow 里的 publish job 是特例：它先下载已签名产物并显式生成 manifest，再
+> `--ignore-scripts` 发布。）
 
 全局安装后运行：
 
 ```bash
-atlisp-tray
+atlisp-tray            # 首次会下载并校验托盘二进制
+atlisp-tray --check    # 只打印路径/版本/下载源
 ```
+
+**不需要托盘也可以**：托盘只是图形化管理器，服务本身用
+`atlisp-mcp --install-autostart` 就能开机自启（见上一节），状态与日志看
+`http://127.0.0.1:8110/debug`。两种自启方式二选一，不要同时开（会抢同一端口）。
 
 Windows 本地构建/安装也可以使用：
 
@@ -1120,23 +1135,24 @@ atlisp-mcp --version
 
 ## Code signing policy
 
-The Windows binaries (`dist/AtlispTray.exe`, `dist/AtlispUpdater.exe`) are
-Authenticode-signed for free by
-[SignPath.io](https://signpath.org)（SignPath Foundation 计划）：证书由
-**SignPath Foundation** 的 CA 签发（证书主体是基金会而非个人，依赖其品牌信誉），
-每次发版需在 SignPath 控制台人工批准签名请求后自动完成签名。
+**Code signing policy** for the Windows binaries (`dist/AtlispTray.exe`,
+`dist/AtlispUpdater.exe`):
 
-Windows 二进制（`dist/AtlispTray.exe`、`dist/AtlispUpdater.exe`）通过 SignPath
-Foundation 做 Authenticode 签名，发布流程见
-`.github/workflows/sign-release.yml`（构建 → 上传 → SignPath 控制台批准 →
-签名 → `signtool verify` → `npm publish --ignore-scripts`）。签名后的产物即为
-最终发布产物，不重新编译。备选渠道：Azure Artifact Signing（需自有订阅，
-配置指南见 `docs/azure-artifact-signing.md`）。
+> **Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+> [SignPath Foundation](https://signpath.org).**
+
+每次发版必须在 SignPath 控制台人工批准签名请求；批准后由 SignPath 在云端 HSM 内完成
+Authenticode 签名，**签名后的产物即最终发布产物，不重新编译**。流程见
+`.github/workflows/sign-release.yml`（构建 → 上传 → SignPath 批准 → 下载签名产物 →
+`signtool verify` → `npm publish --ignore-scripts`），配置见 `docs/signpath-signing.md`，
+制品配置源文件为 `signpath/artifact-configuration.xml`。
+备选渠道：Azure Artifact Signing（需自有订阅，且有地区限制，见
+`docs/azure-artifact-signing.md`）。
 
 **团队角色**（单人项目，以下角色均由 maintainer 承担）：
 
 - **Authors / Committers & Reviewers**：vitalgg（仓库 owner，所有变更经其审查）
-- **Approvers**（发布审批人，GitHub Actions 中触发签名/发布的人）：vitalgg
+- **Approvers**（发布审批人，SignPath 控制台中批准签名请求的人）：vitalgg
 
 **隐私声明**：
 

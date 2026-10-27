@@ -14,7 +14,10 @@
   },
   "files": [
     "dist",
+    "!dist/*.exe",
+    "!dist/SHASUMS256.txt",
     "tray/atlisp-tray.js",
+    "tray/tray-download.js",
     "tray/README.md"
   ],
   "scripts": {
@@ -23,7 +26,8 @@
     "build:main": "esbuild src/atlisp-mcp.js --bundle --platform=node --target=node20 --format=esm --outdir=dist --external:edge-js --packages=external --banner:js=\"#!/usr/bin/env node\"",
     "build:worker": "node scripts/copy-assets.mjs",
     "build:rot": "node scripts/build-rot.mjs",
-    "build:tray": "node scripts/build-tray.mjs",
+    "build:tray": "node scripts/build-tray.mjs && node scripts/build-tray-manifest.mjs",
+    "build:tray-manifest": "node scripts/build-tray-manifest.mjs",
     "prepack": "npm run build && npm run build:tray",
     "prepublishOnly": "npm run build && node scripts/check-build.mjs",
     "test": "vitest run",

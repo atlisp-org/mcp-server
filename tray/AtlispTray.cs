@@ -71,8 +71,8 @@ namespace Atlisp.Tray
             }
             SilentMode = silent;
 
-            // 自迁移会把副本立刻拉起，此时本进程还没退出、仍持有托盘互斥体。
-            // 副本用 --wait-pid 等本进程退出后再创建托盘，避免撞上「已经在运行」。
+            // 自替换/更新重启时，副本会带 --wait-pid 等旧进程退出后再创建托盘，
+            // 避免撞上「已经在运行」的互斥体。
             int waitPid = 0;
             for (int i = 0; i < args.Length - 1; i++)
             {
@@ -121,21 +121,10 @@ namespace Atlisp.Tray
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
-                // 从 npm 包目录启动时先把自己迁到用户目录：运行中的 exe 会被 Windows
-                // 锁住，会导致 `npm install -g @atlisp/mcp@latest` 在替换 dist\AtlispTray.exe
-                // 时报 EBUSY/EPERM。迁移后包内文件不再被占用，也便于后续自我更新。
-                // 副本直接启动（不再借道 cmd 脚本，避免「写脚本等父进程退出」这种
-                // 杀软重点关注的形态）。
-                string relocateMessage;
-                if (TraySelfUpdate.TryRelocate(out relocateMessage))
-                {
-                    AppLog.Write("tray-selfupdate: " + relocateMessage);
-                    return;
-                }
-                if (!string.IsNullOrEmpty(relocateMessage))
-                {
-                    AppLog.Write("tray-selfupdate: 跳过自迁移：" + relocateMessage);
-                }
+                // 不再做「从 npm 包目录把自己复制到用户目录再启动」的自迁移：
+                // 新版的 exe 由 `atlisp-tray` 直接下载到 %LOCALAPPDATA%\Programs\atlisp-mcp，
+                // 不会运行在包目录里。留着这条路径只会给杀软提供一个「自我复制并执行」的样本。
+                // 旧版用户由旧版自己完成迁移（旧代码在他们机器上仍然生效）。
 
                 Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
                 {
@@ -227,7 +216,7 @@ namespace Atlisp.Tray
             return "dev";
         }
 
-        /// <summary>把版本号写到 exe 同目录（自迁移后新位置的托盘要能显示版本）。</summary>
+        /// <summary>把版本号写到 exe 同目录（由 atlisp-tray 首次安装时调用）。</summary>
         internal static void WriteVersionFile(string directory)
         {
             if (string.IsNullOrEmpty(directory)) return;
@@ -441,23 +430,19 @@ namespace Atlisp.Tray
                 string url = baseUrl + "/v" + version + "/SHASUMS256.txt";
                 try
                 {
-                    using (WebClient client = new WebClient())
+                    string text = DownloadText(url);
+                    foreach (string line in text.Split('\n'))
                     {
-                        client.Headers.Add("User-Agent", "atlisp-tray/" + Program.AppVersion);
-                        string text = client.DownloadString(url);
-                        foreach (string line in text.Split('\n'))
+                        string trimmed = line.Trim();
+                        if (!trimmed.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
                         {
-                            string trimmed = line.Trim();
-                            if (!trimmed.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
-                            string[] parts = trimmed.Split(new char[] { ' ', '\t' },
-                                StringSplitOptions.RemoveEmptyEntries);
-                            if (parts.Length >= 1 && parts[0].Length == 64) return parts[0];
+                            continue;
                         }
-                        error = url + " 里没有 " + fileName;
+                        string[] parts = trimmed.Split(new char[] { ' ', '\t' },
+                            StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 1 && parts[0].Length == 64) return parts[0];
                     }
+                    error = url + " 里没有 " + fileName;
                 }
                 catch (Exception ex)
                 {
@@ -465,6 +450,27 @@ namespace Atlisp.Tray
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// 下载文本（SHASUMS256.txt 这类小文件）。
+        /// 用 HttpWebRequest 而不是 WebClient：`WebClient + Download* + Process.Start`
+        /// 是杀软 ML 里权重很高的组合，整个程序里不出现 WebClient 更干净。
+        /// </summary>
+        private static string DownloadText(string url)
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+            request.Timeout = 15000;
+            request.ReadWriteTimeout = 15000;
+            request.AutomaticDecompression = DecompressionMethods.GZip |
+                DecompressionMethods.Deflate;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                return reader.ReadToEnd();
+            }
         }
     }
 
@@ -1108,14 +1114,65 @@ namespace Atlisp.Tray
 
         public static string Where(string executable)
         {
-            int exitCode;
-            string output = Run("where.exe", executable, 5000, out exitCode, Encoding.Default);
-            if (exitCode != 0 || string.IsNullOrEmpty(output)) return null;
-            string[] lines = output.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
+            if (string.IsNullOrEmpty(executable)) return null;
+            string target = executable.Trim().Trim('"');
+            if (target.Length == 0) return null;
+
+            // 显式带路径：只判断文件是否存在
+            if (target.IndexOf('\\') >= 0 || target.IndexOf('/') >= 0)
             {
-                string line = lines[i].Trim();
-                if (line.Length > 0 && File.Exists(line)) return line;
+                try
+                {
+                    return File.Exists(target) ? Path.GetFullPath(target) : null;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            List<string> names = new List<string>();
+            names.Add(target);
+            if (Path.GetExtension(target).Length == 0)
+            {
+                string pathExt = Environment.GetEnvironmentVariable("PATHEXT");
+                if (string.IsNullOrEmpty(pathExt)) pathExt = ".COM;.EXE;.BAT;.CMD";
+                string[] extensions = pathExt.Split(new char[] { ';' },
+                    StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < extensions.Length; i++)
+                {
+                    string ext = extensions[i].Trim();
+                    if (ext.Length == 0) continue;
+                    names.Add(target + (ext[0] == '.' ? ext : "." + ext));
+                }
+            }
+
+            List<string> dirs = new List<string>();
+            try { dirs.Add(Directory.GetCurrentDirectory()); } catch { }
+            string pathValue = Environment.GetEnvironmentVariable("PATH") ?? "";
+            string[] entries = pathValue.Split(new char[] { ';' },
+                StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < entries.Length; i++)
+            {
+                string dir = entries[i].Trim().Trim('"');
+                if (dir.Length > 0) dirs.Add(dir);
+            }
+
+            // 进程内扫描 PATH，不启动 where.exe（少一次 CreateProcess）
+            for (int d = 0; d < dirs.Count; d++)
+            {
+                for (int n = 0; n < names.Count; n++)
+                {
+                    try
+                    {
+                        string candidate = Path.Combine(dirs[d], names[n]);
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                    catch
+                    {
+                        // 非法路径（驱动器不存在等）直接跳过
+                    }
+                }
             }
             return null;
         }
@@ -1197,7 +1254,7 @@ namespace Atlisp.Tray
         public static string RunCmd(string commandLine, int timeoutMs, out int exitCode)
         {
             string comspec = Environment.GetEnvironmentVariable("ComSpec");
-            if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
+            if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
             return Run(comspec, "/d /s /c \"" + commandLine + "\"", timeoutMs,
                 out exitCode, Encoding.Default);
         }
@@ -1250,7 +1307,7 @@ namespace Atlisp.Tray
             try
             {
                 string comspec = Environment.GetEnvironmentVariable("ComSpec");
-                if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
+                if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
 
                 // /s + 首尾引号：cmd 会去掉最外层一对引号，剩下的就是原始命令行 + 重定向。
                 // chcp 65001 保留旧 `.cmd` 里的 UTF-8 输出，日志按 UTF-8 读回。
@@ -1301,6 +1358,121 @@ namespace Atlisp.Tray
             {
                 error = ex.Message;
                 return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 进程树终止：kernel32 的 Toolhelp 快照 + Process.Kill。
+    /// 刻意不调用 taskkill.exe —— 托盘里每多一次 CreateProcess 都是一条行为特征，
+    /// 而「枚举子进程再逐个结束」完全可以在进程内完成。
+    /// </summary>
+    internal static class ProcessKiller
+    {
+        private const uint Th32csSnapProcess = 0x00000002;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern bool Process32First(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        /// <summary>
+        /// 结束 pid 及其所有后代（先杀子进程，避免 node 拉起 cad-worker 后留下孤儿）。
+        /// 返回成功结束的进程数。
+        /// </summary>
+        public static int KillTree(int pid)
+        {
+            if (pid <= 0) return 0;
+            Dictionary<int, List<int>> children = Snapshot();
+            List<int> order = new List<int>();
+            Walk(pid, children, order);
+            int killed = 0;
+            for (int i = order.Count - 1; i >= 0; i--)
+            {
+                if (Kill(order[i])) killed++;
+            }
+            return killed;
+        }
+
+        private static void Walk(int pid, Dictionary<int, List<int>> children, List<int> order)
+        {
+            order.Add(pid);
+            List<int> kids;
+            if (!children.TryGetValue(pid, out kids)) return;
+            for (int i = 0; i < kids.Count; i++)
+            {
+                Walk(kids[i], children, order);
+            }
+        }
+
+        private static Dictionary<int, List<int>> Snapshot()
+        {
+            Dictionary<int, List<int>> map = new Dictionary<int, List<int>>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
+            if (snapshot == new IntPtr(-1)) return map;
+            try
+            {
+                PROCESSENTRY32 entry = new PROCESSENTRY32();
+                entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                if (!Process32First(snapshot, ref entry)) return map;
+                do
+                {
+                    int parent = (int)entry.th32ParentProcessID;
+                    int child = (int)entry.th32ProcessID;
+                    List<int> list;
+                    if (!map.TryGetValue(parent, out list))
+                    {
+                        list = new List<int>();
+                        map[parent] = list;
+                    }
+                    list.Add(child);
+                }
+                while (Process32Next(snapshot, ref entry));
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+            return map;
+        }
+
+        private static bool Kill(int pid)
+        {
+            try
+            {
+                using (Process process = Process.GetProcessById(pid))
+                {
+                    process.Kill();
+                    process.WaitForExit(5000);
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
             }
         }
     }
@@ -1806,7 +1978,7 @@ namespace Atlisp.Tray
             if (!string.IsNullOrEmpty(info.NpmPath))
             {
                 string comspec = Environment.GetEnvironmentVariable("ComSpec");
-                if (string.IsNullOrEmpty(comspec)) comspec = "cmd.exe";
+                if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
                 return ProcessRunner.Create(
                     comspec,
                     "/d /s /c \"" + ProcessRunner.Quote(info.NpmPath) + " " + arguments + "\"",
@@ -1946,13 +2118,10 @@ namespace Atlisp.Tray
             int killed = 0;
             for (int i = 0; i < holders.Count; i++)
             {
-                int exitCode;
-                ProcessRunner.Run("taskkill.exe",
-                    "/PID " + holders[i].Pid.ToString(CultureInfo.InvariantCulture) + " /T /F",
-                    8000, out exitCode);
-                if (exitCode == 0) killed++;
+                int count = ProcessKiller.KillTree(holders[i].Pid);
+                if (count > 0) killed++;
                 AppLog.Write("locked: 结束占用进程 " + holders[i].Describe() +
-                    " path=" + holders[i].Path + " exitCode=" + exitCode);
+                    " path=" + holders[i].Path + " terminated=" + count);
             }
             return killed;
         }
@@ -2623,11 +2792,7 @@ namespace Atlisp.Tray
 
         private static void KillProcess(int pid)
         {
-            int exitCode;
-            ProcessRunner.Run("taskkill.exe", "/PID " + pid + " /T", 5000, out exitCode);
-            if (WaitForExit(pid, 2000)) return;
-
-            ProcessRunner.Run("taskkill.exe", "/PID " + pid + " /T /F", 8000, out exitCode);
+            ProcessKiller.KillTree(pid);
             WaitForExit(pid, 3000);
         }
 
@@ -2782,7 +2947,7 @@ namespace Atlisp.Tray
     /// 失败（EBUSY/EPERM），运行中的旧进程也不会自动变成新版本。
     ///
     /// 处理方式：
-    ///   1. 启动时若发现自己运行在 node_modules 里，复制到用户目录并直接启动副本（自迁移）；
+    ///   1. 新版 exe 由 `atlisp-tray` 直接下载到用户目录，不再做「从包目录复制自身再启动」；
     ///   2. 每次升级 @lisp/mcp 成功后，比对新包内 exe 与当前 exe，不同则把新 exe 暂存为
     ///      副本，由副本自己（`--apply-update` 模式）等旧进程退出后覆盖目标 exe 再启动。
     ///
@@ -2818,73 +2983,41 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 从 npm 包目录启动时把自身复制到用户目录，然后直接启动副本。
-        /// 返回 true 表示已启动副本，调用方应直接退出。
-        /// </summary>
-        public static bool TryRelocate(out string message)
-        {
-            message = "";
-            string current = Application.ExecutablePath;
-            if (SamePath(current, StablePath)) return false;
-            if (!IsUnderNpmPackage(current)) return false;
-
-            try
-            {
-                string dir = Path.GetDirectoryName(StablePath);
-                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                File.Copy(current, StablePath, true);
-            }
-            catch (Exception ex)
-            {
-                message = "复制到 " + StablePath + " 失败: " + ex.Message;
-                return false;
-            }
-
-            // 开机自启原先可能指向包内路径，改指用户目录下的副本
-            try
-            {
-                if (AutostartHelper.IsEnabled()) AutostartHelper.SetEnabled(true, StablePath);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("tray-selfupdate: 更新自启路径失败: " + ex.Message);
-            }
-
-            // 副本的版本资源是固定的（1.0.0.0），真实版本靠这个 sidecar 显示
-            Program.WriteVersionFile(Path.GetDirectoryName(StablePath));
-
-            string error;
-            if (!StartDetached(StablePath, BuildLaunchArgs(Program.StartServerRequested), out error))
-            {
-                message = "无法启动迁移后的托盘: " + error;
-                return false;
-            }
-
-            message = "已迁移到 " + StablePath + "，正在重启托盘";
-            return true;
-        }
-
-        /// <summary>
-        /// 升级 @lisp/mcp 成功后调用：包内托盘与当前 exe 不同则安排自我替换 + 重启。
+        /// 升级 @lisp/mcp 成功后调用：取到新托盘（包内的旧布局，或按 manifest 下载）→
+        /// 交给更新器替换并重启。
         /// </summary>
         public static bool TryApplyUpdate(ServerInfo info, bool startServer, out string message)
         {
             message = "";
             string current = Application.ExecutablePath;
+
             string candidate = PackageTrayPath(info);
+            string manifestVersion = null;
+            bool candidateIsStaged = false;
+
             if (candidate == null)
             {
-                AppLog.Write("tray-selfupdate: 包内未找到 dist\\AtlispTray.exe，跳过托盘更新");
-                return false;
+                // 新布局：exe 不再随包发布，按 dist\tray-manifest.json 下载 + 校验
+                string downloadError;
+                candidate = DownloadFromManifest(info, out manifestVersion, out downloadError);
+                if (candidate == null)
+                {
+                    AppLog.Write("tray-selfupdate: 无法取得新托盘（" + downloadError + "）");
+                    message = "托盘更新失败：" + downloadError;
+                    return false;
+                }
+                candidateIsStaged = true;
             }
+
             if (SamePath(current, candidate)) return false;
             // 只更新受管副本（%LOCALAPPDATA%\Programs\atlisp-mcp）：开发目录/Program Files
-            // 等位置不自动替换，避免把开发中构建的 exe 覆盖成 npm 包里的版本。
+            // 等位置不自动替换，避免把开发中构建的 exe 覆盖成发布版本。
             if (!SamePath(current, StablePath))
             {
+                if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
                 if (IsUnderNpmPackage(current))
                 {
-                    message = "托盘仍运行在 npm 包目录内（自迁移未生效），跳过自我替换";
+                    message = "托盘仍运行在 npm 包目录内，跳过自我替换；请用 atlisp-tray 安装到用户目录";
                 }
                 else
                 {
@@ -2899,34 +3032,46 @@ namespace Atlisp.Tray
                 if (string.Equals(FileHash(current), FileHash(candidate),
                     StringComparison.OrdinalIgnoreCase))
                 {
+                    if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
                     return false;
                 }
             }
             catch (Exception ex)
             {
+                if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
                 message = "比较托盘版本失败: " + ex.Message;
                 return false;
             }
 
-            string staged = Path.Combine(Path.GetDirectoryName(current), StagedName);
-            try
+            string staged;
+            if (candidateIsStaged)
             {
-                File.Copy(candidate, staged, true);
+                staged = candidate;
             }
-            catch (Exception ex)
+            else
             {
-                message = "无法写入托盘目录（" + Path.GetDirectoryName(current) + "）: " + ex.Message;
-                return false;
+                staged = Path.Combine(Path.GetDirectoryName(current), StagedName);
+                try
+                {
+                    File.Copy(candidate, staged, true);
+                }
+                catch (Exception ex)
+                {
+                    message = "无法写入托盘目录（" + Path.GetDirectoryName(current) + "）: " +
+                        ex.Message;
+                    return false;
+                }
             }
 
             // 优先用独立更新器：它的 hash 跨版本稳定（详见 tray/AtlispUpdater.cs 顶部说明），
             // 由它来覆盖 exe 比「新版本副本自己覆盖自己」干净得多。
             string updater = FindUpdater(info);
-            // 版本号取**新包**的版本（info.Version 是升级后重新探测到的），
-            // 更新器把它写进 AtlispTray.version，重启后的托盘据此显示版本
-            string newVersion = info != null && !string.IsNullOrEmpty(info.Version)
-                ? info.Version
-                : Program.AppVersion;
+            // 更新器把版本号写进 AtlispTray.version，重启后的托盘据此显示版本
+            string newVersion = candidateIsStaged && !string.IsNullOrEmpty(manifestVersion)
+                ? manifestVersion
+                : (info != null && !string.IsNullOrEmpty(info.Version)
+                    ? info.Version
+                    : Program.AppVersion);
             string stagedHash;
             try
             {
@@ -2954,8 +3099,8 @@ namespace Atlisp.Tray
                 return true;
             }
 
-            // 兼容旧包（还没有 dist\AtlispUpdater.exe）：退回副本自替换（--apply-update）
-            AppLog.Write("tray-selfupdate: 包内没有 AtlispUpdater.exe，退回自替换模式");
+            // 兼容旧包（还没有 AtlispUpdater.exe）：退回副本自替换（--apply-update）
+            AppLog.Write("tray-selfupdate: 未找到 AtlispUpdater.exe，退回自替换模式");
             if (!StartDetached(staged, BuildApplyUpdateArgs(staged, current, startServer),
                 out error))
             {
@@ -2966,6 +3111,198 @@ namespace Atlisp.Tray
 
             message = "托盘程序已就绪，退出后自动替换并重启";
             return true;
+        }
+
+        /// <summary>
+        /// 按 npm 包内的 tray-manifest.json 下载新托盘并校验 SHA256，写入暂存文件。
+        /// exe 不再随包发布（避免 npm install 触发杀软扫描），所以更新只能走这条路径。
+        /// </summary>
+        private static string DownloadFromManifest(ServerInfo info, out string version,
+            out string error)
+        {
+            version = null;
+            error = null;
+            try
+            {
+                if (info == null || string.IsNullOrEmpty(info.PackageDir))
+                {
+                    error = "未安装 @lisp/mcp";
+                    return null;
+                }
+                string manifestPath = Path.Combine(info.PackageDir, "dist", "tray-manifest.json");
+                if (!File.Exists(manifestPath))
+                {
+                    error = "包内没有 dist\\tray-manifest.json";
+                    return null;
+                }
+
+                JavaScriptSerializer serializer = new JavaScriptSerializer();
+                Dictionary<string, object> manifest = serializer.DeserializeObject(
+                    File.ReadAllText(manifestPath, Encoding.UTF8)) as Dictionary<string, object>;
+                if (manifest == null)
+                {
+                    error = "tray-manifest.json 格式错误";
+                    return null;
+                }
+
+                object value;
+                if (manifest.TryGetValue("version", out value))
+                {
+                    version = Convert.ToString(value, CultureInfo.InvariantCulture);
+                }
+                if (string.IsNullOrEmpty(version))
+                {
+                    error = "manifest 缺少 version";
+                    return null;
+                }
+
+                Dictionary<string, object> files = null;
+                if (manifest.TryGetValue("files", out value))
+                {
+                    files = value as Dictionary<string, object>;
+                }
+                if (files == null || !files.ContainsKey("AtlispTray.exe"))
+                {
+                    error = "manifest 缺少 AtlispTray.exe";
+                    return null;
+                }
+                Dictionary<string, object> entry = files["AtlispTray.exe"] as
+                    Dictionary<string, object>;
+                if (entry == null)
+                {
+                    error = "manifest 条目格式错误";
+                    return null;
+                }
+
+                string expectedHash = null;
+                long expectedSize = 0;
+                if (entry.TryGetValue("sha256", out value))
+                {
+                    expectedHash = Convert.ToString(value, CultureInfo.InvariantCulture);
+                }
+                if (entry.TryGetValue("size", out value) && value != null)
+                {
+                    expectedSize = Convert.ToInt64(value, CultureInfo.InvariantCulture);
+                }
+                if (string.IsNullOrEmpty(expectedHash))
+                {
+                    error = "manifest 缺少 sha256";
+                    return null;
+                }
+
+                List<string> bases = new List<string>();
+                if (manifest.TryGetValue("baseUrls", out value))
+                {
+                    object[] list = value as object[];
+                    if (list != null)
+                    {
+                        for (int i = 0; i < list.Length; i++)
+                        {
+                            string item = Convert.ToString(list[i], CultureInfo.InvariantCulture);
+                            if (!string.IsNullOrEmpty(item)) bases.Add(item);
+                        }
+                    }
+                }
+                if (bases.Count == 0 && manifest.TryGetValue("baseUrl", out value))
+                {
+                    string single = Convert.ToString(value, CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrEmpty(single)) bases.Add(single);
+                }
+                string overrideBase = Environment.GetEnvironmentVariable("ATLISP_TRAY_BASE_URL");
+                if (!string.IsNullOrEmpty(overrideBase))
+                {
+                    bases.Clear();
+                    bases.Add(overrideBase);
+                }
+                if (bases.Count == 0)
+                {
+                    error = "manifest 没有下载源";
+                    return null;
+                }
+
+                string lastError = null;
+                for (int i = 0; i < bases.Count; i++)
+                {
+                    string url = BuildFileUrl(bases[i], version, "AtlispTray.exe");
+                    try
+                    {
+                        byte[] data = DownloadBytes(url, 60000);
+                        if (expectedSize > 0 && data.Length != expectedSize)
+                        {
+                            throw new IOException("大小不符（期望 " + expectedSize +
+                                "，实际 " + data.Length + "）");
+                        }
+                        string actual = HashBytes(data);
+                        if (!string.Equals(actual, expectedHash,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new IOException("SHA256 不一致（期望 " + expectedHash +
+                                "，实际 " + actual + "）");
+                        }
+                        string dir = Path.GetDirectoryName(Application.ExecutablePath);
+                        string staged = Path.Combine(dir, StagedName);
+                        File.WriteAllBytes(staged, data);
+                        return staged;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = url + "：" + ex.Message;
+                        AppLog.Write("tray-selfupdate: 下载源失败 " + lastError);
+                    }
+                }
+                error = lastError ?? "所有下载源都不可用";
+                return null;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        private static string BuildFileUrl(string baseUrl, string version, string fileName)
+        {
+            string trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
+            bool hasVersion = trimmed.IndexOf("{version}", StringComparison.Ordinal) >= 0;
+            string expanded = trimmed.Replace("{version}", version);
+            if (hasVersion) return expanded + "/" + fileName;
+            // 扁平时源（https://atlisp.cn/download）加 ?v= 防缓存
+            return expanded + "/" + fileName + "?v=" + Uri.EscapeDataString(version);
+        }
+
+        private static byte[] DownloadBytes(string url, int timeoutMs)
+        {
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+            request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+            request.Timeout = timeoutMs;
+            request.ReadWriteTimeout = timeoutMs;
+            request.AllowAutoRedirect = true;
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (MemoryStream buffer = new MemoryStream())
+            {
+                byte[] chunk = new byte[81920];
+                int read;
+                while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+                {
+                    buffer.Write(chunk, 0, read);
+                }
+                return buffer.ToArray();
+            }
+        }
+
+        private static string HashBytes(byte[] data)
+        {
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(data);
+                StringBuilder builder = new StringBuilder(hash.Length * 2);
+                for (int i = 0; i < hash.Length; i++)
+                {
+                    builder.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
+                }
+                return builder.ToString();
+            }
         }
 
         /// <summary>找更新器：优先包内（随 npm 一起发布），其次托盘同目录（安装版）。</summary>
@@ -5254,35 +5591,39 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 首次启动自动把托盘加入 Windows 开机自启（HKCU\...\Run）。
-        /// 用标记文件保证只发生一次：用户之后手动关闭，再启动不会被重新打开。
+        /// 首次启动**先询问**是否加入 Windows 开机自启（HKCU\...\Run）。
+        ///
+        /// 以前是静默写入注册表——「未告知就设置开机自启」是杀软 ML 里权重很高的行为，
+        /// 对一个图形化管理器来说也越权了。现在改为显式询问，默认按钮在「否」；
+        /// 静默启动（--silent / 自更新重启）不询问也不写标记，留给下次交互启动。
         /// </summary>
         private void EnsureDefaultAutostart()
         {
             try
             {
                 if (File.Exists(Paths.AutostartDefaultPath)) return;
+                if (_silent) return;
 
-                bool added = false;
-                if (!AutostartHelper.IsEnabled())
+                bool want = MessageBox.Show(
+                    "是否让 @lisp MCP 托盘随 Windows 自动启动？\r\n\r\n" +
+                    "选择「否」不影响使用，之后可以在右键菜单「随 Windows 启动托盘」里开启。",
+                    "@lisp MCP 托盘",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+
+                if (want && !AutostartHelper.IsEnabled())
                 {
                     AutostartHelper.SetEnabled(true);
-                    added = true;
                 }
 
                 Directory.CreateDirectory(Paths.DataDir);
                 File.WriteAllText(Paths.AutostartDefaultPath,
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), new UTF8Encoding(false));
 
-                AppLog.Write(added
-                    ? "首次启动：已自动加入 Windows 开机自启"
-                    : "首次启动：开机自启已存在，保持不变");
-                if (added && !_silent)
-                {
-                    Balloon("已加入开机自启",
-                        "托盘将随 Windows 自动启动。\r\n如不需要，可在右键菜单「随 Windows 启动托盘」中关闭。",
-                        ToolTipIcon.Info);
-                }
+                AppLog.Write(want
+                    ? "首次启动：用户选择加入开机自启"
+                    : "首次启动：用户未选择开机自启");
             }
             catch (Exception ex)
             {
@@ -7402,14 +7743,14 @@ namespace Atlisp.Tray
                 AppLog.Write("locked: 停止 Windows 服务失败: " + ex.Message);
             }
 
-            // 4) 给句柄留一点释放时间（taskkill / sc stop 都是异步完成的）
+            // 4) 给句柄留一点释放时间（进程结束 / sc stop 都是异步完成的）
             if (PackageDirLock.WaitFree(packageDir, 2500)) return true;
 
             // 5) 还有占用：找出来，必要时结束
             List<LockHolder> holders = PackageDirLock.Find(packageDir);
             if (holders == null)
             {
-                AppLog.Write("locked: 无法枚举占用进程（PowerShell 不可用或被策略限制）");
+                AppLog.Write("locked: 无法枚举占用进程（WMI 不可用或被策略限制）");
                 if (PackageDirLock.WaitFree(packageDir, 5000)) return true;
             }
             else if (holders.Count > 0)

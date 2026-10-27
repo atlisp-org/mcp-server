@@ -1,5 +1,12 @@
 # Azure Artifact Signing 配置指南
 
+> **先看资格，否则下面全白做**：Public Trust（能签出公信证书的那档）只对
+> **特定国家/地区的组织**开放（美国、加拿大、欧盟、英国、澳大利亚、新西兰、日本、韩国、
+> 新加坡、瑞士、挪威、以色列），**个人开发者仅限美国/加拿大**。
+> Private Trust 签出来的证书只在本机/本域受信，对消除杀软误报没有作用。
+> 中国大陆主体无法使用本服务 —— 请走
+> [SignPath Foundation](signpath-signing.md)（免费、无地区限制，本仓库已接入）。
+
 Windows 二进制（`dist/AtlispTray.exe` + `dist/AtlispUpdater.exe`）的代码签名服务。
 原名 **Azure Trusted Signing**，2026-01 更名为 **Azure Artifact Signing**（功能不变；
 GitHub Action 为 `azure/artifact-signing-action@v2`）。
@@ -12,6 +19,12 @@ GitHub Action 为 `azure/artifact-signing-action@v2`）。
 - 全程无硬件 token、无本地私钥（Azure HSM 托管），CI 全自动，不需要每次发版人工审批。
 
 ## 一键配置（az CLI）
+
+> 注意：`scripts/azure-signing-setup.sh` 仍是更名前的命令（`az trusted-signing` /
+> `cert-profile`），现在会失败。正确命令是 `az artifact-signing create ... --sku Basic` 和
+> `az artifact-signing certificate-profile create --profile-type PublicTrust
+> --identity-validation-id <GUID>`，且身份验证（Identity validation）只能在门户做。
+> 中国大陆主体没有资格，改用 `docs/signpath-signing.md` 的流程。
 
 ```bash
 # 1. 安装 az CLI（Windows: winget install Microsoft.AzureCLI）

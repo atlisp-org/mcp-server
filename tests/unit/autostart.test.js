@@ -152,10 +152,53 @@ describe('win32 分支', () => {
     execSync.mockReturnValueOnce(
       'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n    atlisp-mcp    REG_SZ    "C:\\node\\node.exe" "C:\\srv\\atlisp-mcp.js" --transport http\n'
     );
-    expect(autostart.autostartStatus()).toEqual({ installed: true, command: 'C:\\srv\\atlisp-mcp.js' });
+    expect(autostart.autostartStatus()).toEqual({
+      installed: true,
+      command: 'C:\\srv\\atlisp-mcp.js',
+      fullCommand: '"C:\\node\\node.exe" "C:\\srv\\atlisp-mcp.js" --transport http',
+      trayInstalled: false,
+    });
 
     execSync.mockImplementationOnce(() => { throw new Error('reg query failed'); });
-    expect(autostart.autostartStatus()).toEqual({ installed: false });
+    expect(autostart.autostartStatus()).toEqual({ installed: false, trayInstalled: false });
+  });
+
+  it('托盘自启存在时 status 标记 trayInstalled，install 给出二选一提示', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const trayLine =
+      'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n' +
+      '    atlisp-mcp-tray    REG_SZ    "C:\\tray\\AtlispTray.exe" --silent\n';
+    // status: 先查 atlisp-mcp（无）再查 atlisp-mcp-tray（有）；install: 再查一次 tray
+    execSync
+      .mockImplementationOnce(() => { throw new Error('not found'); })
+      .mockImplementationOnce(() => trayLine)
+      .mockImplementationOnce(() => trayLine);
+
+    expect(autostart.autostartStatus()).toEqual({ installed: false, trayInstalled: true });
+
+    expect(autostart.installAutostart()).toBe(true);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('托盘也注册了开机自启'));
+  });
+
+  it('旧内核命令用单引号包路径，新内核用 conhost --headless', () => {
+    const oldCmd = autostart.buildWindowsAutostartCommand({
+      execPath: 'C:\\Program Files\\nodejs\\node.exe',
+      scriptPath: 'C:\\srv\\atlisp-mcp.js',
+      release: '6.1.7601',
+      systemRoot: 'C:\\Windows',
+    });
+    expect(oldCmd).toContain('powershell -WindowStyle Hidden');
+    expect(oldCmd).toContain('C:\\srv\\atlisp-mcp.js');
+
+    const newCmd = autostart.buildWindowsAutostartCommand({
+      execPath: 'C:\\Program Files\\nodejs\\node.exe',
+      scriptPath: 'C:\\srv\\atlisp-mcp.js',
+      release: '10.0.19045',
+      systemRoot: 'C:\\Windows',
+    });
+    expect(newCmd).toBe(
+      '"C:\\Windows\\System32\\conhost.exe" --headless "C:\\Program Files\\nodejs\\node.exe" "C:\\srv\\atlisp-mcp.js" --transport http'
+    );
   });
 });
 
