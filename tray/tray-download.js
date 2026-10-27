@@ -1,6 +1,6 @@
-// 托盘二进制的下载与校验（不依赖任何第三方包）
+﻿// 托盘二进制的下载与校验（不依赖任何第三方包）
 //
-// 背景：`AtlispTray.exe` / `AtlispUpdater.exe` 不再随 npm 包发布（未签名 PE 会在
+// 背景：`AtlispTray.exe` 不再随 npm 包发布（未签名 PE 会在
 // `npm install` 阶段被 Defender 扫描并可能报 Wacatac/!ml）。npm 包里只放
 // `tray/tray-download.js` 与 `dist/tray-manifest.json`（含 SHA256），首次执行
 // `atlisp-tray` 时再按需下载到用户目录。
@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const TRAY_FILES = ['AtlispTray.exe', 'AtlispUpdater.exe'];
+export const TRAY_FILES = ['AtlispTray.exe'];
 
 // 主源：atlisp.cn 的 /download 目录（管理员直接放文件，国内访问稳定）。
 // 备用源：GitHub Release（CI 产物的原始位置，主源故障时兜底）。

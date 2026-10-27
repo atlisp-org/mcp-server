@@ -1,6 +1,6 @@
-# SignPath Foundation 代码签名配置指南
+﻿# SignPath Foundation 代码签名配置指南
 
-Windows 二进制（`dist/AtlispTray.exe`、`dist/AtlispUpdater.exe`）通过
+Windows 二进制（`dist/AtlispTray.exe`）通过
 [SignPath Foundation](https://signpath.org) 免费签名。证书主体是 **SignPath Foundation**
 （不是本项目），用户看到的发布者名称也是它；这是换取「无需自购 OV 证书 + 无地区限制」的代价。
 
@@ -45,7 +45,7 @@ Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 | Website / download page | `https://atlisp.cn` 或 npm 页面 `https://www.npmjs.com/package/@atlisp/mcp` |
 | Description | 一句话：MCP server bridging AI agents and CAD (AutoCAD/ZWCAD/GStarCAD/BricsCAD)；Windows 托盘负责启动本地服务 |
 | Contact / email | 常用邮箱（SignPath 的批准通知、签名请求都会发这里） |
-| 已签名/待签名文件 | `AtlispTray.exe`（WinForms 托盘）、`AtlispUpdater.exe`（自更新器） |
+| 已签名/待签名文件 | `AtlispTray.exe`（WinForms 托盘） |
 
 审核关注两点，如实说明有帮助：
 
@@ -104,7 +104,7 @@ Project → Artifact Configurations → New：
 配置要点：
 
 - 根元素必须是 `<zip-file>` —— GitHub Actions 上传的 artifact 就是 ZIP
-- 只签 `AtlispTray.exe` 和 `AtlispUpdater.exe`
+- 只签 `AtlispTray.exe`（更新器已移除，托盘更新由 atlisp-tray 完成）
 - `product-name` / `product-version` / `file-version` / `company-name` / `copyright` /
   `original-filename` 是**元数据限制**：exe 的版本资源必须完全匹配，否则签名请求直接失败。
   这些值来自 `scripts/build-tray.mjs` 的 `writeStamp()`（固定 `1.0.0.0`），
@@ -154,7 +154,7 @@ Actions → **Sign release binaries** → Run workflow（不要勾 publish）：
 （publish job 用 `npm publish --ignore-scripts`，不会重新编译覆盖已签名产物）。
 
 打 tag 时 `release-assets` job 会：
-1. 生成 `dist/tray-manifest.json`（含两个 exe 的 SHA256）与 `dist/SHASUMS256.txt`
+1. 生成 `dist/tray-manifest.json`（含托盘 exe 的 SHA256）与 `dist/SHASUMS256.txt`
 2. 如果配了 `ATLISP_UPLOAD_KEY`，把 exe + manifest 上传到 atlisp.cn（对外地址
    `https://atlisp.cn/download/<文件名>`，国内主源；上传失败不阻塞发版）
 3. 同时把同样四个文件挂到对应的 GitHub Release（兜底源）

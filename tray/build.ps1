@@ -57,14 +57,12 @@ if ($outputDir -and -not (Test-Path $outputDir)) {
 
 $icon = Join-Path $PSScriptRoot 'atlisp.ico'
 $manifestPath = Join-Path $PSScriptRoot 'AtlispTray.manifest'
-$updaterSource = Join-Path $PSScriptRoot 'AtlispUpdater.cs'
 $codeSignSource = Join-Path $PSScriptRoot 'CodeSign.cs'
-$updaterOutput = Join-Path $outputDir 'AtlispUpdater.exe'
 
 # 托盘的真实版本号（只写进同目录的 AtlispTray.version，**不烧进 exe**）。
 # 把版本号编译进 exe 会让每次发版都产出新 hash，Defender/SmartScreen 对每个
 # 新 hash 都从 0 开始攒信誉；固定版本资源 + 运行时读版本号可以让 exe 的 hash
-# 跨版本保持不变。更新器替换 exe 时会写这个文件（见 AtlispUpdater.cs）。
+# 跨版本保持不变。atlisp-tray 安装/更新时会写这个文件。
 $packageJson = Get-Content (Join-Path $PSScriptRoot '..\package.json') -Raw -Encoding UTF8
 $versionMatch = [regex]::Match($packageJson, '"version"\s*:\s*"([^"]+)"')
 $trayVersion = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { '0.0.0' }
@@ -89,10 +87,7 @@ function Write-Stamp([string]$path, [string]$title, [string]$description) {
 }
 
 $trayStamp = Join-Path $buildInfoDir 'TrayStamp.g.cs'
-$updaterStamp = Join-Path $buildInfoDir 'UpdaterStamp.g.cs'
 Write-Stamp $trayStamp 'AtlispTray' '@lisp MCP Server 托盘管理'
-# 更新器刻意固定标题：它的 hash 要长期稳定，才能积累杀软信誉
-Write-Stamp $updaterStamp 'AtlispUpdater' '@lisp MCP Server 托盘更新器'
 
 function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManifest) {
     $compileArgs = @(
@@ -128,11 +123,7 @@ function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManife
 Write-Host "编译 $source ..." -ForegroundColor Cyan
 Invoke-Compile -sources @($codeSignSource, $trayStamp, $source) -target $Output -WithManifest
 
-Write-Host "编译 $updaterSource ..." -ForegroundColor Cyan
-Invoke-Compile -sources @($codeSignSource, $updaterStamp, $updaterSource) -target $updaterOutput
-
 Write-Host "构建完成：$Output" -ForegroundColor Green
-Write-Host "构建完成：$updaterOutput" -ForegroundColor Green
 
 # Authenticode 签名：未签名的 exe 在 Defender/SmartScreen 眼里永远是「未知发布者」，
 # 每个新构建的 hash 都没有信誉，这是托盘被杀软误报的根因之一。
@@ -160,9 +151,7 @@ if ($SignThumbprint) {
     if (-not $signtool) {
         throw "找不到 signtool.exe（需要 Windows 10/11 SDK）。可先不签名：去掉 -SignThumbprint。"
     }
-    # 托盘和更新器都要签：更新器是真正执行「替换 exe」动作的那个二进制，
-    # 它被签名才有意义（否则等于让未签名程序改可执行文件）。
-    foreach ($artifact in @($Output, $updaterOutput)) {
+    foreach ($artifact in @($Output)) {
         Write-Host "签名 $artifact ..." -ForegroundColor Cyan
         & $signtool sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $artifact
         if ($LASTEXITCODE -ne 0) {
@@ -179,7 +168,6 @@ if ($Install) {
     }
     $target = Join-Path $installDir 'AtlispTray.exe'
     Copy-Item $Output $target -Force
-    Copy-Item $updaterOutput (Join-Path $installDir 'AtlispUpdater.exe') -Force
     # 托盘真实版本号（exe 的版本资源固定为 1.0.0.0，见上面的 Write-Stamp 说明）
     [System.IO.File]::WriteAllText(
         (Join-Path $installDir 'AtlispTray.version'),

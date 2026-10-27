@@ -39,15 +39,13 @@ function fakeFetch(files, { status = 200, calls } = {}) {
 }
 
 const TRAY = Buffer.from('fake-tray-binary');
-const UPDATER = Buffer.from('fake-updater-binary');
 
-function manifestFor(tray = TRAY, updater = UPDATER, overrides = {}) {
+function manifestFor(tray = TRAY, overrides = {}) {
   return {
     version: '1.2.3',
     baseUrls: DEFAULT_BASE_URLS,
     files: {
       'AtlispTray.exe': { sha256: sha256(tray), size: tray.length },
-      'AtlispUpdater.exe': { sha256: sha256(updater), size: updater.length },
     },
     ...overrides,
   };
@@ -113,25 +111,23 @@ describe('下载地址', () => {
 });
 
 describe('ensureBinaries', () => {
-  it('首次下载两个文件并写版本 sidecar', async () => {
-    const fetchImpl = fakeFetch({ 'AtlispTray.exe': TRAY, 'AtlispUpdater.exe': UPDATER });
+  it('首次下载并写版本 sidecar', async () => {
+    const fetchImpl = fakeFetch({ 'AtlispTray.exe': TRAY });
     const result = await ensureBinaries({
       installDir: TEST_DIR,
       manifest: manifestFor(),
       fetchImpl,
     });
 
-    expect(result.downloaded.sort()).toEqual(['AtlispTray.exe', 'AtlispUpdater.exe']);
+    expect(result.downloaded).toEqual(['AtlispTray.exe']);
     expect(fs.readFileSync(path.join(TEST_DIR, 'AtlispTray.exe'))).toEqual(TRAY);
-    expect(fs.readFileSync(path.join(TEST_DIR, 'AtlispUpdater.exe'))).toEqual(UPDATER);
     expect(fs.readFileSync(path.join(TEST_DIR, 'AtlispTray.version'), 'utf8').trim()).toBe('1.2.3');
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0][0]).toBe('https://atlisp.cn/download/AtlispTray.exe?v=1.2.3');
   });
 
   it('本地文件 hash 一致时复用缓存，不联网', async () => {
     fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), TRAY);
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispUpdater.exe'), UPDATER);
     const fetchImpl = fakeFetch({});
 
     const result = await ensureBinaries({
@@ -141,14 +137,13 @@ describe('ensureBinaries', () => {
     });
 
     expect(result.downloaded).toEqual([]);
-    expect(result.reused.sort()).toEqual(['AtlispTray.exe', 'AtlispUpdater.exe']);
+    expect(result.reused).toEqual(['AtlispTray.exe']);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('版本变化（hash 不同）时重新下载', async () => {
     fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), Buffer.from('old'));
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispUpdater.exe'), UPDATER);
-    const fetchImpl = fakeFetch({ 'AtlispTray.exe': TRAY, 'AtlispUpdater.exe': UPDATER });
+    const fetchImpl = fakeFetch({ 'AtlispTray.exe': TRAY });
 
     const result = await ensureBinaries({
       installDir: TEST_DIR,
@@ -167,8 +162,7 @@ describe('ensureBinaries', () => {
       if (String(url).includes('atlisp.cn')) {
         return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
       }
-      const name = String(url).split('?')[0].split('/').pop();
-      const buffer = Buffer.from(name === 'AtlispTray.exe' ? TRAY : UPDATER);
+      const buffer = Buffer.from(TRAY);
       return {
         ok: true,
         status: 200,
@@ -184,8 +178,7 @@ describe('ensureBinaries', () => {
     });
 
     expect(result.sources['AtlispTray.exe']).toContain('github.com');
-    expect(result.sources['AtlispUpdater.exe']).toContain('github.com');
-    expect(calls.filter((u) => u.includes('atlisp.cn'))).toHaveLength(2);
+    expect(calls.filter((u) => u.includes('atlisp.cn'))).toHaveLength(1);
     expect(fs.readFileSync(path.join(TEST_DIR, 'AtlispTray.exe'))).toEqual(TRAY);
   });
 
@@ -203,7 +196,7 @@ describe('ensureBinaries', () => {
   });
 
   it('SHA256 不符时抛错且不落盘', async () => {
-    const fetchImpl = fakeFetch({ 'AtlispTray.exe': Buffer.from('tampered'), 'AtlispUpdater.exe': UPDATER });
+    const fetchImpl = fakeFetch({ 'AtlispTray.exe': Buffer.from('tampered') });
     await expect(ensureBinaries({
       installDir: TEST_DIR,
       manifest: manifestFor(),

@@ -22,9 +22,8 @@ afterEach(() => {
 });
 
 describe('buildManifest', () => {
-  it('记录两个 exe 的 sha256 与大小', () => {
+  it('记录托盘 exe 的 sha256 与大小', () => {
     fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), 'tray');
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispUpdater.exe'), 'updater');
 
     const manifest = buildManifest({ distDir: TEST_DIR, version: '1.2.3' });
 
@@ -32,23 +31,9 @@ describe('buildManifest', () => {
     expect(manifest.baseUrls).toEqual(DEFAULT_BASE_URLS);
     expect(manifest.baseUrl).toBe(DEFAULT_BASE_URLS[0]);
     expect(manifest.files['AtlispTray.exe']).toEqual({ sha256: sha256(Buffer.from('tray')), size: 4 });
-    expect(manifest.files['AtlispUpdater.exe']).toEqual({ sha256: sha256(Buffer.from('updater')), size: 7 });
-  });
-
-  it('缺文件默认只告警并跳过', () => {
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), 'tray');
-    const warnings = [];
-    const manifest = buildManifest({
-      distDir: TEST_DIR,
-      version: '1.0.0',
-      log: (m) => warnings.push(m),
-    });
-    expect(Object.keys(manifest.files)).toEqual(['AtlispTray.exe']);
-    expect(warnings.join('\n')).toContain('AtlispUpdater.exe');
   });
 
   it('requireAll 时缺文件即失败', () => {
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), 'tray');
     expect(() => buildManifest({ distDir: TEST_DIR, version: '1.0.0', requireAll: true }))
       .toThrow(/缺少待发布文件/);
   });
@@ -60,7 +45,6 @@ describe('buildManifest', () => {
 
   it('支持自定义 baseUrls（多源顺序）', () => {
     fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), 'tray');
-    fs.writeFileSync(path.join(TEST_DIR, 'AtlispUpdater.exe'), 'updater');
     const manifest = buildManifest({
       distDir: TEST_DIR,
       version: '1.0.0',
@@ -78,12 +62,9 @@ describe('formatShasums', () => {
   it('按文件名排序，输出 sha256sum 兼容格式', () => {
     const manifest = {
       files: {
-        'AtlispUpdater.exe': { sha256: 'b'.repeat(64), size: 1 },
         'AtlispTray.exe': { sha256: 'a'.repeat(64), size: 1 },
       },
     };
-    expect(formatShasums(manifest)).toBe(
-      `${'a'.repeat(64)}  AtlispTray.exe\n${'b'.repeat(64)}  AtlispUpdater.exe\n`
-    );
+    expect(formatShasums(manifest)).toBe(`${'a'.repeat(64)}  AtlispTray.exe\n`);
   });
 });

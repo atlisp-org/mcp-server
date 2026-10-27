@@ -6,12 +6,14 @@
   为什么根元素是 <zip-file>：workflow 里用 actions/upload-artifact 上传，GitHub 会把
   文件打包成 ZIP，SignPath 收到的就是压缩包，根元素必须是 zip-file。
 
-  为什么只签两个 exe：它们是 Defender 报 Wacatac/!ml 的主体（未签名的 .NET WinForms +
-  自更新/下载执行能力）。cad-rothelper.dll 没有版本资源，加入签名需先给
-  scripts/build-rot.mjs 补 AssemblyInfo（见 docs/signpath-signing.md「后续可选项」）。
+  只签 AtlispTray.exe：它是 Defender 报 Wacatac/!ml 的主体（未签名的 .NET WinForms +
+  下载执行能力）。更新器 AtlispUpdater.exe 已移除，托盘更新改由 atlisp-tray（Node 脚本）
+  在托盘退出后完成，交付物里不再有第二个自建 PE。
+  cad-rothelper.dll 没有版本资源，加入签名需先给 scripts/build-rot.mjs 补 AssemblyInfo
+  （见 docs/signpath-signing.md「后续可选项」）。
 
   元数据限制是 SignPath Foundation 的硬性要求：product-name 必须是项目名，
-  product-version 在同一 build 内一致。两个 exe 的版本资源由
+  product-version 在同一 build 内一致。exe 的版本资源由
   scripts/build-tray.mjs 的 writeStamp() 固定为 1.0.0.0，真实版本写在
   AtlispTray.version 旁文件里。改那里就要同步改这里。
 -->
@@ -25,7 +27,6 @@
         copyright="Copyright (c) 2026 atlisp.cn"
         original-filename="${file.name}">
       <include path="AtlispTray.exe" />
-      <include path="AtlispUpdater.exe" />
       <for-each>
         <authenticode-sign />
       </for-each>

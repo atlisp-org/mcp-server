@@ -1,4 +1,4 @@
-# @lisp MCP Server
+﻿# @lisp MCP Server
 
 MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **340+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
 
@@ -238,7 +238,7 @@ npm run build:tray
 
 `npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘并生成 `dist/tray-manifest.json`（含 SHA256）。
 
-> **exe 不再随 npm 包发布**：`dist/AtlispTray.exe` / `dist/AtlispUpdater.exe` 会在打 tag 后
+> **exe 不再随 npm 包发布**：`dist/AtlispTray.exe` 会在打 tag 后
 > 上传到 **atlisp.cn/download**（主源，`scripts/upload-tray.mjs`）和 **GitHub Release**（兜底），
 > npm 包里只有 `atlisp-tray` 启动器、下载器和 manifest —— 这样 `npm install` 阶段不会再出现
 > 未签名 PE 被 Defender 扫描的情况。首次运行 `atlisp-tray` 时按 manifest 的 SHA256 校验后
@@ -1135,8 +1135,7 @@ atlisp-mcp --version
 
 ## Code signing policy
 
-**Code signing policy** for the Windows binaries (`dist/AtlispTray.exe`,
-`dist/AtlispUpdater.exe`):
+**Code signing policy** for the Windows binary (`dist/AtlispTray.exe`):
 
 > **Free code signing provided by [SignPath.io](https://signpath.io), certificate by
 > [SignPath Foundation](https://signpath.org).**

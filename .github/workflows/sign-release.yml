@@ -1,6 +1,6 @@
 name: Sign release binaries
 
-# 给托盘（AtlispTray.exe）和独立更新器（AtlispUpdater.exe）做 Authenticode 签名。
+# 给托盘（AtlispTray.exe）做 Authenticode 签名。更新器已移除，托盘更新由 atlisp-tray 完成。
 #
 # 为什么单独一个 workflow：签名需要凭据 / 云端 HSM，不适合每次 PR 都跑；
 # 而且签名后的二进制必须是**最终发布**的那一份，不能签完又让 npm 重新编译。
@@ -69,7 +69,7 @@ jobs:
 
       - run: npm ci
 
-      # 走 Windows 自带 csc.exe（tray/build.ps1），产出 dist/AtlispTray.exe + dist/AtlispUpdater.exe
+      # 走 Windows 自带 csc.exe（tray/build.ps1），产出 dist/AtlispTray.exe
       - name: 构建托盘与更新器
         run: npm run build:tray
 
@@ -130,7 +130,6 @@ jobs:
           name: unsigned-binaries
           path: |
             dist/AtlispTray.exe
-            dist/AtlispUpdater.exe
           if-no-files-found: error
 
       # 制品配置（artifact-configuration.xml）在 SignPath 控制台里维护，
@@ -168,7 +167,7 @@ jobs:
             Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "找不到 signtool.exe（Windows SDK 未安装）" }
-          foreach ($exe in @('dist\AtlispTray.exe', 'dist\AtlispUpdater.exe')) {
+          foreach ($exe in @('dist\AtlispTray.exe')) {
             & $signtool.FullName verify /pa /v $exe
             if ($LASTEXITCODE -ne 0) { throw "签名校验失败：$exe" }
           }
@@ -179,7 +178,6 @@ jobs:
           name: signed-binaries-v${{ steps.version.outputs.version }}
           path: |
             dist/AtlispTray.exe
-            dist/AtlispUpdater.exe
           if-no-files-found: error
 
   # 把已签名的 exe 挂到 GitHub Release：`atlisp-tray` 首次运行从这里下载
@@ -223,7 +221,6 @@ jobs:
             gh release create "$tag" --title "$tag" --notes "Windows 二进制（已签名）与 SHA256 清单"
           gh release upload "$tag" \
             dist/AtlispTray.exe \
-            dist/AtlispUpdater.exe \
             dist/tray-manifest.json \
             dist/SHASUMS256.txt \
             --clobber
@@ -269,7 +266,6 @@ jobs:
       - name: 确认发布的是已签名产物
         run: |
           test -f dist/AtlispTray.exe || { echo "缺少 dist/AtlispTray.exe"; exit 1; }
-          test -f dist/AtlispUpdater.exe || { echo "缺少 dist/AtlispUpdater.exe"; exit 1; }
 
       - name: npm publish（跳过重编译）
         run: npm publish --access public --ignore-scripts

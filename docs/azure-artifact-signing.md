@@ -1,4 +1,4 @@
-# Azure Artifact Signing 配置指南
+﻿# Azure Artifact Signing 配置指南
 
 > **先看资格，否则下面全白做**：Public Trust（能签出公信证书的那档）只对
 > **特定国家/地区的组织**开放（美国、加拿大、欧盟、英国、澳大利亚、新西兰、日本、韩国、
@@ -7,7 +7,7 @@
 > 中国大陆主体无法使用本服务 —— 请走
 > [SignPath Foundation](signpath-signing.md)（免费、无地区限制，本仓库已接入）。
 
-Windows 二进制（`dist/AtlispTray.exe` + `dist/AtlispUpdater.exe`）的代码签名服务。
+Windows 二进制（`dist/AtlispTray.exe`）的代码签名服务。
 原名 **Azure Trusted Signing**，2026-01 更名为 **Azure Artifact Signing**（功能不变；
 GitHub Action 为 `azure/artifact-signing-action@v2`）。
 

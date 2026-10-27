@@ -53,10 +53,6 @@ namespace Atlisp.Tray
         [STAThread]
         private static void Main(string[] args)
         {
-            // 自替换模式：本进程是新版本的暂存副本，只负责等旧进程退出、覆盖目标 exe
-            // 再启动它。必须放在创建互斥体之前（此时旧进程还持有托盘互斥体）。
-            if (TraySelfUpdate.TryApplyStagedUpdate(args)) return;
-
             bool silent = false;
             for (int i = 0; i < args.Length; i++)
             {
@@ -71,21 +67,8 @@ namespace Atlisp.Tray
             }
             SilentMode = silent;
 
-            // 自替换/更新重启时，副本会带 --wait-pid 等旧进程退出后再创建托盘，
-            // 避免撞上「已经在运行」的互斥体。
-            int waitPid = 0;
-            for (int i = 0; i < args.Length - 1; i++)
-            {
-                if (string.Equals(args[i], "--wait-pid", StringComparison.OrdinalIgnoreCase))
-                {
-                    int.TryParse(args[i + 1], NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out waitPid);
-                }
-            }
-            if (waitPid > 0)
-            {
-                TraySelfUpdate.WaitForExit(waitPid, TimeSpan.FromSeconds(20));
-            }
+            // 不再有自我替换模式：更新由 atlisp-tray 在托盘退出后完成，
+            // 新托盘由它直接拉起，因此这里不需要 --wait-pid 之类的等待逻辑。
 
             AppLog.Init();
             // 旧版本的自我更新靠 %APPDATA%\atlisp-mcp\update-tray.cmd，新版不再生成，
@@ -2015,7 +1998,7 @@ namespace Atlisp.Tray
     /// 常见占用者：
     ///   · 任何把该目录当工作目录的进程（托盘的旧版本直接把服务 CWD 设成包目录）；
     ///   · 任何映射了目录内原生模块的进程（edge-js 的 .node/.dll，连过 CAD 就常驻）；
-    ///   · 正在运行的包内 AtlispTray.exe / AtlispUpdater.exe。
+    ///   · 正在运行的包内 AtlispTray.exe。
     /// npm 自己不会重试，所以托盘必须先把占用清干净再让它跑。
     ///
     /// 这个类只做两件事：探测目录能不能改名（和 npm 那一步等价），以及找出/结束占用者。
@@ -2940,628 +2923,109 @@ namespace Atlisp.Tray
     }
 
     /// <summary>
-    /// 托盘自身的搬迁与自我更新。
+    /// 托盘更新交接：托盘**不下载、不替换自己**。
     ///
-    /// 背景：托盘 exe 随 @atlisp/mcp 一起发布，`atlisp-tray` 默认直接运行包内的
-    /// `dist\AtlispTray.exe`。Windows 会锁住运行中的 exe，导致 npm 升级替换该文件时
-    /// 失败（EBUSY/EPERM），运行中的旧进程也不会自动变成新版本。
+    /// 升级 @lisp/mcp 后发现新版本的托盘与当前不同，就启动 `atlisp-tray`
+    /// （Node 脚本，无自建 PE）并退出；由启动器等本进程退出后下载/校验新 exe，
+    /// 再重新拉起托盘。
     ///
-    /// 处理方式：
-    ///   1. 新版 exe 由 `atlisp-tray` 直接下载到用户目录，不再做「从包目录复制自身再启动」；
-    ///   2. 每次升级 @lisp/mcp 成功后，比对新包内 exe 与当前 exe，不同则把新 exe 暂存为
-    ///      副本，由副本自己（`--apply-update` 模式）等旧进程退出后覆盖目标 exe 再启动。
-    ///
-    /// 注意：这里刻意**不生成任何 .cmd/.bat 脚本**。「写脚本 → tasklist 轮询父进程 →
-    /// copy /y 覆盖 exe → start」是杀软启发式里最典型的自我更新形态（未签名时几乎必报
-    /// Wacatac 一类的 !ml 检出）。由 exe 自身完成替换既能达到同样效果，也不会踩这条规则。
+    /// 这样交付物里不再有 `AtlispUpdater.exe`，也没有「运行中的程序覆盖自身」
+    /// 这种最像 dropper 的行为——它是 Defender 云端 ML 判
+    /// `Trojan:Win32/Wacatac.!ml` 的高权重特征。整个过程不生成 .cmd/.bat。
     /// </summary>
     internal static class TraySelfUpdate
     {
-        private const string StagedName = ".AtlispTray.update.exe";
-
-        /// <summary>自替换模式开关：由上一版托盘启动本副本时传入。</summary>
-        public const string ApplyUpdateSwitch = "--apply-update";
-
-        /// <summary>独立更新器文件名（随包发布，刻意极少修改）。</summary>
-        public const string UpdaterName = "AtlispUpdater.exe";
-
-        public static string StablePath
-        {
-            get
-            {
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Programs", "atlisp-mcp", "AtlispTray.exe");
-            }
-        }
-
-        public static string PackageTrayPath(ServerInfo info)
-        {
-            if (info == null || string.IsNullOrEmpty(info.PackageDir)) return null;
-            string candidate = Path.Combine(info.PackageDir, "dist", "AtlispTray.exe");
-            return File.Exists(candidate) ? candidate : null;
-        }
-
         /// <summary>
-        /// 升级 @lisp/mcp 成功后调用：取到新托盘（包内的旧布局，或按 manifest 下载）→
-        /// 交给更新器替换并重启。
+        /// 有新版本时启动 atlisp-tray 接管更新。返回 true 表示调用方应立即退出。
         /// </summary>
-        public static bool TryApplyUpdate(ServerInfo info, bool startServer, out string message)
+        public static bool TryStartLauncherUpdate(ServerInfo info, bool startServer,
+            out string message)
         {
             message = "";
-            string current = Application.ExecutablePath;
-
-            string candidate = PackageTrayPath(info);
-            string manifestVersion = null;
-            bool candidateIsStaged = false;
-
-            if (candidate == null)
-            {
-                // 新布局：exe 不再随包发布，按 dist\tray-manifest.json 下载 + 校验
-                string downloadError;
-                candidate = DownloadFromManifest(info, out manifestVersion, out downloadError);
-                if (candidate == null)
-                {
-                    AppLog.Write("tray-selfupdate: 无法取得新托盘（" + downloadError + "）");
-                    message = "托盘更新失败：" + downloadError;
-                    return false;
-                }
-                candidateIsStaged = true;
-            }
-
-            if (SamePath(current, candidate)) return false;
-            // 只更新受管副本（%LOCALAPPDATA%\Programs\atlisp-mcp）：开发目录/Program Files
-            // 等位置不自动替换，避免把开发中构建的 exe 覆盖成发布版本。
-            if (!SamePath(current, StablePath))
-            {
-                if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
-                if (IsUnderNpmPackage(current))
-                {
-                    message = "托盘仍运行在 npm 包目录内，跳过自我替换；请用 atlisp-tray 安装到用户目录";
-                }
-                else
-                {
-                    AppLog.Write("tray-selfupdate: 托盘不在受管目录，跳过自我替换（" +
-                        current + "）");
-                }
-                return false;
-            }
-
-            try
-            {
-                if (string.Equals(FileHash(current), FileHash(candidate),
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
-                    return false;
-                }
-            }
-            catch (Exception ex)
-            {
-                if (candidateIsStaged) { try { File.Delete(candidate); } catch { } }
-                message = "比较托盘版本失败: " + ex.Message;
-                return false;
-            }
-
-            string staged;
-            if (candidateIsStaged)
-            {
-                staged = candidate;
-            }
-            else
-            {
-                staged = Path.Combine(Path.GetDirectoryName(current), StagedName);
-                try
-                {
-                    File.Copy(candidate, staged, true);
-                }
-                catch (Exception ex)
-                {
-                    message = "无法写入托盘目录（" + Path.GetDirectoryName(current) + "）: " +
-                        ex.Message;
-                    return false;
-                }
-            }
-
-            // 优先用独立更新器：它的 hash 跨版本稳定（详见 tray/AtlispUpdater.cs 顶部说明），
-            // 由它来覆盖 exe 比「新版本副本自己覆盖自己」干净得多。
-            string updater = FindUpdater(info);
-            // 更新器把版本号写进 AtlispTray.version，重启后的托盘据此显示版本
-            string newVersion = candidateIsStaged && !string.IsNullOrEmpty(manifestVersion)
-                ? manifestVersion
-                : (info != null && !string.IsNullOrEmpty(info.Version)
-                    ? info.Version
-                    : Program.AppVersion);
-            string stagedHash;
-            try
-            {
-                stagedHash = FileHash(staged);
-            }
-            catch (Exception ex)
-            {
-                try { File.Delete(staged); } catch { }
-                message = "计算暂存文件哈希失败: " + ex.Message;
-                return false;
-            }
-
-            string error;
-            if (!string.IsNullOrEmpty(updater))
-            {
-                if (!StartDetached(updater,
-                    BuildUpdaterArgs(staged, current, startServer, newVersion, stagedHash),
-                    out error))
-                {
-                    try { File.Delete(staged); } catch { }
-                    message = "无法启动托盘更新器: " + error;
-                    return false;
-                }
-                message = "托盘更新器已启动，退出后自动替换并重启";
-                return true;
-            }
-
-            // 兼容旧包（还没有 AtlispUpdater.exe）：退回副本自替换（--apply-update）
-            AppLog.Write("tray-selfupdate: 未找到 AtlispUpdater.exe，退回自替换模式");
-            if (!StartDetached(staged, BuildApplyUpdateArgs(staged, current, startServer),
-                out error))
-            {
-                try { File.Delete(staged); } catch { }
-                message = "无法启动托盘更新进程: " + error;
-                return false;
-            }
-
-            message = "托盘程序已就绪，退出后自动替换并重启";
-            return true;
-        }
-
-        /// <summary>
-        /// 按 npm 包内的 tray-manifest.json 下载新托盘并校验 SHA256，写入暂存文件。
-        /// exe 不再随包发布（避免 npm install 触发杀软扫描），所以更新只能走这条路径。
-        /// </summary>
-        private static string DownloadFromManifest(ServerInfo info, out string version,
-            out string error)
-        {
-            version = null;
-            error = null;
             try
             {
                 if (info == null || string.IsNullOrEmpty(info.PackageDir))
                 {
-                    error = "未安装 @lisp/mcp";
-                    return null;
+                    message = "未找到 @lisp/mcp 安装目录，无法自动更新托盘";
+                    return false;
                 }
-                string manifestPath = Path.Combine(info.PackageDir, "dist", "tray-manifest.json");
-                if (!File.Exists(manifestPath))
+                string launcher = Path.Combine(info.PackageDir, "tray", "atlisp-tray.js");
+                if (!File.Exists(launcher))
                 {
-                    error = "包内没有 dist\\tray-manifest.json";
-                    return null;
+                    message = "包内没有 tray\\atlisp-tray.js，请运行 atlisp-tray 更新";
+                    return false;
+                }
+                if (string.IsNullOrEmpty(info.NodePath))
+                {
+                    message = "未找到 Node.js，无法自动更新托盘";
+                    return false;
+                }
+                if (!IsUpdatePending(info))
+                {
+                    return false;
                 }
 
-                JavaScriptSerializer serializer = new JavaScriptSerializer();
-                Dictionary<string, object> manifest = serializer.DeserializeObject(
-                    File.ReadAllText(manifestPath, Encoding.UTF8)) as Dictionary<string, object>;
-                if (manifest == null)
-                {
-                    error = "tray-manifest.json 格式错误";
-                    return null;
-                }
+                // 启动器负责：等本进程退出（--wait-pid）→ 下载/校验新 exe → 拉起托盘。
+                // --silent / --start-server 是给新托盘的透传参数。
+                string arguments = ProcessRunner.Quote(launcher) +
+                    " --wait-pid " +
+                    Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture) +
+                    " --silent";
+                if (startServer) arguments += " --start-server";
 
-                object value;
-                if (manifest.TryGetValue("version", out value))
-                {
-                    version = Convert.ToString(value, CultureInfo.InvariantCulture);
-                }
-                if (string.IsNullOrEmpty(version))
-                {
-                    error = "manifest 缺少 version";
-                    return null;
-                }
-
-                Dictionary<string, object> files = null;
-                if (manifest.TryGetValue("files", out value))
-                {
-                    files = value as Dictionary<string, object>;
-                }
-                if (files == null || !files.ContainsKey("AtlispTray.exe"))
-                {
-                    error = "manifest 缺少 AtlispTray.exe";
-                    return null;
-                }
-                Dictionary<string, object> entry = files["AtlispTray.exe"] as
-                    Dictionary<string, object>;
-                if (entry == null)
-                {
-                    error = "manifest 条目格式错误";
-                    return null;
-                }
-
-                string expectedHash = null;
-                long expectedSize = 0;
-                if (entry.TryGetValue("sha256", out value))
-                {
-                    expectedHash = Convert.ToString(value, CultureInfo.InvariantCulture);
-                }
-                if (entry.TryGetValue("size", out value) && value != null)
-                {
-                    expectedSize = Convert.ToInt64(value, CultureInfo.InvariantCulture);
-                }
-                if (string.IsNullOrEmpty(expectedHash))
-                {
-                    error = "manifest 缺少 sha256";
-                    return null;
-                }
-
-                List<string> bases = new List<string>();
-                if (manifest.TryGetValue("baseUrls", out value))
-                {
-                    object[] list = value as object[];
-                    if (list != null)
-                    {
-                        for (int i = 0; i < list.Length; i++)
-                        {
-                            string item = Convert.ToString(list[i], CultureInfo.InvariantCulture);
-                            if (!string.IsNullOrEmpty(item)) bases.Add(item);
-                        }
-                    }
-                }
-                if (bases.Count == 0 && manifest.TryGetValue("baseUrl", out value))
-                {
-                    string single = Convert.ToString(value, CultureInfo.InvariantCulture);
-                    if (!string.IsNullOrEmpty(single)) bases.Add(single);
-                }
-                string overrideBase = Environment.GetEnvironmentVariable("ATLISP_TRAY_BASE_URL");
-                if (!string.IsNullOrEmpty(overrideBase))
-                {
-                    bases.Clear();
-                    bases.Add(overrideBase);
-                }
-                if (bases.Count == 0)
-                {
-                    error = "manifest 没有下载源";
-                    return null;
-                }
-
-                string lastError = null;
-                for (int i = 0; i < bases.Count; i++)
-                {
-                    string url = BuildFileUrl(bases[i], version, "AtlispTray.exe");
-                    try
-                    {
-                        byte[] data = DownloadBytes(url, 60000);
-                        if (expectedSize > 0 && data.Length != expectedSize)
-                        {
-                            throw new IOException("大小不符（期望 " + expectedSize +
-                                "，实际 " + data.Length + "）");
-                        }
-                        string actual = HashBytes(data);
-                        if (!string.Equals(actual, expectedHash,
-                            StringComparison.OrdinalIgnoreCase))
-                        {
-                            throw new IOException("SHA256 不一致（期望 " + expectedHash +
-                                "，实际 " + actual + "）");
-                        }
-                        string dir = Path.GetDirectoryName(Application.ExecutablePath);
-                        string staged = Path.Combine(dir, StagedName);
-                        File.WriteAllBytes(staged, data);
-                        return staged;
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = url + "：" + ex.Message;
-                        AppLog.Write("tray-selfupdate: 下载源失败 " + lastError);
-                    }
-                }
-                error = lastError ?? "所有下载源都不可用";
-                return null;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
-        }
-
-        private static string BuildFileUrl(string baseUrl, string version, string fileName)
-        {
-            string trimmed = (baseUrl ?? "").Trim().TrimEnd('/');
-            bool hasVersion = trimmed.IndexOf("{version}", StringComparison.Ordinal) >= 0;
-            string expanded = trimmed.Replace("{version}", version);
-            if (hasVersion) return expanded + "/" + fileName;
-            // 扁平时源（https://atlisp.cn/download）加 ?v= 防缓存
-            return expanded + "/" + fileName + "?v=" + Uri.EscapeDataString(version);
-        }
-
-        private static byte[] DownloadBytes(string url, int timeoutMs)
-        {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.UserAgent = "atlisp-tray/" + Program.AppVersion;
-            request.Timeout = timeoutMs;
-            request.ReadWriteTimeout = timeoutMs;
-            request.AllowAutoRedirect = true;
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (Stream stream = response.GetResponseStream())
-            using (MemoryStream buffer = new MemoryStream())
-            {
-                byte[] chunk = new byte[81920];
-                int read;
-                while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
-                {
-                    buffer.Write(chunk, 0, read);
-                }
-                return buffer.ToArray();
-            }
-        }
-
-        private static string HashBytes(byte[] data)
-        {
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(data);
-                StringBuilder builder = new StringBuilder(hash.Length * 2);
-                for (int i = 0; i < hash.Length; i++)
-                {
-                    builder.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-                }
-                return builder.ToString();
-            }
-        }
-
-        /// <summary>找更新器：优先包内（随 npm 一起发布），其次托盘同目录（安装版）。</summary>
-        private static string FindUpdater(ServerInfo info)
-        {
-            if (info != null && !string.IsNullOrEmpty(info.PackageDir))
-            {
-                string packaged = Path.Combine(info.PackageDir, "dist", UpdaterName);
-                if (File.Exists(packaged)) return packaged;
-            }
-            string local = Path.Combine(
-                Path.GetDirectoryName(Application.ExecutablePath) ?? "", UpdaterName);
-            return File.Exists(local) ? local : null;
-        }
-
-        private static string BuildUpdaterArgs(string staged, string target,
-            bool startServer, string version, string stagedHash)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.Append("--target ");
-            sb.Append(ProcessRunner.Quote(target));
-            sb.Append(" --staged ");
-            sb.Append(ProcessRunner.Quote(staged));
-            sb.Append(" --sha256 ");
-            sb.Append(stagedHash);
-            sb.Append(" --pid ");
-            sb.Append(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
-            sb.Append(" --restart ");
-            sb.Append(ProcessRunner.Quote(target));
-            sb.Append(" --restart-args ");
-            sb.Append(ProcessRunner.Quote(BuildApplyFlags(startServer)));
-            sb.Append(" --version ");
-            sb.Append(ProcessRunner.Quote(version ?? Program.AppVersion));
-            sb.Append(" --log ");
-            sb.Append(ProcessRunner.Quote(Paths.LogDir));
-            return sb.ToString();
-        }
-
-        private static string BuildApplyFlags(bool startServer)
-        {
-            string flags = "";
-            if (Program.SilentMode) flags += " --silent";
-            if (startServer) flags += " --start-server";
-            return flags.Trim();
-        }
-
-        /// <summary>
-        /// 启动一个独立进程（不等待、不继承控制台）。托盘的重启/迁移/自替换都走这里。
-        /// </summary>
-        private static bool StartDetached(string exePath, string arguments, out string error)
-        {
-            error = "";
-            try
-            {
                 ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = exePath;
-                psi.Arguments = arguments ?? "";
-                string dir = Path.GetDirectoryName(exePath);
-                if (!string.IsNullOrEmpty(dir)) psi.WorkingDirectory = dir;
+                psi.FileName = info.NodePath;
+                psi.Arguments = arguments;
+                psi.WorkingDirectory = info.PackageDir;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 Process.Start(psi);
+
+                message = "已交给 atlisp-tray 下载并安装新版本";
                 return true;
             }
             catch (Exception ex)
             {
-                error = ex.Message;
+                message = "启动托盘更新失败：" + ex.Message;
                 return false;
             }
         }
 
-        private static string BuildLaunchArgs(bool startServer)
-        {
-            string args = "";
-            if (Program.SilentMode) args += " --silent";
-            if (startServer) args += " --start-server";
-            // 自迁移时本进程尚未退出，副本要等它让出托盘互斥体
-            args += " --wait-pid " +
-                Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
-            return args.Trim();
-        }
-
         /// <summary>
-        /// 自替换参数：--apply-update &lt;staged&gt; &lt;target&gt; &lt;pid&gt; [--silent] [--start-server]
+        /// 当前 exe 与包内 manifest（没有 manifest 时用包内 exe）是否不同。
+        /// 只做比较，不下载、不写文件。
         /// </summary>
-        private static string BuildApplyUpdateArgs(string staged, string target, bool startServer)
+        private static bool IsUpdatePending(ServerInfo info)
         {
-            StringBuilder sb = new StringBuilder();
-            sb.Append(ApplyUpdateSwitch);
-            sb.Append(' ');
-            sb.Append(ProcessRunner.Quote(staged));
-            sb.Append(' ');
-            sb.Append(ProcessRunner.Quote(target));
-            sb.Append(' ');
-            sb.Append(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
-            if (Program.SilentMode) sb.Append(" --silent");
-            if (startServer) sb.Append(" --start-server");
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// 自替换模式入口（由上一版托盘启动）：等旧进程退出 → 覆盖目标 exe → 启动新版。
-        /// 返回 true 表示本进程只负责替换，调用方应立即退出、不要创建托盘窗口。
-        /// </summary>
-        public static bool TryApplyStagedUpdate(string[] args)
-        {
-            if (args == null) return false;
-            int index = -1;
-            for (int i = 0; i < args.Length; i++)
+            string current = Application.ExecutablePath;
+            string expected = ReadManifestHash(info.PackageDir);
+            if (!string.IsNullOrEmpty(expected))
             {
-                if (string.Equals(args[i], ApplyUpdateSwitch, StringComparison.OrdinalIgnoreCase))
-                {
-                    index = i;
-                    break;
-                }
-            }
-            if (index < 0 || args.Length < index + 4) return false;
-            string staged = args[index + 1];
-            string target = args[index + 2];
-            int pid;
-            if (!int.TryParse(args[index + 3], NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out pid))
-            {
-                return false;
+                return !string.Equals(FileHash(current), expected,
+                    StringComparison.OrdinalIgnoreCase);
             }
 
-            bool silent = false;
-            bool startServer = false;
-            for (int i = 0; i < args.Length; i++)
-            {
-                if (string.Equals(args[i], "--silent", StringComparison.OrdinalIgnoreCase))
-                {
-                    silent = true;
-                }
-                else if (string.Equals(args[i], "--start-server", StringComparison.OrdinalIgnoreCase))
-                {
-                    startServer = true;
-                }
-            }
-
-            AppLog.Init();
-            try
-            {
-                AppLog.Write("tray-selfupdate: 等待旧进程 " + pid + " 退出后替换 " + target);
-                WaitForExit(pid, TimeSpan.FromSeconds(120));
-                if (!ReplaceWithRetry(staged, target))
-                {
-                    // 旧进程可能还活着（镜像仍被锁），这时再启动一份只会撞互斥体，
-                    // 直接放弃本次替换，旧托盘继续用，下次升级再试。
-                    return true;
-                }
-
-                string error;
-                if (!StartDetached(target, BuildLaunchArgsFor(silent, startServer), out error))
-                {
-                    AppLog.Write("tray-selfupdate: 启动新托盘失败: " + error);
-                }
-            }
-            catch (Exception ex)
-            {
-                // 自替换失败不能把异常抛出去（此时还没注册全局异常处理器），
-                // 记日志后静默退出，旧托盘文件保持可用。
-                AppLog.Write("tray-selfupdate: 自替换失败: " + ex);
-            }
-            return true;
-        }
-
-        private static string BuildLaunchArgsFor(bool silent, bool startServer)
-        {
-            string args = "";
-            if (silent) args += " --silent";
-            if (startServer) args += " --start-server";
-            return args.Trim();
-        }
-
-        /// <summary>
-        /// 等指定进程退出（最多 timeout，超时只记日志）。托盘自迁移/自替换用它避免
-        /// 「两个实例抢同一个互斥体」或「覆盖还被锁住的 exe」。
-        /// </summary>
-        public static void WaitForExit(int pid, TimeSpan timeout)
-        {
-            try
-            {
-                Process process = Process.GetProcessById(pid);
-                if (!process.WaitForExit((int)timeout.TotalMilliseconds))
-                {
-                    AppLog.Write("tray-selfupdate: 等待旧进程超时，继续尝试替换");
-                }
-                process.Close();
-            }
-            catch (ArgumentException)
-            {
-                // 进程已经不在了，正常路径
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("tray-selfupdate: 等待旧进程失败: " + ex.Message);
-            }
-            // 句柄释放后镜像文件可能还被短暂锁住，先等一拍再覆盖
-            Thread.Sleep(500);
-        }
-
-        /// <summary>
-        /// 覆盖目标 exe：旧进程刚退出时镜像可能还被短暂锁住，重试 30 次（每次 500ms）。
-        /// 覆盖失败时保留旧版本继续可用，下次升级再试。
-        /// </summary>
-        private static bool ReplaceWithRetry(string staged, string target)
-        {
-            for (int attempt = 0; attempt < 30; attempt++)
-            {
-                try
-                {
-                    File.Copy(staged, target, true);
-                    try { File.Delete(staged); } catch (Exception) { }
-                    AppLog.Write("tray-selfupdate: 已替换 " + target);
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    if (attempt == 29)
-                    {
-                        AppLog.Write("tray-selfupdate: 覆盖 " + target + " 失败: " + ex.Message +
-                            "（沿用当前版本）");
-                        return false;
-                    }
-                    Thread.Sleep(500);
-                }
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 清理旧版留下的自我更新脚本（旧版本会写 %APPDATA%\atlisp-mcp\update-tray.cmd）。
-        /// 新版本不再生成这种脚本，残留文件既没用又容易被杀软当成可疑样本。
-        /// </summary>
-        public static void CleanupLegacyScript()
-        {
-            try
-            {
-                string legacy = Path.Combine(Paths.DataDir, "update-tray.cmd");
-                if (File.Exists(legacy)) File.Delete(legacy);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("tray-selfupdate: 清理旧更新脚本失败: " + ex.Message);
-            }
-        }
-
-        public static bool IsUnderNpmPackage(string path)
-        {
-            return !string.IsNullOrEmpty(path) &&
-                path.IndexOf("\\node_modules\\", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        private static bool SamePath(string left, string right)
-        {
-            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right)) return false;
-            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+            string packaged = Path.Combine(info.PackageDir, "dist", "AtlispTray.exe");
+            if (!File.Exists(packaged)) return false;
+            return !string.Equals(FileHash(current), FileHash(packaged),
                 StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>从 dist\tray-manifest.json 读 AtlispTray.exe 的 sha256；读不到返回 null。</summary>
+        private static string ReadManifestHash(string packageDir)
+        {
+            try
+            {
+                string manifest = Path.Combine(packageDir, "dist", "tray-manifest.json");
+                if (!File.Exists(manifest)) return null;
+                Match match = Regex.Match(File.ReadAllText(manifest, Encoding.UTF8),
+                    "\"AtlispTray\\.exe\"\\s*:\\s*\\{[^}]*\"sha256\"\\s*:\\s*\"([0-9a-fA-F]{64})\"");
+                return match.Success ? match.Groups[1].Value : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string FileHash(string path)
@@ -3576,6 +3040,31 @@ namespace Atlisp.Tray
                     sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
                 }
                 return sb.ToString();
+            }
+        }
+
+        /// <summary>清掉旧版本留下的更新脚本与暂存副本（不再使用的可疑样本）。</summary>
+        public static void CleanupLegacyScript()
+        {
+            try
+            {
+                string legacy = Path.Combine(Paths.DataDir, "update-tray.cmd");
+                if (File.Exists(legacy)) File.Delete(legacy);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("清理旧更新脚本失败: " + ex.Message);
+            }
+            try
+            {
+                string staged = Path.Combine(
+                    Path.GetDirectoryName(Application.ExecutablePath) ?? "",
+                    ".AtlispTray.update.exe");
+                if (File.Exists(staged)) File.Delete(staged);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("清理旧暂存文件失败: " + ex.Message);
             }
         }
     }
@@ -7755,7 +7244,7 @@ namespace Atlisp.Tray
             }
             else if (holders.Count > 0)
             {
-                // 只结束确定属于本包的进程（node / AtlispTray / AtlispUpdater）。
+                // 只结束确定属于本包的进程（node / AtlispTray）。
                 // 命令行里刚好带这个路径的编辑器、终端等不碰，交给用户自己关。
                 List<LockHolder> killable = new List<LockHolder>();
                 List<LockHolder> others = new List<LockHolder>();
@@ -7866,14 +7355,14 @@ namespace Atlisp.Tray
                 "在托盘菜单里重试升级；\r\n" +
                 "2) 或关掉托盘后在命令行执行：\r\n" +
                 "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
-                "查看谁在占用：任务管理器 → 详细信息，找 node.exe / AtlispTray.exe / " +
-                "AtlispUpdater.exe，\r\n" +
+                "查看谁在占用：任务管理器 → 详细信息，找 node.exe / AtlispTray.exe，" +
+                "\r\n" +
                 "  右键「打开文件所在位置」，确认路径是否在 @atlisp\\mcp 目录内。";
         }
 
         /// <summary>
         /// 是否是可以直接结束的占用者：本包的 node 进程（server / cad-worker）、
-        /// 包内托盘与更新器。别的程序（编辑器、终端）哪怕命令行里带这个路径也不动。
+        /// 包内托盘。别的程序（编辑器、终端）哪怕命令行里带这个路径也不动。
         /// </summary>
         private static bool IsKillableHolder(LockHolder holder)
         {
@@ -7974,32 +7463,32 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 升级 @lisp/mcp 成功后，如果新包里的 AtlispTray.exe 与当前运行的托盘不同，
-        /// 安排“退出 → 覆盖 → 重启”，让托盘也升到同一版本。
-        /// 服务由重启后的托盘（--start-server）负责启动/恢复。
+        /// 升级 @lisp/mcp 成功后，如果新版本的托盘与当前运行的托盘不同，
+        /// 启动 atlisp-tray（等本进程退出后下载/校验/拉起）并退出。
+        /// 托盘自己**不下载、不替换 exe**。
         /// </summary>
         private bool TryApplyTraySelfUpdate(ServerInfo info, bool startServerAfter)
         {
             string message;
-            if (!TraySelfUpdate.TryApplyUpdate(info, startServerAfter, out message))
+            if (!TraySelfUpdate.TryStartLauncherUpdate(info, startServerAfter, out message))
             {
                 if (!string.IsNullOrEmpty(message))
                 {
-                    AppLog.Write("tray-selfupdate: " + message);
+                    AppLog.Write("tray-update: " + message);
                     if (!_silent)
                     {
                         Balloon("托盘未能自动更新",
-                            message + "\r\n可稍后手动重启托盘以应用新版本。",
+                            message + "\r\n可退出托盘后运行 atlisp-tray 更新。",
                             ToolTipIcon.Warning);
                     }
                 }
                 return false;
             }
 
-            AppLog.Write("tray-selfupdate: " + message);
+            AppLog.Write("tray-update: " + message);
             if (!_silent)
             {
-                Balloon("托盘更新", "托盘程序已更新，正在重启以应用新版本…", ToolTipIcon.Info);
+                Balloon("托盘更新", "正在退出，由 atlisp-tray 安装新版本…", ToolTipIcon.Info);
             }
             _restartForSelfUpdate = true;
             _uiTimer.Stop();

@@ -1,8 +1,8 @@
-// Authenticode 签名校验（wintrust!WinVerifyTrust）。
+﻿// Authenticode 签名校验（wintrust!WinVerifyTrust）。
 //
 // 用途：
 //   1. 托盘校验即将执行的下载物（Node.js MSI / Python 安装包）；
-//   2. 更新器（AtlispUpdater.exe）校验即将覆盖/启动的新托盘 exe。
+//   2. 安装/更新流程校验下载到的安装包与托盘 exe。
 // 两个 exe 都编译进这个文件（见 build.ps1 / scripts/build-tray.mjs）。
 //
 // 注意：本文件必须保持 C# 5 语法（in-box csc.exe 的限制）。

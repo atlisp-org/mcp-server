@@ -6,7 +6,7 @@
 //              参考程序集交叉编译（首次构建会下载约 21 MB，之后走缓存，
 //              见 scripts/net48-refs.mjs）。
 //
-// 这样 npm publish 在 Linux 发布机上也能把 exe 打进 npm 包。
+// exe 不再随 npm 包发布：构建产物由 CI/发布机上传到 atlisp.cn 与 GitHub Release。
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -20,10 +20,7 @@ const manifest = path.join(root, 'tray', 'AtlispTray.manifest');
 const icon = path.join(root, 'tray', 'atlisp.ico');
 const outDir = path.join(root, 'dist');
 const output = path.join(outDir, 'AtlispTray.exe');
-const updaterSource = path.join(root, 'tray', 'AtlispUpdater.cs');
 const codeSignSource = path.join(root, 'tray', 'CodeSign.cs');
-// 更新器独立编译：它刻意保持「几乎不改」，hash 长期稳定才能积累杀软信誉
-const updaterOutput = path.join(outDir, 'AtlispUpdater.exe');
 const packageVersion = JSON.parse(
   fs.readFileSync(path.join(root, 'package.json'), 'utf8')
 ).version;
@@ -62,7 +59,7 @@ if (process.platform === 'win32') {
 if (!fs.existsSync(output)) {
   fail(`构建结束但未找到 ${output}`);
 }
-for (const artifact of [output, updaterOutput]) {
+for (const artifact of [output]) {
   const size = fs.existsSync(artifact) ? fs.statSync(artifact).size : 0;
   if (size <= 0) {
     fail(`生成的 ${path.basename(artifact)} 为空。`);
@@ -94,17 +91,9 @@ async function buildWithDotnet() {
     tool,
     referenceDir,
     references,
-    sources: [codeSignSource, writeStamp('tray'), source],
+    sources: [codeSignSource, writeStamp(), source],
     out: output,
     manifest,
-  });
-  compile({
-    tool,
-    referenceDir,
-    references,
-    sources: [codeSignSource, writeStamp('updater'), updaterSource],
-    out: updaterOutput,
-    manifest: null,
   });
 }
 
@@ -147,16 +136,15 @@ function compile({ tool, referenceDir, references, sources, out, manifest: manif
  *
  * 刻意**不把 npm 包版本写进 exe**：版本烧进二进制会让每次发版都产出新 hash，
  * Defender/SmartScreen 对每个新 hash 都从 0 开始攒信誉。这里固定 1.0.0.0，
- * 真实版本号由更新器写到同目录的 AtlispTray.version（见 tray/AtlispUpdater.cs），
+ * 真实版本号由 atlisp-tray 写到同目录的 AtlispTray.version，
  * 托盘启动时读它显示（见 Program.ResolveAppVersion）。
  * 只有真的改动托盘源码时产物才会变，hash 得以跨版本保持稳定。
  */
-function writeStamp(kind) {
-  const isUpdater = kind === 'updater';
+function writeStamp() {
   const content = `[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
 [assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
-[assembly: System.Reflection.AssemblyTitle("${isUpdater ? 'AtlispUpdater' : 'AtlispTray'}")]
-[assembly: System.Reflection.AssemblyDescription("${isUpdater ? '@lisp MCP Server 托盘更新器' : '@lisp MCP Server 托盘管理'}")]
+[assembly: System.Reflection.AssemblyTitle("AtlispTray")]
+[assembly: System.Reflection.AssemblyDescription("@lisp MCP Server 托盘管理")]
 [assembly: System.Reflection.AssemblyCompany("atlisp.cn")]
 [assembly: System.Reflection.AssemblyProduct("@lisp MCP Server")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 atlisp.cn")]
@@ -164,7 +152,7 @@ function writeStamp(kind) {
 `;
   const dir = path.join(root, '.cache');
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, isUpdater ? 'UpdaterStamp.g.cs' : 'TrayStamp.g.cs');
+  const file = path.join(dir, 'TrayStamp.g.cs');
   fs.writeFileSync(file, content, 'utf8');
   return file;
 }

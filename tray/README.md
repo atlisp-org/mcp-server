@@ -1,4 +1,4 @@
-# @lisp MCP 托盘管理工具
+﻿# @lisp MCP 托盘管理工具
 
 Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服务的日常运行：
 
@@ -8,7 +8,7 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **检查更新**：对比本机版本与 npm 上的最新版本，默认启动后检查一次并**只提示、不自动安装**；可在设置里开启定时自动升级（默认间隔 24 小时，用户确认后才执行 npm 安装）
 - **知识库全自动**：默认随托盘启动本地知识库，缺 Python / `atlisp-dwg-kb` 时自动下载安装；定时查 PyPI 新版本并静默升级（升级前停服务、完成后自动拉起）
 - **异常自愈**：MCP 或知识库进程异常退出后自动拉起（带退避，最多 5 次），用户主动停止的不会被拉起
-- **托盘自动更新**：`atlisp-tray` 首次运行时把 exe 安装到 `%LOCALAPPDATA%\Programs\atlisp-mcp`（不再从包目录复制自身）；升级 @lisp/mcp 后由**独立的 `AtlispUpdater.exe`**（固定二进制、校验 SHA256 + 签名）替换托盘并重启，不自写脚本、不边跑边改自己（见「杀软误报」）
+- **托盘自动更新**：`atlisp-tray` 首次运行时把 exe 安装到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；升级 @lisp/mcp 后托盘只判断版本并退出，由 `atlisp-tray` 下载、校验、拉起新版（无自建更新器，见「杀软误报」）
 - **状态监控**：显示服务端口、CAD 连接状态、版本号；异常退出时提醒
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
 - **开机自启**：首次启动**询问**是否加入 Windows 启动项（默认按钮在「否」，之后可在右键菜单随时开关）；可选托盘启动时自动启动服务
@@ -63,7 +63,7 @@ npm publish
 - `tray/tray-download.js`
 - `tray/README.md`
 
-**不再包含** `dist/AtlispTray.exe` / `dist/AtlispUpdater.exe`（`package.json` 的 `files` 里有
+**不再包含** `dist/AtlispTray.exe`（`package.json` 的 `files` 里有
 `!dist/*.exe`）：未签名 PE 在 `npm install` 阶段就会被 Defender 扫描，容易触发
 `Trojan:Win32/Wacatac.!ml`。exe 改为打 tag 后上传到两个地方，首次运行 `atlisp-tray`
 时按 manifest 的 SHA256 校验后下载到 `%LOCALAPPDATA%\Programs\atlisp-mcp`：
@@ -75,8 +75,8 @@ npm publish
 两个源按顺序尝试，任一可用即可；SHA256 必须与 manifest 一致，否则拒绝执行。
 
 > `atlisp.cn/download/` 是**扁平目录**（同名文件按版本覆盖），所以客户端下载时会带
-> `?v=<版本>` 防缓存。发布时必须把 `AtlispTray.exe` 和 `AtlispUpdater.exe` **都**上传，
-> 只传一个会导致该文件回退到 GitHub（GitHub 也没有 Release 时直接失败）。
+> `?v=<版本>` 防缓存。发布时上传 `AtlispTray.exe` 即可；文件缺失或 hash 不符会自动回退到 GitHub
+> （GitHub 也没有 Release 时直接失败）。
 
 ```bash
 atlisp-tray --check            # 打印路径/版本/所有下载源
@@ -372,44 +372,122 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 ### 托盘自动更新
 
 托盘 exe 不再随 `@lisp/mcp` 发布，而是由 `atlisp-tray` 首次运行时下载安装到
-`%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe`。升级包后托盘仍要跟着换新：
+`%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe`。升级 `@lisp/mcp` 后托盘也要换新：
 
-1. **安装位置固定**：`atlisp-tray` 负责把 exe 落到用户目录（带 SHA256 校验），
-   包目录里不再有运行中的 exe，`npm install -g` 不会因文件被锁而 EBUSY/EPERM。
-   托盘自己**不再做「复制自身再启动」的自迁移**。
-2. **交给独立更新器**：升级 @lisp/mcp 成功后，托盘比较包内 `dist\AtlispTray.exe` 与当前 exe 的 SHA256；
-   不同则把新 exe 复制成同目录的 `.AtlispTray.update.exe`，然后启动 **`AtlispUpdater.exe`**：
+1. **托盘只做判断，不下载、不替换自己**：升级成功后比较当前 exe 与包内
+   `dist\tray-manifest.json` 的 SHA256，不同则启动 `atlisp-tray`
+   （参数 `--wait-pid <当前PID> --silent [--start-server]`）并退出。
+2. **由启动器完成替换**：`atlisp-tray` 等旧托盘退出（exe 解锁）→ 按 manifest
+   下载新 exe 并校验 SHA256 → 写到 `%LOCALAPPDATA%\Programs\atlisp-mcp` →
+   拉起新托盘。整个过程是 Node 脚本，没有自建 PE 参与。
+3. **为什么删掉 `AtlispUpdater.exe`**：「运行中的程序覆盖自己的可执行文件」是
+   Defender 云端 ML 判 `Trojan:Win32/Wacatac.!ml` 的高权重特征。把它交给 Node
+   启动器后，交付物里少一个未签名 PE，也不再出现自替换模式。
+4. **不做的事**：不生成 `.cmd`/`.bat`、不写注册表、不在托盘运行期间改文件。
+   旧版留下的 `%APPDATA%\atlisp-mcp\update-tray.cmd` 与 `.AtlispTray.update.exe`
+   会在托盘启动时清掉（关键字 `tray-update` 写入 `tray.log`）。
+5. **失败降级**：目录不可写、下载失败或校验不过时只记日志并提示「退出托盘后运行
+   `atlisp-tray` 更新」，不会弹 UAC，也不会执行未校验的文件。
 
-   ```
-   AtlispUpdater.exe --target <当前托盘> --staged <暂存> --sha256 <哈希> --pid <旧PID>
-                     --restart <当前托盘> --restart-args "--silent --start-server"
-                     --version <新版本> --log <日志目录>
-   ```
 
-   更新器只做四件事：等旧进程退出 → 校验（SHA256 必须匹配、签了名就必须签名有效）→ 覆盖 → 启动新版，
-   并把版本号写进 `AtlispTray.version`。托盘随即退出，图标消失 1～2 秒，**服务进程不受影响**。
-3. **为什么多一个 exe**：Defender 最敏感的动作是「程序替换自己的可执行文件」。让一个**hash 长期不变**的
-   小工具去做这件事，它就能积累「已知文件 + 已下载很多次」的信誉；如果让每次发版都换的新托盘自己动自己，
-   每一版都是一个零信誉的新文件在干最可疑的活。更新器因此**刻意几乎不修改**（`tray/AtlispUpdater.cs`
-   顶部有约定，改它就要接受信誉清零）。
-4. **不做的事**：不生成任何 `.cmd`/`.bat` 脚本、不写注册表、不联网下载（下载由托盘负责，更新器只做本地替换）。
-   旧版留下的 `%APPDATA%\atlisp-mcp\update-tray.cmd` 会在新版本启动时自动删除。
-5. **失败降级**：目录不可写（例如手工放进 Program Files）或校验失败时只记日志并提示手动重启，不弹 UAC。
-   过程写入 `%APPDATA%\atlisp-mcp\logs\updater.log` 与 `tray.log`（关键字 `tray-selfupdate`）。
+**版本号怎么读**
+
+- 顶层状态行 `图纸知识库：在线 · 服务 v0.2.2`：**正在运行的进程**版本（`/health` 返回）
+- 子菜单 `运行环境：… · 本机包 v0.2.0`：**本机 Python 环境里 pip 安装**的版本
+- 两者不同时，子菜单会多一行提示：
+  - 服务是托盘启动的、且本机更新 → 自动重启服务应用新版本
+  - 服务是外部/远程启动的 → 只提示；本机实例可用「重启本地知识库服务」确认后接管
+
+服务日志：`%APPDATA%\atlisp-mcp\logs\server-YYYYMMDD.log`
+托盘日志：`%APPDATA%\atlisp-mcp\logs\tray.log`
+npm 任务日志：`%APPDATA%\atlisp-mcp\logs\npm-*.log`
+Node.js 安装日志：`%APPDATA%\atlisp-mcp\logs\node-msi-*.log`
+Node.js 安装包缓存：`%LOCALAPPDATA%\atlisp-mcp\downloads\`
+portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
+首次自动开启自启的标记：`%APPDATA%\atlisp-mcp\autostart-default.txt`（删除后下次启动会重新检查）
+
+## 自动检测顺序
+
+**Node.js**：配置项 → `%ProgramFiles%\nodejs\node.exe` → fnm / nvm / scoop → portable 目录（`%LOCALAPPDATA%\atlisp-mcp\node`）→ `PATH` 中的 `node.exe`。
+
+**@lisp/mcp**：
+
+1. 配置项 `ServerScript` 或环境变量 `ATLISP_MCP_SCRIPT`
+2. 托盘 exe 同目录 / 上级目录的 `dist/atlisp-mcp.js`、`src/atlisp-mcp.js`（方便开发）
+3. npm 全局目录下的 `@atlisp/mcp/dist/atlisp-mcp.js`（通过 `npm root -g` 获取）
+
+## 与 Windows 服务模式的关系
+
+如果已经用 `service.ps1 install` 安装了名为 `atlisp-mcp` 的 Windows 服务，托盘会优先使用服务：
+
+- 菜单里的启动/停止操作改为 `sc start` / `sc stop`
+- 不会额外启动一个 node 进程
+- 服务操作通常需要管理员权限；权限不足时托盘会给出错误提示
+
+如果使用普通进程模式，托盘启动的 node 进程**不会随托盘退出而结束**（默认 `StopServerOnExit=false`），退出托盘后服务仍在后台运行。
+
+## 与 `atlisp-mcp --install-autostart` 的区别
+
+| 方式 | 登录后启动 | 管理方式 |
+|------|-----------|----------|
+| `atlisp-mcp --install-autostart` | 直接启动服务（无界面） | 命令行 |
+| 托盘“随 Windows 启动” | 启动托盘，由托盘拉起服务 | 托盘菜单 |
+
+两种方式可以同时使用；如果同时启用，托盘会通过 `/health` 发现服务已在运行，不会重复启动。
+
+## 下载 / 升级说明
+
+### 安装 Node.js
+
+检测不到 Node.js 时（或从菜单选择“下载并安装 Node.js”），托盘会：
+
+1. 自动识别架构（`x64` / `arm64` / `x86`）
+2. 从 `NodeMirror` 下载对应版本，例如：
+   `https://npmmirror.com/mirrors/node/v22.12.0/node-v22.12.0-x64.msi`
+3. 校验下载文件大小
+4. 通过 UAC 提权，执行静默安装：
+   `msiexec /i node-v22.12.0-x64.msi /qn /norestart /l*v <log>`
+5. 安装完成后重新探测 Node.js，并继续提示安装 `@lisp/mcp`
+
+如果下载失败，托盘会询问是否改用 winget 安装；如果 `msiexec` 失败，会显示退出码和安装日志路径。
+
+菜单里的「安装 Node.js…」会**优先用 winget**（`OpenJS.NodeJS.LTS`，清单自带哈希校验，比托盘自己下载更干净）；没有 winget 才回退到镜像 MSI。
+
+> MSI 安装包会缓存在 `%LOCALAPPDATA%\atlisp-mcp\downloads\`，可手动重新运行。  
+> 默认版本 `22.12.0`；改 `tray.json` 的 `NodeVersion` 可指定其他版本（需确认镜像中存在对应文件）。
+
+### 安装 / 升级 @lisp/mcp
+
+- 安装与升级都通过 npm 完成：`npm install -g @atlisp/mcp@latest`
+- **没有 .NET SDK 的机器**：`edge-js` 的安装脚本会无条件 `spawn dotnet`（构建 CoreCLR bootstrap），没装 SDK 时报 `Error: spawn dotnet ENOENT` 让 npm 退出码 1。Windows 端走 native CLR + COM，用不到 bootstrap，所以托盘检测不到 `dotnet` 时自动给 npm 追加 `--ignore-scripts`，再调用 `EdgeNativeSupport.Repair()` 把 VC 运行时 DLL 复制到 `edge-js\lib\native\win32\<arch>\<node-abi>\`（这一步本来是安装脚本做的）。安装窗口会提示「已跳过 npm 安装脚本」，不影响使用
+- **定时自动升级**（默认关闭）：开启后默认每 24 小时执行一次 `npm view @atlisp/mcp version`，发现比本机新就自动升级；升级前停止服务（Windows 会锁定 `edge-js` 原生模块），升级后按原状态重启。全程不弹窗口，失败只记托盘日志并在气泡里提示，下次再重试。可在「设置 → 定时自动检查并升级 @lisp/mcp」开启/关闭，或改 `tray.json` 的 `AutoUpgrade` / `AutoUpgradeHours`
+  - 旧版本默认是「每 1 小时自动静默升级」；升级到本版后 `tray.json` 会一次性迁移为 `AutoUpgrade=false`、`AutoUpgradeHours=24`（`ConfigVersion` 记到 `1`），需要自动升级请手动重新开启
+- 如果全局 npm 目录需要管理员权限，托盘会在失败后提示以管理员身份重试（会弹出 UAC）；自动升级不会弹 UAC，失败留给下一次或手动升级
+- 升级前如果服务正在运行，升级完成后托盘会自动重启服务
+- **包目录被占用（EBUSY）时自动释放**：npm 替换全局包的做法是把整个
+  `node_modules\@atlisp\mcp` 改名成 `.mcp-XXXXXX`，只要还有进程「在里面」Windows 就拒绝
+  （进程的当前目录在包目录里、映射了 `edge-js` 原生 DLL、或运行包内的 exe）。托盘在 npm
+  报 EBUSY 后会依次：停掉自己拉起的服务 → 停 Windows 服务 → 把自己的 CWD 移出包目录 →
+  用「改一次目录名再改回来」探测是否真的空闲 → 找出命令行/可执行文件路径指向该目录的进程
+  （MCP 客户端拉起的 server、残留 `cad-worker`、包内旧托盘）→ 手动升级时先确认再结束它们 →
+  确认空闲后重试 npm（最多 2 次）。自动升级遇到第三方进程只记日志、不弹窗、下轮再试。
+  服务现在也不再以包目录为工作目录启动（脚本路径是绝对的），从根上少一个占用源
+- 手动「检查更新」只读取 `npm view @atlisp/mcp version`，不会修改任何文件
 
 **版本号怎么读**：exe 的版本资源固定 `1.0.0.0`（为了让 hash 跨版本稳定），真实版本来自
-`AtlispTray.version`（安装器/更新器写入），没有 sidecar 时读 npm 包里的 `package.json`，托盘「关于」里显示的是这个。
+`AtlispTray.version`（`atlisp-tray` 安装/更新时写入），没有 sidecar 时读 npm 包里的 `package.json`，托盘「关于」里显示的是这个。
 
 ## 杀软误报（Defender / 360 / 火绒）
 
-托盘是**未签名**的 .NET WinForms exe，同时又具备「自复制、写启动项、下载并执行安装包、自我更新」等能力，
+托盘是**未签名**的 .NET WinForms exe，同时具备「写启动项、下载并执行安装包」等能力，
 这在 Defender 的云端 ML 模型（报 `Trojan:Win32/Wacatac.B!ml` 一类 `!ml` 后缀）眼里和恶意软件高度重合。
 已做的降噪改动：
 
 - **版本资源补全**：exe 里有 `CompanyName=atlisp.cn`、`ProductName=@lisp MCP Server`、
   `FileDescription`、`Copyright`、`LegalTrademarks`（之前只有版本号，发布者字段是空的，是 ML 模型的强特征）。
-- **不再生成任何 `.cmd`/`.bat` 脚本**：自我更新改为「新版 exe 暂存 → 副本自己覆盖目标 → 启动」，
-  彻底去掉「`tasklist` 轮询父进程 + `copy /y` 覆盖 exe + `start`」这套恶意软件自我更新的经典形态。
+- **不再生成任何 `.cmd`/`.bat` 脚本、也不再自我替换**：托盘只判断版本并退出，更新由
+  `atlisp-tray`（Node 脚本）在 exe 解锁后完成。「`tasklist` 轮询父进程 + `copy /y` 覆盖 exe + `start`」
+  与「运行中的程序覆盖自身」这两类形态都不再出现。
   提权安装 npm 包也不再往 `%TEMP%` 落批处理：直接把命令行交给提权后的 `cmd`（参数里带输出重定向），
   并且**不隐藏控制台窗口**（隐藏提权执行本身就是可疑特征）。
 - **不再调用 PowerShell**：升级前探测「谁占着包目录」原来靠
@@ -429,8 +507,8 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
   （`ProcessRunner.Where` 扫描 PATH，`ProcessKiller` 用 Toolhelp 快照 + `Process.Kill`），
   少两次 `CreateProcess`，也少了两个常被恶意软件滥用的命令行。
 - **完全移除 `WebClient`**：连 SHASUMS 文本也改用 `HttpWebRequest`，IL 里不再出现该类。
-- **替换 exe 的动作交给固定二进制**：新增 `dist/AtlispUpdater.exe`，它几乎永不变（hash 稳定），
-  由它校验并替换托盘；托盘不再自己改自己。
+- **托盘不再自我替换**：删除 `AtlispUpdater.exe`，更新交给 `atlisp-tray`（Node 脚本）在托盘退出后完成——
+  程序里不再有「覆盖自己 exe 再启动」的模式。
 - **不再把版本号编译进 exe**：版本资源固定 `1.0.0.0`，真实版本写 `AtlispTray.version`。
   配合 `-deterministic` + `-pathmap` 构建，源码不变时产物**字节一致**（hash 不随发版漂移，信誉能累积）。
 - **不执行来源不明的二进制**：Node.js zip 比对官方 `SHASUMS256.txt`，Node MSI / Python 安装包
@@ -459,7 +537,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
    Linux 交叉编译环境下没有 `signtool`，发布前在 Windows 上补签，或把签名放到 CI 的 Windows runner。
 
    **CI 签名**（`.github/workflows/sign-release.yml`，凭据缺失时自动跳过）：两条渠道任选一条，
-   都签 `AtlispTray.exe` + `AtlispUpdater.exe`，签完用 `signtool verify /pa` 校验并上传 artifact。
+   签 `AtlispTray.exe`，签完用 `signtool verify /pa` 校验并上传 artifact。
 
    | 渠道 | 适用 | 需要的 secrets |
    |---|---|---|
@@ -524,4 +602,3 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 文件 | 作用 | hash 是否随版本变化 |
 |---|---|---|
 | `AtlispTray.exe` | 托盘本体（UI、菜单、服务管理） | 只有源码改动才变（版本号不烧进 exe） |
-| `AtlispUpdater.exe` | 独立更新器（`tray/AtlispUpdater.cs`） | 几乎永不变——**刻意如此**，让 Defender/SmartScreen 能积累「已知文件」信誉 |

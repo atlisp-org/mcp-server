@@ -1,10 +1,10 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 // @lisp MCP 托盘启动器（仅 Windows）
 //
 // npm i -g @atlisp/mcp 后执行：
 //   atlisp-tray
 //
-// 注意：`AtlispTray.exe` / `AtlispUpdater.exe` **不在 npm 包里**（未签名 PE 会在
+// 注意：`AtlispTray.exe` **不在 npm 包里**（未签名 PE 会在
 // `npm install` 阶段被杀软扫描）。首次运行会从 GitHub Releases 下载到
 // %LOCALAPPDATA%\Programs\atlisp-mcp，并用 manifest 里的 SHA256 校验后才启动。
 //
@@ -14,6 +14,7 @@
 // 常用参数：
 //   --force-download       忽略本地缓存，重新下载
 //   --check                只打印路径/版本/下载源，不启动
+//   --wait-pid <pid>       等指定进程退出后再继续（托盘更新时由托盘传入）
 //   --version              打印版本
 //   --help                 帮助
 // 其余参数原样传给托盘（如 --silent --start-server）。
@@ -48,6 +49,7 @@ function help() {
 选项:
   --force-download     重新下载托盘二进制（默认按 SHA256 复用本地缓存）
   --base-url <url>     下载源前缀，支持 {version} 占位符
+  --wait-pid <pid>     等指定进程退出后再下载/启动（托盘更新时内部使用）
   --check              只打印路径、版本与下载源，不启动
   -v, --version        显示版本
   -h, --help           显示帮助
@@ -60,7 +62,7 @@ function help() {
 }
 
 function parseArgs(argv) {
-  const options = { force: false, check: false, baseUrl: '', passthrough: [] };
+  const options = { force: false, check: false, baseUrl: '', waitPid: 0, passthrough: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
@@ -71,6 +73,8 @@ function parseArgs(argv) {
       options.check = true;
     } else if (arg === '--force-download') {
       options.force = true;
+    } else if (arg === '--wait-pid' && argv[i + 1]) {
+      options.waitPid = Number(argv[++i]) || 0;
     } else if (arg === '--base-url' && argv[i + 1]) {
       options.baseUrl = argv[++i];
     } else {
@@ -78,6 +82,20 @@ function parseArgs(argv) {
     }
   }
   return options;
+}
+
+async function waitForProcessExit(pid, timeoutMs) {
+  if (!pid) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -141,6 +159,14 @@ if (process.platform !== 'win32') {
   process.exit(1);
 }
 
+// 托盘更新：等旧托盘退出（否则 exe 被锁，下载后无法改名）
+if (options.waitPid) {
+  const exited = await waitForProcessExit(options.waitPid, 30_000);
+  if (!exited) {
+    console.warn('旧托盘 30 秒内未退出，继续尝试；若替换失败请手动退出托盘后重试。');
+  }
+}
+
 // 兼容旧版安装包（exe 仍在 npm 包里）与源码目录里手工 build 的场景
 if (!options.force && fs.existsSync(localExe)) {
   launch(localExe);
@@ -170,7 +196,10 @@ try {
   }
 } catch (error) {
   console.error(`托盘下载/校验失败：${error.message}`);
-  console.error(`可手动下载 ${'AtlispTray.exe'} 放到：${installDir}`);
+  if (/EBUSY|EPERM|EACCES|resource busy/i.test(error.message)) {
+    console.error('托盘可能仍在运行，exe 被 Windows 锁定。请先退出托盘（右键 → 退出）后重试。');
+  }
+  console.error(`可手动下载 AtlispTray.exe 放到：${installDir}`);
   console.error(`下载源：${bases.join(' , ')}`);
   process.exit(1);
 }

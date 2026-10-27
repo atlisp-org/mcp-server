@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 // 把托盘二进制上传到 atlisp.cn，供 https://atlisp.cn/download/<文件名> 直接下载。
 //
 // 用法：
@@ -25,11 +25,11 @@ const UPLOAD_URL = process.env.ATLISP_UPLOAD_URL || 'https://atlisp.cn/upload';
 const API_KEY = process.env.ATLISP_UPLOAD_KEY || '';
 const PKG = process.env.ATLISP_TRAY_PKG || '';
 const EDITION = process.env.ATLISP_TRAY_EDITION || 'download';
-const FILES = ['AtlispTray.exe', 'AtlispUpdater.exe', 'tray-manifest.json', 'SHASUMS256.txt'];
+const FILES = ['AtlispTray.exe', 'tray-manifest.json', 'SHASUMS256.txt'];
 const MAX_ATTEMPTS = 3;
 
 const dryRun = process.argv.includes('--dry-run');
-// 位置参数 = 只上传指定文件（默认全部），例如：node scripts/upload-tray.mjs AtlispUpdater.exe
+// 位置参数 = 只上传指定文件（默认全部），例如：node scripts/upload-tray.mjs AtlispTray.exe
 const only = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
 
 function log(message) {
