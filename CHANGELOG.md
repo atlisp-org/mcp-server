@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.16] - 2026-10-27
+
+### 更新内容
+
+- feat(tray): 降低杀软误报 + exe 移出 npm 包 (91c49c6)
+
 ## [1.12.15] - 2026-10-27
 
 ### 更新内容
