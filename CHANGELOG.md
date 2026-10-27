@@ -2,6 +2,19 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.14] - 2026-10-27
+
+### 更新内容
+
+- fix(cad): 长代码免弹信任框——预置 TRUSTEDPATHS，无该变量时改走内存分块注入 (f6efc93)
+- fix(import_funlib): list 格式带上参数列表，调用方据此对齐 arity (f28526b)
+- README: Code signing policy 改回 SignPath Foundation 主路线（Azure 保留为备选渠道） (74dcf49)
+- tray: 降低杀软误报特征——PowerShell 脚本改经 stdin 传入（去掉 -EncodedCommand/base64）、删除 wmic 兜底 (a828aa4)
+- chore: 配置脚本加可执行位 (37f4a23)
+- docs+scripts: Azure Artifact Signing 一键配置脚本与指南；README 签名政策改为 Azure 表述 (65f2995)
+- ci: 适配 Azure Artifact Signing 更名（artifact-signing-action@v2，OIDC 无需客户端密钥） (73377b5)
+- docs: 补充 ISC LICENSE 与 Code signing policy（SignPath Foundation 申请前置） (0e285f3)
+
 ## [1.12.13] - 2026-10-25
 
 ### 更新内容
