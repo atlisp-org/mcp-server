@@ -39,6 +39,10 @@ import { acquirePortLock, releasePortLock } from './lockfile.js';
 import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
 import peerManager from './peer-manager.js';
 import { isAuthConfigured } from './auth.js';
+import { enableConsoleTimestamp } from './console-timestamp.js';
+
+// 运行时日志每行带时间（stdio 协议走 process.stdout.write，不受影响）
+enableConsoleTimestamp();
 
 // 兜底：CommandQueue 清理/去重、worker 重置等产生的 promise rejection 不应杀死服务器进程
 process.on('unhandledRejection', (reason) => {

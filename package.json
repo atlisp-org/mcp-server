@@ -1,11 +1,10 @@
 {
   "name": "@atlisp/mcp",
-  "version": "1.12.19",
+  "version": "1.12.20",
   "description": "MCP Server for @lisp on CAD,support AutoCAD/GstarCAD/ZWCAD/BricsCAD or CAD platform compatible with AutoLISP",
   "type": "module",
   "bin": {
-    "atlisp-mcp": "./dist/atlisp-mcp.js",
-    "atlisp-tray": "./tray/atlisp-tray.js"
+    "atlisp-mcp": "./dist/atlisp-mcp.js"
   },
   "main": "dist/atlisp-mcp.js",
   "exports": {
@@ -16,9 +15,7 @@
     "dist",
     "!dist/*.exe",
     "!dist/SHASUMS256.txt",
-    "tray/atlisp-tray.js",
-    "tray/tray-download.js",
-    "tray/README.md"
+    "!dist/tray-manifest.json"
   ],
   "scripts": {
     "start": "node src/atlisp-mcp.js",
@@ -28,7 +25,7 @@
     "build:rot": "node scripts/build-rot.mjs",
     "build:tray": "node scripts/build-tray.mjs && node scripts/build-tray-manifest.mjs",
     "build:tray-manifest": "node scripts/build-tray-manifest.mjs",
-    "prepack": "npm run build && npm run build:tray",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run build && node scripts/check-build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

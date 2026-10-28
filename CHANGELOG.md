@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.20] - 2026-10-28
+
+### 更新内容
+
+- Revert "fix(tray): 去掉自动下载安装、WMI 与 netstat，托盘只做管理" (25fbd6c)
+
 ## [1.12.19] - 2026-10-28
 
 ### 更新内容

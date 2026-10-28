@@ -7,7 +7,7 @@ const dist = (...p) => path.join(root, 'dist', ...p);
 
 fs.mkdirSync(dist(), { recursive: true });
 
-for (const f of ['cad-worker.js', 'lisp-security.js', 'logger.js', 'config.js']) {
+for (const f of ['cad-worker.js', 'lisp-security.js', 'logger.js', 'config.js', 'console-timestamp.js']) {
   fs.copyFileSync(src(f), dist(f));
 }
 

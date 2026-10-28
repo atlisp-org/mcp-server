@@ -7,6 +7,10 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { validateLispCodeWorker, checkParens } from './lisp-security.js';
 import config from './config.js';
+import { enableConsoleTimestamp } from './console-timestamp.js';
+
+// 运行时日志每行带时间（stdout 协议通道走 process.stdout.write，不受影响）
+enableConsoleTimestamp();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

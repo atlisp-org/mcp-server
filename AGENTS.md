@@ -15,7 +15,7 @@ npm start            # node src/atlisp-mcp.js 开发模式
 npm run build:tray   # 构建 Windows 托盘程序 → dist/AtlispTray.exe（跨平台，见 tray/README.md）
 ```
 
-- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows 用系统 csc.exe；非 Windows 用 dotnet Roslyn + net48 参考程序集交叉编译，缺 dotnet 时告警跳过——发布机需装 .NET SDK，否则 npm 包内缺 dll，Windows 端 CAD 实例发现不可用）
+- 构建使用 `esbuild`，`build:main` 打包入口文件，`build:worker` 复制 `cad-worker.js`、`lisp-security.js`、`logger.js`、`config.js`、`console-timestamp.js`、`html/`、`handlers/` 到 `dist/`，`build:rot` 编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（Windows 用系统 csc.exe；非 Windows 用 dotnet Roslyn + net48 参考程序集交叉编译，缺 dotnet 时告警跳过——发布机需装 .NET SDK，否则 npm 包内缺 dll，Windows 端 CAD 实例发现不可用）
 - CI 在 `tools/mcp-server` 目录下运行（本仓库在 monorepo 中位于 `tools/mcp-server/`，但当前检出已为根目录）
 
 ## 架构要点
@@ -236,6 +236,7 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `src/lisp-sandbox.js` | 重导出 shim——所有逻辑已迁移到 lisp-security.js |
 | `src/handler-loader.js` | 懒加载 + 热重载（fs.watch 监听 handlers/ 目录变化） |
 | `src/config.js` | 配置管理：三层合并、Zod coerce 类型转换、热重载 |
+| `src/console-timestamp.js` | 运行时日志加时间：装饰 `console.log/info/warn/error` 给首个字符串参数前置本地时间（`YYYY-MM-DD HH:mm:ss.SSS`）；入口与 cad-worker 启动时启用，stdio 协议走 `process.stdout.write` 不受影响 |
 | `src/routes.js` | HTTP 路由：中间件链（auth/rate-limit/CORS）、MCP/SSE/调试面板 |
 | `src/errors.js` | 错误定义：`MCPError`、`createError`、15 个预定义错误码 |
 | `src/peer-discovery.js` | Peer 发现：UDP 广播（端口 9811）、peer 注册/过期清理 |
@@ -263,7 +264,7 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
 | `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小 + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成 |
 | `scripts/upload-tray.mjs` | 把签名后的 exe/manifest 上传到 atlisp.cn `/upload`，对外地址 `https://atlisp.cn/download/<文件名>`（国内主源） |
-| `tray/tray-download.js` | 托盘二进制下载器：按 manifest 校验 SHA256 后落到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；下载源按 `baseUrls` 顺序尝试（atlisp.cn/download → GitHub），`ATLISP_TRAY_BASE_URL` 可强制单源 |
-| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令：解包后的包内没有 exe，首次运行下载并校验，然后启动 |
+| `tray/tray-download.js` | 托盘二进制下载器（仅存仓库，**npm 包不再包含**）：按 manifest 校验 SHA256 后落到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；下载源按 `baseUrls` 顺序尝试（atlisp.cn/download → GitHub），`ATLISP_TRAY_BASE_URL` 可强制单源 |
+| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令（**已从 npm 包移除**，bin 与 files 均不再包含；仓库保留供参考）。托盘现仅经 kernel mini-sys 从 `atlisp.cn/<edition>/bin/` 自动下载 |
 | `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |
 | `scripts/net48-refs.mjs` | net48 交叉编译公共辅助：Roslyn csc 定位 + 参考程序集下载/缓存 |
