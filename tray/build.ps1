@@ -57,6 +57,7 @@ if ($outputDir -and -not (Test-Path $outputDir)) {
 
 $icon = Join-Path $PSScriptRoot 'atlisp.ico'
 $manifestPath = Join-Path $PSScriptRoot 'AtlispTray.manifest'
+$codeSignSource = Join-Path $PSScriptRoot 'CodeSign.cs'
 
 # 托盘的真实版本号（只写进同目录的 AtlispTray.version，**不烧进 exe**）。
 # 把版本号编译进 exe 会让每次发版都产出新 hash，Defender/SmartScreen 对每个
@@ -100,7 +101,9 @@ function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManife
         '/r:System.Drawing.dll',
         '/r:System.Windows.Forms.dll',
         '/r:System.Web.Extensions.dll',
-        '/r:System.Xml.dll'
+        '/r:System.Xml.dll',
+        '/r:System.IO.Compression.dll',
+        '/r:System.Management.dll'
     )
     if (-not $NoOptimize) { $compileArgs += '/optimize+' }
     if (Test-Path $icon) { $compileArgs += ('/win32icon:"' + $icon + '"') }
@@ -118,7 +121,7 @@ function Invoke-Compile([string[]]$sources, [string]$target, [switch]$WithManife
 }
 
 Write-Host "编译 $source ..." -ForegroundColor Cyan
-Invoke-Compile -sources @($trayStamp, $source) -target $Output -WithManifest
+Invoke-Compile -sources @($codeSignSource, $trayStamp, $source) -target $Output -WithManifest
 
 Write-Host "构建完成：$Output" -ForegroundColor Green
 

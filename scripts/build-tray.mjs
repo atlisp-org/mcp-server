@@ -20,6 +20,7 @@ const manifest = path.join(root, 'tray', 'AtlispTray.manifest');
 const icon = path.join(root, 'tray', 'atlisp.ico');
 const outDir = path.join(root, 'dist');
 const output = path.join(outDir, 'AtlispTray.exe');
+const codeSignSource = path.join(root, 'tray', 'CodeSign.cs');
 const packageVersion = JSON.parse(
   fs.readFileSync(path.join(root, 'package.json'), 'utf8')
 ).version;
@@ -80,7 +81,9 @@ async function buildWithDotnet() {
     'System.Drawing.dll',
     'System.Windows.Forms.dll',
     'System.Web.Extensions.dll',
-    'System.Xml.dll'
+    'System.Xml.dll',
+    'System.IO.Compression.dll',
+    'System.Management.dll'
   ];
 
   log(`使用 .NET SDK ${tool.version} 的 Roslyn 编译器编译（v${packageVersion}）...`);
@@ -88,7 +91,7 @@ async function buildWithDotnet() {
     tool,
     referenceDir,
     references,
-    sources: [writeStamp(), source],
+    sources: [codeSignSource, writeStamp(), source],
     out: output,
     manifest,
   });
