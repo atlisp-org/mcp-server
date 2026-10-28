@@ -81,11 +81,13 @@ curl -X POST http://127.0.0.1:8110/config/reload    # 改完配置后热重载
 
 | 功能 | 替代做法 |
 |---|---|
-| 自动安装 Node.js | `winget install OpenJS.NodeJS.LTS` |
-| 自动安装/升级 `@atlisp/mcp` | `npm i -g @atlisp/mcp@latest` |
-| 图纸知识库启停/升级 | `pip install -U atlisp-dwg-kb`，手动运行 `atlisp-dwg-kb serve` |
+| 图形化启停 MCP 服务 | `atlisp-mcp` / `sc start atlisp-mcp`，或 Windows 服务 |
+| 图纸知识库启停 | 手动运行 `atlisp-dwg-kb serve`，或做成 Windows 服务 |
 | 异常退出自动拉起 | 用任务计划（`schtasks /sc onfailure`）或 Windows 服务包一层；普通用户场景一般不需要 |
 | 更新提示 | `npm outdated -g @atlisp/mcp` |
+
+> 托盘本身也不再安装 Node.js / Python / `@lisp/mcp` / `atlisp-dwg-kb`（只显示安装命令），
+> 所以上面这些安装命令在两种模式下都一样。
 
 想用图形界面时再临时运行 `npx -p @atlisp/mcp atlisp-tray`，不用长期常驻。
 

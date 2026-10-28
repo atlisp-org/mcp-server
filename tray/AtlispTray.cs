@@ -3,8 +3,11 @@
 // 单文件 WinForms 程序，使用 .NET Framework 4.x 自带的 csc.exe 编译，
 // 目标平台 Windows 7+（实际依赖 .NET Framework 4.5+）。
 //
-// 功能：启动/停止/重启本机 atlisp-mcp、检查更新、下载安装/升级、
+// 功能：启动/停止/重启本机 atlisp-mcp、健康检查、只读检查更新、
 //       查看日志与调试面板、托盘/服务开机自启、环境诊断。
+//
+// 刻意不具备「下载 / 安装 / 解压 / 枚举进程」能力：缺依赖时只显示安装命令，
+// 由用户自行安装（见 tray/README.md「杀软误报」）。
 //
 // 注意：本文件必须保持 C# 5 语法（in-box csc.exe 的限制），
 //       不要使用字符串插值、?.、nameof、自动属性初始化器等 C# 6+ 特性。
@@ -17,11 +20,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
-using System.IO.Compression;
-using System.Management;
 using System.Net;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -75,7 +75,7 @@ namespace Atlisp.Tray
             // 顺手清掉残留（避免留下一个「可疑脚本」样本）。
             TraySelfUpdate.CleanupLegacyScript();
 
-            // Windows 7/8 上的 .NET Framework 默认不启用 TLS 1.2，npmmirror 需要 TLS 1.2
+            // Windows 7/8 上的 .NET Framework 默认不启用 TLS 1.2，npm registry 需要 TLS 1.2
             try
             {
                 ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -248,17 +248,7 @@ namespace Atlisp.Tray
             get { return Path.Combine(DataDir, "server.pid"); }
         }
 
-        public static string DownloadDir
-        {
-            get
-            {
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "atlisp-mcp", "downloads");
-            }
-        }
-
-        /// <summary>免管理员的 portable Node.js（解压 zip 到用户目录，无需 UAC）。</summary>
+        /// <summary>旧版托盘解压到用户目录的 portable Node.js（仅用于探测，不再安装）。</summary>
         public static string PortableNodeDir
         {
             get
@@ -269,10 +259,7 @@ namespace Atlisp.Tray
             }
         }
 
-        /// <summary>
-        /// 托盘自动安装的 Python（官方安装包 InstallAllUsers=0 + TargetDir 到用户目录，
-        /// 不需要管理员权限）。知识库（atlisp-dwg-kb）是 Python 包，没它装不了。
-        /// </summary>
+        /// <summary>旧版托盘安装到用户目录的 Python（仅用于探测，不再安装）。</summary>
         public static string PythonDir
         {
             get
@@ -287,12 +274,6 @@ namespace Atlisp.Tray
         public static string AutostartDefaultPath
         {
             get { return Path.Combine(DataDir, "autostart-default.txt"); }
-        }
-
-        /// <summary>自动安装的退避状态，避免反复失败时反复下载。</summary>
-        public static string BootstrapStatePath
-        {
-            get { return Path.Combine(DataDir, "bootstrap.state"); }
         }
 
         /// <summary>托盘启动的知识库服务 PID（用于停止；仅记托盘自己起的进程）。</summary>
@@ -346,297 +327,41 @@ namespace Atlisp.Tray
         }
     }
 
-    /// <summary>
-    /// 下载物校验。托盘**不执行来源无法验证的二进制**——「下载后静默执行」正是杀软
-    /// 判定 dropper 的核心特征，所以这里宁可失败也不放过：
-    ///   · Node.js zip：比对官方 SHASUMS256.txt（镜像优先，退回 nodejs.org）；
-    ///   · 安装包（Node MSI / Python exe）：校验 Authenticode 签名是否有效。
-    /// </summary>
-    internal static class DownloadVerifier
-    {
-        public static string Sha256(string path)
-        {
-            using (FileStream stream = File.OpenRead(path))
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(stream);
-                StringBuilder sb = new StringBuilder(hash.Length * 2);
-                for (int i = 0; i < hash.Length; i++) sb.Append(hash[i].ToString("x2"));
-                return sb.ToString();
-            }
-        }
-
-        /// <summary>按官方 SHASUMS256.txt 校验 Node.js zip。拿不到清单时返回 false（fail-closed）。</summary>
-        public static bool VerifyNodeZip(string zipPath, string version, string mirror,
-            out string error)
-        {
-            error = null;
-            string fileName = Path.GetFileName(zipPath);
-            string expected = FetchShasum(version, mirror, fileName, out error);
-            if (string.IsNullOrEmpty(expected)) return false;
-
-            string actual;
-            try
-            {
-                actual = Sha256(zipPath);
-            }
-            catch (Exception ex)
-            {
-                error = "计算 SHA256 失败: " + ex.Message;
-                return false;
-            }
-            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
-            {
-                error = "SHA256 与官方清单不一致（期望 " + Short(expected) +
-                    "，实际 " + Short(actual) + "）";
-                return false;
-            }
-            return true;
-        }
-
-        private static string Short(string hash)
-        {
-            if (string.IsNullOrEmpty(hash)) return "?";
-            return hash.Length > 12 ? hash.Substring(0, 12) + "…" : hash;
-        }
-
-        private static string FetchShasum(string version, string mirror, string fileName,
-            out string error)
-        {
-            error = null;
-            List<string> bases = new List<string>();
-            if (!string.IsNullOrEmpty(mirror)) bases.Add(mirror.TrimEnd('/'));
-            bases.Add("https://nodejs.org/dist");
-
-            foreach (string baseUrl in bases)
-            {
-                string url = baseUrl + "/v" + version + "/SHASUMS256.txt";
-                try
-                {
-                    string text = DownloadText(url);
-                    foreach (string line in text.Split('\n'))
-                    {
-                        string trimmed = line.Trim();
-                        if (!trimmed.EndsWith(fileName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-                        string[] parts = trimmed.Split(new char[] { ' ', '\t' },
-                            StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length >= 1 && parts[0].Length == 64) return parts[0];
-                    }
-                    error = url + " 里没有 " + fileName;
-                }
-                catch (Exception ex)
-                {
-                    error = url + ": " + ex.Message;
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// 下载文本（SHASUMS256.txt 这类小文件）。
-        /// 用 HttpWebRequest 而不是 WebClient：`WebClient + Download* + Process.Start`
-        /// 是杀软 ML 里权重很高的组合，整个程序里不出现 WebClient 更干净。
-        /// </summary>
-        private static string DownloadText(string url)
-        {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-            request.UserAgent = "atlisp-tray/" + Program.AppVersion;
-            request.Timeout = 15000;
-            request.ReadWriteTimeout = 15000;
-            request.AutomaticDecompression = DecompressionMethods.GZip |
-                DecompressionMethods.Deflate;
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-            using (Stream stream = response.GetResponseStream())
-            using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
-            {
-                return reader.ReadToEnd();
-            }
-        }
-    }
-
-    /// <summary>
-    /// 解压 portable Node.js 的 zip 包。官方 zip 顶层带一个
-    /// node-vX.Y.Z-win-x64\ 目录，这里统一剥掉，避免多一层路径。
-    /// 全程只写用户目录，不需要管理员权限。
-    /// </summary>
-    internal static class ZipInstaller
-    {
-        /// <summary>返回解压后 node.exe 的路径；失败时抛出异常。</summary>
-        public static string ExtractNodeZip(string zipPath, string destDir)
-        {
-            if (!File.Exists(zipPath)) throw new IOException("安装包不存在：" + zipPath);
-            Directory.CreateDirectory(destDir);
-
-            string staging = destDir + ".tmp-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-            try
-            {
-                using (FileStream stream = File.OpenRead(zipPath))
-                using (ZipArchive archive = new ZipArchive(stream, ZipArchiveMode.Read))
-                {
-                    if (archive.Entries.Count == 0) throw new IOException("压缩包为空。");
-                    string root = CommonRoot(archive);
-                    foreach (ZipArchiveEntry entry in archive.Entries)
-                    {
-                        string relative = StripRoot(entry.FullName, root);
-                        if (relative.Length == 0) continue;
-
-                        string target = Path.GetFullPath(Path.Combine(staging, relative));
-                        if (!IsUnder(staging, target))
-                        {
-                            throw new IOException("压缩包含非法路径：" + entry.FullName);
-                        }
-
-                        if (entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
-                            entry.FullName.EndsWith("\\", StringComparison.Ordinal))
-                        {
-                            Directory.CreateDirectory(target);
-                            continue;
-                        }
-
-                        string dir = Path.GetDirectoryName(target);
-                        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                        // 手动复制，避免依赖 System.IO.Compression.FileSystem
-                        using (Stream source = entry.Open())
-                        using (FileStream sink = new FileStream(
-                            target, FileMode.Create, FileAccess.Write, FileShare.None))
-                        {
-                            source.CopyTo(sink);
-                        }
-                    }
-                }
-
-                string nodeExe = Path.Combine(staging, "node.exe");
-                if (!File.Exists(nodeExe)) throw new IOException("压缩包中没有 node.exe。");
-                string npmCmd = Path.Combine(staging, "npm.cmd");
-                if (!File.Exists(npmCmd)) throw new IOException("压缩包中没有 npm.cmd。");
-
-                // 旧版本残留目录先清掉再替换，避免 node.exe 被占用导致失败
-                if (Directory.Exists(destDir))
-                {
-                    try { Directory.Delete(destDir, true); }
-                    catch (Exception ex)
-                    {
-                        throw new IOException("无法替换已有目录（可能有 node.exe 正在运行）：" +
-                            ex.Message);
-                    }
-                }
-                Directory.Move(staging, destDir);
-                return Path.Combine(destDir, "node.exe");
-            }
-            finally
-            {
-                try { if (Directory.Exists(staging)) Directory.Delete(staging, true); }
-                catch { }
-            }
-        }
-
-        /// <summary>取所有条目共有的第一层目录名；没有则返回空。</summary>
-        private static string CommonRoot(ZipArchive archive)
-        {
-            string root = null;
-            foreach (ZipArchiveEntry entry in archive.Entries)
-            {
-                string name = entry.FullName.Replace('\\', '/');
-                int slash = name.IndexOf('/');
-                if (slash <= 0) return "";
-                string first = name.Substring(0, slash);
-                if (root == null) root = first;
-                else if (!string.Equals(root, first, StringComparison.OrdinalIgnoreCase)) return "";
-            }
-            return root ?? "";
-        }
-
-        private static string StripRoot(string fullName, string root)
-        {
-            string name = fullName.Replace('\\', '/');
-            if (root.Length > 0)
-            {
-                if (name.Length <= root.Length) return "";
-                if (!name.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return "";
-                name = name.Substring(root.Length).TrimStart('/');
-            }
-            return name.Replace('/', Path.DirectorySeparatorChar);
-        }
-
-        private static bool IsUnder(string root, string target)
-        {
-            string left = Path.GetFullPath(root).TrimEnd('\\') + "\\";
-            return target.StartsWith(left, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
     public sealed class TrayConfig
     {
-        /// <summary>配置结构版本；小于当前值表示需要一次性迁移默认值。</summary>
-        public const int ConfigVersionCurrent = 2;
-
-        /// <summary>写入 tray.json 的配置版本，见 <see cref="ConfigVersionCurrent"/>。</summary>
-        public int ConfigVersion { get; set; }
         public int Port { get; set; }
         public string NodePath { get; set; }
         public string NpmPath { get; set; }
         public string ServerScript { get; set; }
         public string ConfigFile { get; set; }
-        public string NpmRegistry { get; set; }
-        public string NodeVersion { get; set; }
-        public string NodeMirror { get; set; }
         public bool AutoStartServer { get; set; }
         public bool CheckUpdateOnStart { get; set; }
         public bool StopServerOnExit { get; set; }
-        public bool AutoInstall { get; set; }
-        public bool AutoUpgrade { get; set; }
-        public int AutoUpgradeHours { get; set; }
         public int HealthyPollSeconds { get; set; }
         /// <summary>图纸知识库（atlisp-dwg-kb）服务地址，默认本机 :8322。</summary>
         public string DwgKbUrl { get; set; }
         /// <summary>知识库 API key；知识库侧设置了 DWG_KB_API_KEY 时必须一致。</summary>
         public string DwgKbApiKey { get; set; }
-        /// <summary>自动安装 Python 时使用的版本（官方安装包）。</summary>
-        public string PythonVersion { get; set; }
-        /// <summary>Python 安装包镜像（默认 npmmirror；留空则用 python.org）。</summary>
-        public string PythonMirror { get; set; }
         /// <summary>检测到的 Python 解释器路径（缓存，加速后续检测）。</summary>
         public string PythonPath { get; set; }
         /// <summary>托盘启动时自动启动本地知识库服务（仅当地址是本机且已安装包）。</summary>
         public bool DwgKbAutoStart { get; set; }
-        /// <summary>
-        /// 定时检查 PyPI 上的 atlisp-dwg-kb 新版本并自动升级（间隔复用 AutoUpgradeHours）。
-        /// 仅当地址是本机且已安装包时生效；升级前会停掉托盘启动的知识库进程，完成后自动拉起。
-        /// </summary>
-        public bool DwgKbAutoUpgrade { get; set; }
 
         public TrayConfig()
         {
-            ConfigVersion = ConfigVersionCurrent;
             Port = 8110;
             NodePath = "";
             NpmPath = "";
             ServerScript = "";
             ConfigFile = "";
-            NpmRegistry = "";
-            NodeVersion = "22.12.0";
-            NodeMirror = "https://npmmirror.com/mirrors/node";
             AutoStartServer = true;
             CheckUpdateOnStart = true;
             StopServerOnExit = false;
-            AutoInstall = true;
-            // 默认「只检查、只提示，不自动安装」：开机后静默联网并在后台执行
-            // npm 全局安装，是杀软启发式里典型的「下载并执行」形态，改成用户确认后再升级。
-            AutoUpgrade = false;
-            AutoUpgradeHours = 24;
             HealthyPollSeconds = 5;
             DwgKbUrl = "http://127.0.0.1:8322";
             DwgKbApiKey = "";
-            PythonVersion = "3.12.8";
-            PythonMirror = "https://registry.npmmirror.com/-/binary/python";
             PythonPath = "";
             DwgKbAutoStart = true;
-            // 与 AutoUpgrade 同理：后台静默 `pip install` 再重启服务是「下载并执行」
-            // 形态，默认关掉，只在菜单里手动升级。
-            DwgKbAutoUpgrade = false;
         }
 
         public static TrayConfig Load()
@@ -658,55 +383,26 @@ namespace Atlisp.Tray
                 AppLog.Write("读取托盘配置失败，使用默认值: " + ex.Message);
             }
             config.Normalize();
-            // 旧版默认是「每 1 小时自动静默升级」，新默认改为「只检查并提示」。
-            // 已装了旧版托盘的机器不需要手动清 tray.json：这里一次性迁移到新默认，
-            // 避免继续每小时联网查版本并在后台静默执行 npm 安装。
-            // v2 同理：知识库的自动 `pip install` 也改成默认关闭（旧版一律是 true，
-            // 分不清用户是否亲手打开过，宁可让他们手动再勾一次）。
-            if (config.ConfigVersion < ConfigVersionCurrent)
-            {
-                if (config.ConfigVersion < 1)
-                {
-                    config.AutoUpgrade = false;
-                    if (config.AutoUpgradeHours <= 1) config.AutoUpgradeHours = 24;
-                }
-                config.DwgKbAutoUpgrade = false;
-                config.ConfigVersion = ConfigVersionCurrent;
-                config.Save();
-            }
-            else if (!exists)
-            {
-                config.Save();
-            }
+            if (!exists) config.Save();
             return config;
         }
 
         public void CopyFrom(TrayConfig other)
         {
             if (other == null) return;
-            ConfigVersion = other.ConfigVersion;
             Port = other.Port;
             NodePath = other.NodePath;
             NpmPath = other.NpmPath;
             ServerScript = other.ServerScript;
             ConfigFile = other.ConfigFile;
-            NpmRegistry = other.NpmRegistry;
-            NodeVersion = other.NodeVersion;
-            NodeMirror = other.NodeMirror;
             AutoStartServer = other.AutoStartServer;
             CheckUpdateOnStart = other.CheckUpdateOnStart;
             StopServerOnExit = other.StopServerOnExit;
-            AutoInstall = other.AutoInstall;
-            AutoUpgrade = other.AutoUpgrade;
-            AutoUpgradeHours = other.AutoUpgradeHours;
             HealthyPollSeconds = other.HealthyPollSeconds;
             DwgKbUrl = other.DwgKbUrl;
             DwgKbApiKey = other.DwgKbApiKey;
-            PythonVersion = other.PythonVersion;
-            PythonMirror = other.PythonMirror;
             PythonPath = other.PythonPath;
             DwgKbAutoStart = other.DwgKbAutoStart;
-            DwgKbAutoUpgrade = other.DwgKbAutoUpgrade;
             Normalize();
         }
 
@@ -731,18 +427,10 @@ namespace Atlisp.Tray
         {
             if (Port < 1 || Port > 65535) Port = 8110;
             if (HealthyPollSeconds < 2 || HealthyPollSeconds > 60) HealthyPollSeconds = 5;
-            if (AutoUpgradeHours < 1 || AutoUpgradeHours > 168) AutoUpgradeHours = 24;
             NodePath = NodePath ?? "";
             NpmPath = NpmPath ?? "";
             ServerScript = ServerScript ?? "";
             ConfigFile = ConfigFile ?? "";
-            NpmRegistry = NpmRegistry ?? "";
-            NodeVersion = NormalizeNodeVersion(NodeVersion);
-            NodeMirror = (NodeMirror ?? "").Trim().TrimEnd('/');
-            if (NodeMirror.Length == 0)
-            {
-                NodeMirror = "https://npmmirror.com/mirrors/node";
-            }
             // 知识库地址：空 → 默认本机；只接受 http/https（写错成裸主机名时
             // HttpWebRequest 会在菜单打开时抛异常，表现为「知识库不可达」）。
             DwgKbUrl = (DwgKbUrl ?? "").Trim().TrimEnd('/');
@@ -753,26 +441,7 @@ namespace Atlisp.Tray
                 DwgKbUrl = "http://" + DwgKbUrl;
             }
             DwgKbApiKey = DwgKbApiKey ?? "";
-            PythonVersion = (PythonVersion ?? "").Trim();
-            if (PythonVersion.Length == 0) PythonVersion = "3.12.8";
-            PythonMirror = (PythonMirror ?? "").Trim().TrimEnd('/');
-            if (PythonMirror.Length == 0)
-            {
-                PythonMirror = "https://registry.npmmirror.com/-/binary/python";
-            }
             PythonPath = PythonPath ?? "";
-        }
-
-        private static string NormalizeNodeVersion(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "22.12.0";
-            string version = value.Trim();
-            if (version.StartsWith("v", StringComparison.OrdinalIgnoreCase))
-            {
-                version = version.Substring(1);
-            }
-            if (Regex.IsMatch(version, @"^\d+\.\d+\.\d+$")) return version;
-            return "22.12.0";
         }
     }
 
@@ -1234,115 +903,12 @@ namespace Atlisp.Tray
             lock (output) return output.ToString();
         }
 
-        public static string RunCmd(string commandLine, int timeoutMs, out int exitCode)
-        {
-            string comspec = Environment.GetEnvironmentVariable("ComSpec");
-            if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
-            return Run(comspec, "/d /s /c \"" + commandLine + "\"", timeoutMs,
-                out exitCode, Encoding.Default);
-        }
-
-        public static Process Create(string fileName, string arguments, Encoding encoding,
-            string workingDirectory, DataReceivedEventHandler outputHandler,
-            DataReceivedEventHandler errorHandler)
-        {
-            ProcessStartInfo info = new ProcessStartInfo();
-            info.FileName = fileName;
-            info.Arguments = arguments;
-            info.UseShellExecute = false;
-            info.CreateNoWindow = true;
-            info.RedirectStandardOutput = true;
-            info.RedirectStandardError = true;
-            if (encoding != null)
-            {
-                info.StandardOutputEncoding = encoding;
-                info.StandardErrorEncoding = encoding;
-            }
-            if (!string.IsNullOrEmpty(workingDirectory) && Directory.Exists(workingDirectory))
-            {
-                info.WorkingDirectory = workingDirectory;
-            }
-
-            Process process = new Process();
-            process.StartInfo = info;
-            process.OutputDataReceived += outputHandler;
-            process.ErrorDataReceived += errorHandler;
-            return process;
-        }
-
         public static string Quote(string value)
         {
             if (value == null) return "\"\"";
             return "\"" + value.Replace("\"", "\\\"") + "\"";
         }
 
-        /// <summary>
-        /// 以管理员身份执行 cmd 命令行（npm 全局安装等），输出重定向到 logFile。
-        ///
-        /// 刻意**不再**往 %TEMP% 写 `.cmd` 再提权运行——「落一个批处理文件、再把它隐藏着
-        /// 提权执行」是杀软眼里的投放器形态。现在直接把命令行交给提权后的 cmd，
-        /// 也不隐藏窗口（提权进程弹个控制台是正常的，隐藏反而像在躲）。
-        /// 命令行里的 node / npm 都用绝对路径，因此不依赖提升进程的 PATH。
-        /// </summary>
-        public static Process StartElevated(string commandLine, string logFile, out string error)
-        {
-            error = null;
-            try
-            {
-                string comspec = Environment.GetEnvironmentVariable("ComSpec");
-                if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
-
-                // /s + 首尾引号：cmd 会去掉最外层一对引号，剩下的就是原始命令行 + 重定向。
-                // chcp 65001 保留旧 `.cmd` 里的 UTF-8 输出，日志按 UTF-8 读回。
-                ProcessStartInfo info = new ProcessStartInfo();
-                info.FileName = comspec;
-                info.Arguments = "/d /s /c \"chcp 65001 >nul & " + commandLine +
-                    " > " + Quote(logFile) + " 2>&1\"";
-                info.Verb = "runas";
-                info.UseShellExecute = true;
-                info.WorkingDirectory = Environment.GetFolderPath(
-                    Environment.SpecialFolder.UserProfile);
-                return Process.Start(info);
-            }
-            catch (Win32Exception ex)
-            {
-                // 1223 = 用户取消了 UAC
-                error = ex.NativeErrorCode == 1223 ? "已取消管理员授权" : ex.Message;
-                return null;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
-        }
-
-        public static Process StartElevatedExecutable(string fileName, string arguments,
-            out string error)
-        {
-            error = null;
-            try
-            {
-                ProcessStartInfo info = new ProcessStartInfo();
-                info.FileName = fileName;
-                info.Arguments = arguments;
-                info.Verb = "runas";
-                info.UseShellExecute = true;
-                info.WindowStyle = ProcessWindowStyle.Hidden;
-                return Process.Start(info);
-            }
-            catch (Win32Exception ex)
-            {
-                // 1223 = 用户取消了 UAC
-                error = ex.NativeErrorCode == 1223 ? "已取消管理员授权" : ex.Message;
-                return null;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
-        }
     }
 
     /// <summary>
@@ -1547,7 +1113,7 @@ namespace Atlisp.Tray
             string nvmNode = FindNewestNvmNode(Path.Combine(roamingAppData, "nvm"));
             if (nvmNode != null) return nvmNode;
 
-            // 托盘自动安装的免管理员 Node.js（解压在用户目录下，无需 UAC）
+            // 旧版托盘留下的免管理员 Node.js（只探测，不再安装）
             string portableNode = Path.Combine(Paths.PortableNodeDir, "node.exe");
             if (ExistsFile(portableNode)) return portableNode;
 
@@ -1655,9 +1221,6 @@ namespace Atlisp.Tray
             }
 
             List<string> globalRoots = new List<string>();
-            string npmRoot = GetNpmGlobalRoot(info);
-            if (!string.IsNullOrEmpty(npmRoot)) globalRoots.Add(npmRoot);
-
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             globalRoots.Add(Path.Combine(appData, "npm", "node_modules"));
@@ -1669,49 +1232,6 @@ namespace Atlisp.Tray
                 if (File.Exists(candidate)) return candidate;
             }
 
-            return null;
-        }
-
-        private static string GetNpmGlobalRoot(ServerInfo info)
-        {
-            try
-            {
-                int exitCode;
-                string output;
-                if (!string.IsNullOrEmpty(info.NodePath) && !string.IsNullOrEmpty(info.NpmCliPath))
-                {
-                    output = ProcessRunner.Run(
-                        info.NodePath,
-                        ProcessRunner.Quote(info.NpmCliPath) + " root -g",
-                        10000,
-                        out exitCode,
-                        Encoding.UTF8);
-                }
-                else if (!string.IsNullOrEmpty(info.NpmPath))
-                {
-                    output = ProcessRunner.RunCmd(
-                        ProcessRunner.Quote(info.NpmPath) + " root -g",
-                        15000,
-                        out exitCode);
-                }
-                else
-                {
-                    return null;
-                }
-
-                if (exitCode != 0 || string.IsNullOrEmpty(output)) return null;
-                string[] lines = output.Split(new char[] { '\r', '\n' },
-                    StringSplitOptions.RemoveEmptyEntries);
-                for (int i = lines.Length - 1; i >= 0; i--)
-                {
-                    string line = lines[i].Trim();
-                    if (line.Length > 0 && Directory.Exists(line)) return line;
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("获取 npm 全局目录失败: " + ex.Message);
-            }
             return null;
         }
 
@@ -1754,451 +1274,6 @@ namespace Atlisp.Tray
         private static bool ExistsFile(string path)
         {
             return !string.IsNullOrEmpty(path) && File.Exists(path);
-        }
-    }
-
-    /// <summary>
-    /// edge-js 的 npm 安装脚本（node tools/install.js）在 Windows 上会无条件
-    /// spawn `dotnet build` 构建 CoreCLR bootstrap。机器没有 .NET SDK 时 spawn 抛
-    /// 未处理的 ENOENT，整个 `npm install -g @atlisp/mcp` 以退出码 1 失败：
-    ///     Error: spawn dotnet ENOENT / code: 'ENOENT', syscall: 'spawn dotnet'
-    ///
-    /// 本服务在 Windows 上走 .NET Framework 的 native CLR + COM，用不到 bootstrap，
-    /// 所以没有 dotnet 时可以：
-    ///   1) npm install 加 --ignore-scripts（只跳过安装脚本，包文件照常安装）；
-    ///   2) 用 Repair() 补上安装脚本里唯一有用的那步——把 VC 运行时 DLL 复制到
-    ///      各 node ABI 目录（edge_nativeclr.node 就从这个目录解析依赖）。
-    /// </summary>
-    internal static class EdgeNativeSupport
-    {
-        private static readonly string[] RedistDlls = new string[]
-        {
-            "concrt140.dll", "msvcp140.dll", "vccorlib140.dll", "vcruntime140.dll"
-        };
-
-        private static readonly string[] ArchDirs = new string[] { "x64", "ia32", "arm64" };
-
-        /// <summary>本机是否有 .NET SDK（只有它才需要跑 edge-js 的安装脚本）。</summary>
-        public static bool DotnetAvailable()
-        {
-            return ProcessRunner.Where("dotnet.exe") != null;
-        }
-
-        /// <summary>npm install 需要追加的参数：没有 dotnet 时跳过安装脚本，避免 ENOENT。</summary>
-        public static string InstallArgs()
-        {
-            return DotnetAvailable() ? "" : " --ignore-scripts";
-        }
-
-        /// <summary>安装/升级完成后补齐 edge-js 原生文件，返回一行写日志的说明。</summary>
-        public static string Repair(ServerInfo info)
-        {
-            if (info == null || string.IsNullOrEmpty(info.PackageDir))
-            {
-                return "未定位到 @lisp/mcp 包目录，跳过 edge-js 原生文件检查";
-            }
-
-            string edgeDir = FindEdgeJs(info.PackageDir);
-            if (string.IsNullOrEmpty(edgeDir))
-            {
-                return "未找到 edge-js 目录，跳过原生文件检查";
-            }
-
-            string winRoot = Path.Combine(edgeDir, "lib", "native", "win32");
-            if (!Directory.Exists(winRoot))
-            {
-                return "edge-js 不含 win32 原生目录，跳过";
-            }
-
-            int copied = 0;
-            int failed = 0;
-            for (int i = 0; i < ArchDirs.Length; i++)
-            {
-                string archDir = Path.Combine(winRoot, ArchDirs[i]);
-                if (!Directory.Exists(archDir)) continue;
-
-                string[] nodeDirs;
-                try { nodeDirs = Directory.GetDirectories(archDir); }
-                catch { continue; }
-
-                for (int j = 0; j < nodeDirs.Length; j++)
-                {
-                    for (int k = 0; k < RedistDlls.Length; k++)
-                    {
-                        string source = Path.Combine(archDir, RedistDlls[k]);
-                        if (!File.Exists(source)) continue;
-                        string target = Path.Combine(nodeDirs[j], RedistDlls[k]);
-                        try
-                        {
-                            if (File.Exists(target))
-                            {
-                                // 安装脚本写过的文件带只读属性，覆盖前先清掉
-                                File.SetAttributes(target, FileAttributes.Normal);
-                            }
-                            File.Copy(source, target, true);
-                            copied++;
-                        }
-                        catch
-                        {
-                            failed++;
-                        }
-                    }
-                }
-            }
-
-            if (failed > 0)
-            {
-                return "edge-js 原生文件补齐不完整（复制 " + copied + " 个，失败 " +
-                    failed + " 个）；如报缺 DLL，可用管理员身份重试或安装 VC++ 运行库";
-            }
-            if (copied == 0)
-            {
-                return "edge-js 原生文件已就绪（无需复制）";
-            }
-            return "edge-js 原生文件已补齐（复制 " + copied + " 个 DLL）";
-        }
-
-        private static string FindEdgeJs(string packageDir)
-        {
-            // 全局安装时依赖通常嵌套在 @atlisp/mcp/node_modules，
-            // 但也可能被提升到 <prefix>/node_modules/edge-js
-            string[] candidates = new string[]
-            {
-                Path.Combine(packageDir, "node_modules", "edge-js"),
-                Path.Combine(packageDir, "..", "..", "edge-js"),
-                Path.Combine(packageDir, "..", "..", "..", "edge-js")
-            };
-            for (int i = 0; i < candidates.Length; i++)
-            {
-                try
-                {
-                    string full = Path.GetFullPath(candidates[i]);
-                    if (Directory.Exists(full)) return full;
-                }
-                catch
-                {
-                }
-            }
-            return null;
-        }
-    }
-
-    internal static class NpmRunner
-    {
-        /// <summary>
-        /// 全局安装/升级命令。没有 .NET SDK 时追加 --ignore-scripts：edge-js 的安装
-        /// 脚本会因 `spawn dotnet ENOENT` 让 npm 退出码 1（见 EdgeNativeSupport）。
-        /// </summary>
-        public static string InstallServerArgs(TrayConfig config)
-        {
-            return WithRegistry(config,
-                "install -g @atlisp/mcp@latest --loglevel=error" + EdgeNativeSupport.InstallArgs());
-        }
-
-        public static string WithRegistry(TrayConfig config, string arguments)
-        {
-            if (!string.IsNullOrEmpty(config.NpmRegistry))
-            {
-                return arguments + " --registry=" + config.NpmRegistry;
-            }
-            return arguments;
-        }
-
-        public static string Run(TrayConfig config, ServerInfo info, string arguments,
-            int timeoutMs, out int exitCode)
-        {
-            if (!string.IsNullOrEmpty(info.NodePath) && !string.IsNullOrEmpty(info.NpmCliPath))
-            {
-                return ProcessRunner.Run(
-                    info.NodePath,
-                    ProcessRunner.Quote(info.NpmCliPath) + " " + arguments,
-                    timeoutMs,
-                    out exitCode,
-                    Encoding.UTF8);
-            }
-
-            if (!string.IsNullOrEmpty(info.NpmPath))
-            {
-                return ProcessRunner.RunCmd(
-                    ProcessRunner.Quote(info.NpmPath) + " " + arguments,
-                    timeoutMs,
-                    out exitCode);
-            }
-
-            exitCode = -1;
-            return "未找到 npm，请先安装 Node.js。";
-        }
-
-        public static string BuildCommandLine(ServerInfo info, string arguments)
-        {
-            if (!string.IsNullOrEmpty(info.NodePath) && !string.IsNullOrEmpty(info.NpmCliPath))
-            {
-                return ProcessRunner.Quote(info.NodePath) + " " +
-                       ProcessRunner.Quote(info.NpmCliPath) + " " + arguments;
-            }
-            if (!string.IsNullOrEmpty(info.NpmPath))
-            {
-                return ProcessRunner.Quote(info.NpmPath) + " " + arguments;
-            }
-            return null;
-        }
-
-        public static Process Create(TrayConfig config, ServerInfo info, string arguments,
-            DataReceivedEventHandler outputHandler, DataReceivedEventHandler errorHandler)
-        {
-            // 不要把 npm 的工作目录设在正在被替换的包目录里（Windows 会锁定该目录）
-            string workingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrEmpty(info.NodePath) && !string.IsNullOrEmpty(info.NpmCliPath))
-            {
-                return ProcessRunner.Create(
-                    info.NodePath,
-                    ProcessRunner.Quote(info.NpmCliPath) + " " + arguments,
-                    Encoding.UTF8,
-                    workingDirectory,
-                    outputHandler,
-                    errorHandler);
-            }
-            if (!string.IsNullOrEmpty(info.NpmPath))
-            {
-                string comspec = Environment.GetEnvironmentVariable("ComSpec");
-                if (string.IsNullOrEmpty(comspec)) throw new TrayException("找不到命令解释器（ComSpec 为空）");
-                return ProcessRunner.Create(
-                    comspec,
-                    "/d /s /c \"" + ProcessRunner.Quote(info.NpmPath) + " " + arguments + "\"",
-                    Encoding.Default,
-                    workingDirectory,
-                    outputHandler,
-                    errorHandler);
-            }
-            return null;
-        }
-    }
-
-    /// <summary>占用 npm 包目录的一个进程。</summary>
-    internal sealed class LockHolder
-    {
-        public int Pid;
-        public string Name;
-        public string Path;
-
-        public string Describe()
-        {
-            string name = string.IsNullOrEmpty(Name) ? "进程" : Name;
-            return name + "（PID " + Pid.ToString(CultureInfo.InvariantCulture) + "）";
-        }
-    }
-
-    /// <summary>
-    /// npm 包目录占用探测（Windows 特有）。
-    ///
-    /// npm 升级全局包不是原地覆盖：它先把 `node_modules\@atlisp\mcp` 改名成
-    /// `.mcp-XXXXXX`，解压新版本后再删掉旧的。Windows 不允许给「还有进程在里面」的
-    /// 目录改名，于是报：
-    ///     EBUSY: resource busy or locked, rename '...\@atlisp\mcp' -> '...\.mcp-XXXXXX'
-    /// 常见占用者：
-    ///   · 任何把该目录当工作目录的进程（托盘的旧版本直接把服务 CWD 设成包目录）；
-    ///   · 任何映射了目录内原生模块的进程（edge-js 的 .node/.dll，连过 CAD 就常驻）；
-    ///   · 正在运行的包内 AtlispTray.exe。
-    /// npm 自己不会重试，所以托盘必须先把占用清干净再让它跑。
-    ///
-    /// 这个类只做两件事：探测目录能不能改名（和 npm 那一步等价），以及找出/结束占用者。
-    /// </summary>
-    internal static class PackageDirLock
-    {
-        private const string ProbeSuffix = ".atlisp-lockprobe";
-
-        /// <summary>
-        /// 目录是否仍被占用。做法就是把目录改名再改回来——和 npm 失败的那一步完全一致，
-        /// 所以结论可靠；改不回来时（理论上不会）只记日志，不再继续操作。
-        /// </summary>
-        public static bool IsBusy(string dir)
-        {
-            if (string.IsNullOrEmpty(dir)) return false;
-            string probe = dir.TrimEnd('\\') + ProbeSuffix;
-            // 上次探测改名后进程恰好被杀：先把目录复原，再判断
-            RecoverLeftover(dir, probe);
-            if (!Directory.Exists(dir)) return false;
-            try
-            {
-                Directory.Move(dir, probe);
-            }
-            catch
-            {
-                return true;
-            }
-
-            try
-            {
-                Directory.Move(probe, dir);
-            }
-            catch (Exception ex)
-            {
-                // 极端情况：改回去失败。把路径写进日志，便于用户手工改回。
-                AppLog.Write("locked: 目录改回失败，请手工把 " + probe + " 改名回 " + dir +
-                    "（" + ex.Message + "）");
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 复原上一次探测留下的 `mcp.atlisp-lockprobe`：只有「探测中被强制结束」
-        /// 这种极端情况才会出现，发现了就把目录改回来，避免下次启动找不到包。
-        /// </summary>
-        private static void RecoverLeftover(string dir, string probe)
-        {
-            try
-            {
-                if (!Directory.Exists(probe) || Directory.Exists(dir)) return;
-                Directory.Move(probe, dir);
-                AppLog.Write("locked: 发现上次探测残留的 " + probe + "，已改回 " + dir);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("locked: 复原探测目录失败（" + probe + "）: " + ex.Message);
-            }
-        }
-
-        /// <summary>轮询等待目录释放（句柄/文件锁通常几百毫秒内消失）。</summary>
-        public static bool WaitFree(string dir, int timeoutMs)
-        {
-            int waited = 0;
-            while (true)
-            {
-                if (!IsBusy(dir)) return true;
-                if (waited >= timeoutMs)
-                {
-                    AppLog.Write("locked: 等待 " + timeoutMs + "ms 后目录仍不可改名 " + dir);
-                    return false;
-                }
-                Thread.Sleep(200);
-                waited += 200;
-            }
-        }
-
-        /// <summary>
-        /// 找出所有「可执行文件在包目录内，或命令行里带包目录」的进程（排除托盘自身）。
-        /// 返回 null 表示枚举手段不可用（不能据此认定目录是空闲的）。
-        /// </summary>
-        public static List<LockHolder> Find(string packageDir)
-        {
-            if (string.IsNullOrEmpty(packageDir)) return new List<LockHolder>();
-            List<LockHolder> holders = FindByWmi(packageDir);
-            if (holders == null) return null;
-
-            int self = Process.GetCurrentProcess().Id;
-            List<LockHolder> result = new List<LockHolder>();
-            for (int i = 0; i < holders.Count; i++)
-            {
-                if (holders[i].Pid != self) result.Add(holders[i]);
-            }
-            return result;
-        }
-
-        /// <summary>结束占用进程（整棵进程树：node 会带 cad-worker 子进程）。返回成功数。</summary>
-        public static int Kill(List<LockHolder> holders)
-        {
-            if (holders == null) return 0;
-            int killed = 0;
-            for (int i = 0; i < holders.Count; i++)
-            {
-                int count = ProcessKiller.KillTree(holders[i].Pid);
-                if (count > 0) killed++;
-                AppLog.Write("locked: 结束占用进程 " + holders[i].Describe() +
-                    " path=" + holders[i].Path + " terminated=" + count);
-            }
-            return killed;
-        }
-
-        /// <summary>多行描述，用于日志与对话框。</summary>
-        public static string Describe(List<LockHolder> holders)
-        {
-            if (holders == null || holders.Count == 0) return "";
-            StringBuilder builder = new StringBuilder();
-            for (int i = 0; i < holders.Count; i++)
-            {
-                builder.Append("  · ");
-                builder.Append(holders[i].Describe());
-                if (!string.IsNullOrEmpty(holders[i].Path))
-                {
-                    builder.Append("  ");
-                    builder.Append(holders[i].Path);
-                }
-                builder.AppendLine();
-            }
-            return builder.ToString();
-        }
-
-        /// <summary>一行描述，写日志用。</summary>
-        public static string DescribeOneLine(List<LockHolder> holders)
-        {
-            if (holders == null || holders.Count == 0) return "（未发现可疑进程）";
-            StringBuilder builder = new StringBuilder();
-            for (int i = 0; i < holders.Count; i++)
-            {
-                if (i > 0) builder.Append(", ");
-                builder.Append(holders[i].Describe());
-            }
-            return builder.ToString();
-        }
-
-        /// <summary>
-        /// 用 WMI 的 Win32_Process 枚举。需要命令行才能认出「把包目录当参数或工作目录的
-        /// node 进程」，而 .NET Framework 的 Process 类读不到别的进程的命令行。
-        ///
-        /// 直接在进程内查 WMI（System.Management），不再启动 powershell 并把脚本经 stdin
-        /// 灌进去：`powershell -ExecutionPolicy Bypass` 是杀软静态特征的常见命中项，
-        /// 少一次隐藏子进程也少一条行为证据。
-        /// </summary>
-        private static List<LockHolder> FindByWmi(string packageDir)
-        {
-            string dir = packageDir.TrimEnd('\\');
-            List<LockHolder> holders = new List<LockHolder>();
-            try
-            {
-                using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(
-                    "SELECT ProcessId, Name, ExecutablePath, CommandLine FROM Win32_Process"))
-                {
-                    foreach (ManagementBaseObject row in searcher.Get())
-                    {
-                        using (row)
-                        {
-                            try
-                            {
-                                object value = row["ProcessId"];
-                                int pid = value == null ? 0 :
-                                    Convert.ToInt32(value, CultureInfo.InvariantCulture);
-                                if (pid <= 0) continue;
-
-                                string name = row["Name"] as string;
-                                string exePath = row["ExecutablePath"] as string;
-                                string commandLine = row["CommandLine"] as string;
-
-                                bool hit = (!string.IsNullOrEmpty(exePath) &&
-                                        exePath.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) ||
-                                    (!string.IsNullOrEmpty(commandLine) &&
-                                        commandLine.IndexOf(dir, StringComparison.OrdinalIgnoreCase) >= 0);
-                                if (!hit) continue;
-
-                                LockHolder holder = new LockHolder();
-                                holder.Pid = pid;
-                                holder.Name = name;
-                                holder.Path = string.IsNullOrEmpty(exePath) ? "" : exePath;
-                                holders.Add(holder);
-                            }
-                            catch (Exception)
-                            {
-                                // 别的用户的进程读不到 ExecutablePath/CommandLine，跳过
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("locked: WMI 枚举进程失败: " + ex.Message);
-                return null;
-            }
-            return holders;
         }
     }
 
@@ -2342,6 +1417,79 @@ namespace Atlisp.Tray
             Invalidate();
             if (exitCode != 0) return output.Trim();
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 本机 TCP 监听表（iphlpapi 的 GetExtendedTcpTable）。只用系统 API 读 PID，
+    /// 不再启动 netstat.exe ——「枚举进程 + 连接」在杀软 ML 里权重不低，而且
+    /// 每多一次 CreateProcess 就多一条行为证据。
+    /// </summary>
+    internal static class PortInspector
+    {
+        private const int AfInet = 2;
+        private const int TcpTableOwnerPidListener = 3;
+        private const int ErrorInsufficientBuffer = 122;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MIB_TCPROW_OWNER_PID
+        {
+            public uint State;
+            public uint LocalAddr;
+            public uint LocalPort;
+            public uint RemoteAddr;
+            public uint RemotePort;
+            public uint OwningPid;
+        }
+
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        private static extern uint GetExtendedTcpTable(IntPtr table, ref int size,
+            bool order, int addressFamily, int tableClass, uint reserved);
+
+        /// <summary>返回监听指定端口的 PID；查不到或 API 不可用时返回 0。</summary>
+        public static int FindListenerPid(int port)
+        {
+            try
+            {
+                int size = 0;
+                uint result = GetExtendedTcpTable(IntPtr.Zero, ref size, false,
+                    AfInet, TcpTableOwnerPidListener, 0);
+                if (result != ErrorInsufficientBuffer || size <= 0) return 0;
+
+                IntPtr buffer = Marshal.AllocHGlobal(size);
+                try
+                {
+                    result = GetExtendedTcpTable(buffer, ref size, false,
+                        AfInet, TcpTableOwnerPidListener, 0);
+                    if (result != 0) return 0;
+
+                    int count = Marshal.ReadInt32(buffer);
+                    int rowSize = Marshal.SizeOf(typeof(MIB_TCPROW_OWNER_PID));
+                    IntPtr row = new IntPtr(buffer.ToInt64() + 4);
+                    for (int i = 0; i < count; i++)
+                    {
+                        MIB_TCPROW_OWNER_PID entry =
+                            (MIB_TCPROW_OWNER_PID)Marshal.PtrToStructure(row,
+                                typeof(MIB_TCPROW_OWNER_PID));
+                        int localPort = (int)(((entry.LocalPort & 0xFF) << 8) |
+                            ((entry.LocalPort >> 8) & 0xFF));
+                        if (localPort == port && entry.OwningPid > 0)
+                        {
+                            return (int)entry.OwningPid;
+                        }
+                        row = new IntPtr(row.ToInt64() + rowSize);
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("端口探测失败: " + ex.Message);
+            }
+            return 0;
         }
     }
 
@@ -2742,34 +1890,8 @@ namespace Atlisp.Tray
 
         private static int FindListeningPid(int port)
         {
-            try
-            {
-                int exitCode;
-                string output = ProcessRunner.Run("netstat.exe", "-ano -p tcp", 8000, out exitCode);
-                if (exitCode != 0) return 0;
-                string[] lines = output.Split(new char[] { '\r', '\n' },
-                    StringSplitOptions.RemoveEmptyEntries);
-                string suffix = ":" + port;
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    string line = lines[i].Trim();
-                    if (line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    string[] parts = Regex.Split(line, "\\s+");
-                    if (parts.Length < 4) continue;
-                    string local = parts[1];
-                    if (!local.EndsWith(suffix, StringComparison.Ordinal)) continue;
-                    int pid;
-                    if (int.TryParse(parts[parts.Length - 1], NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out pid))
-                    {
-                        if (IsNodeProcess(pid)) return pid;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("查找监听端口进程失败: " + ex.Message);
-            }
+            int pid = PortInspector.FindListenerPid(port);
+            if (pid > 0 && IsNodeProcess(pid)) return pid;
             return 0;
         }
 
@@ -2935,114 +2057,6 @@ namespace Atlisp.Tray
     /// </summary>
     internal static class TraySelfUpdate
     {
-        /// <summary>
-        /// 有新版本时启动 atlisp-tray 接管更新。返回 true 表示调用方应立即退出。
-        /// </summary>
-        public static bool TryStartLauncherUpdate(ServerInfo info, bool startServer,
-            out string message)
-        {
-            message = "";
-            try
-            {
-                if (info == null || string.IsNullOrEmpty(info.PackageDir))
-                {
-                    message = "未找到 @lisp/mcp 安装目录，无法自动更新托盘";
-                    return false;
-                }
-                string launcher = Path.Combine(info.PackageDir, "tray", "atlisp-tray.js");
-                if (!File.Exists(launcher))
-                {
-                    message = "包内没有 tray\\atlisp-tray.js，请运行 atlisp-tray 更新";
-                    return false;
-                }
-                if (string.IsNullOrEmpty(info.NodePath))
-                {
-                    message = "未找到 Node.js，无法自动更新托盘";
-                    return false;
-                }
-                if (!IsUpdatePending(info))
-                {
-                    return false;
-                }
-
-                // 启动器负责：等本进程退出（--wait-pid）→ 下载/校验新 exe → 拉起托盘。
-                // --silent / --start-server 是给新托盘的透传参数。
-                string arguments = ProcessRunner.Quote(launcher) +
-                    " --wait-pid " +
-                    Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture) +
-                    " --silent";
-                if (startServer) arguments += " --start-server";
-
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = info.NodePath;
-                psi.Arguments = arguments;
-                psi.WorkingDirectory = info.PackageDir;
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process.Start(psi);
-
-                message = "已交给 atlisp-tray 下载并安装新版本";
-                return true;
-            }
-            catch (Exception ex)
-            {
-                message = "启动托盘更新失败：" + ex.Message;
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 当前 exe 与包内 manifest（没有 manifest 时用包内 exe）是否不同。
-        /// 只做比较，不下载、不写文件。
-        /// </summary>
-        private static bool IsUpdatePending(ServerInfo info)
-        {
-            string current = Application.ExecutablePath;
-            string expected = ReadManifestHash(info.PackageDir);
-            if (!string.IsNullOrEmpty(expected))
-            {
-                return !string.Equals(FileHash(current), expected,
-                    StringComparison.OrdinalIgnoreCase);
-            }
-
-            string packaged = Path.Combine(info.PackageDir, "dist", "AtlispTray.exe");
-            if (!File.Exists(packaged)) return false;
-            return !string.Equals(FileHash(current), FileHash(packaged),
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        /// <summary>从 dist\tray-manifest.json 读 AtlispTray.exe 的 sha256；读不到返回 null。</summary>
-        private static string ReadManifestHash(string packageDir)
-        {
-            try
-            {
-                string manifest = Path.Combine(packageDir, "dist", "tray-manifest.json");
-                if (!File.Exists(manifest)) return null;
-                Match match = Regex.Match(File.ReadAllText(manifest, Encoding.UTF8),
-                    "\"AtlispTray\\.exe\"\\s*:\\s*\\{[^}]*\"sha256\"\\s*:\\s*\"([0-9a-fA-F]{64})\"");
-                return match.Success ? match.Groups[1].Value : null;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static string FileHash(string path)
-        {
-            using (FileStream stream = File.OpenRead(path))
-            using (SHA256 sha = SHA256.Create())
-            {
-                byte[] hash = sha.ComputeHash(stream);
-                StringBuilder sb = new StringBuilder(hash.Length * 2);
-                for (int i = 0; i < hash.Length; i++)
-                {
-                    sb.Append(hash[i].ToString("x2", CultureInfo.InvariantCulture));
-                }
-                return sb.ToString();
-            }
-        }
-
         /// <summary>清掉旧版本留下的更新脚本与暂存副本（不再使用的可疑样本）。</summary>
         public static void CleanupLegacyScript()
         {
@@ -3312,407 +2326,6 @@ namespace Atlisp.Tray
         }
     }
 
-    internal sealed class LongTask : IDisposable
-    {
-        private readonly object _sync = new object();
-        private readonly StringBuilder _all = new StringBuilder();
-        private readonly string _logFile;
-        private string _elevatedLog;
-        private StreamWriter _writer;
-        private Process _process;
-        private int _drainPosition;
-        private bool _finished;
-        private int _exitCode = -1;
-
-        public LongTask(string title, string logFile)
-        {
-            Title = title;
-            _logFile = logFile;
-            try
-            {
-                string directory = Path.GetDirectoryName(logFile);
-                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-                FileStream stream = new FileStream(
-                    logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                _writer = new StreamWriter(stream, new UTF8Encoding(false));
-                _writer.AutoFlush = true;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("打开任务日志失败: " + ex.Message);
-            }
-        }
-
-        public string Title { get; private set; }
-
-        public string LogFile
-        {
-            get { return _logFile; }
-        }
-
-        public bool Finished
-        {
-            get { lock (_sync) return _finished; }
-        }
-
-        public int ExitCode
-        {
-            get { lock (_sync) return _exitCode; }
-        }
-
-        public string Output
-        {
-            get { lock (_sync) return _all.ToString(); }
-        }
-
-        public void Attach(Process process)
-        {
-            _process = process;
-            try
-            {
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-            }
-            catch (Exception ex)
-            {
-                AppendLine("[error] " + ex.Message);
-                lock (_sync)
-                {
-                    _finished = true;
-                    _exitCode = -1;
-                    CloseWriter();
-                }
-            }
-        }
-
-        public void AttachElevated(Process process, string elevatedLog)
-        {
-            _process = process;
-            _elevatedLog = elevatedLog;
-            if (process == null)
-            {
-                lock (_sync)
-                {
-                    _finished = true;
-                    _exitCode = -1;
-                }
-            }
-        }
-
-        public void AppendLine(string line)
-        {
-            lock (_sync)
-            {
-                if (_all.Length < 4000000)
-                {
-                    _all.AppendLine(line);
-                }
-                if (_writer != null)
-                {
-                    try { _writer.WriteLine(line); } catch { }
-                }
-            }
-        }
-
-        public string Drain()
-        {
-            lock (_sync)
-            {
-                if (_drainPosition >= _all.Length) return "";
-                string text = _all.ToString(_drainPosition, _all.Length - _drainPosition);
-                _drainPosition = _all.Length;
-                return text;
-            }
-        }
-
-        public bool Poll()
-        {
-            lock (_sync)
-            {
-                if (_finished) return true;
-            }
-
-            Process process = _process;
-            if (process == null) return false;
-
-            bool exited;
-            try { exited = process.HasExited; }
-            catch { exited = true; }
-            if (!exited) return false;
-
-            // 有界等待：确保 DataReceived 异步回调把剩余输出刷完，同时避免 UI 线程卡死
-            try { process.WaitForExit(2000); } catch { }
-
-            int code = -1;
-            try { code = process.ExitCode; } catch { }
-
-            if (!string.IsNullOrEmpty(_elevatedLog))
-            {
-                try
-                {
-                    if (File.Exists(_elevatedLog))
-                    {
-                        AppendLine(File.ReadAllText(_elevatedLog, Encoding.UTF8));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AppendLine("[error] 读取安装日志失败: " + ex.Message);
-                }
-            }
-
-            lock (_sync)
-            {
-                _exitCode = code;
-                _finished = true;
-                CloseWriter();
-            }
-            return true;
-        }
-
-        private void CloseWriter()
-        {
-            if (_writer != null)
-            {
-                try { _writer.Dispose(); } catch { }
-                _writer = null;
-            }
-        }
-
-        public void Dispose()
-        {
-            lock (_sync) CloseWriter();
-            if (_process != null)
-            {
-                try { _process.Dispose(); } catch { }
-                _process = null;
-            }
-        }
-    }
-
-    /// <summary>
-    /// 后台线程解压 portable Node.js，避免 30MB 的解压阻塞 UI 消息循环。
-    /// </summary>
-    internal sealed class PortableInstallJob
-    {
-        private readonly string _zipPath;
-        private readonly string _destDir;
-
-        public volatile bool Finished;
-        public volatile bool Success;
-        public volatile string Error;
-        public volatile string NodePath;
-
-        public string ZipPath
-        {
-            get { return _zipPath; }
-        }
-
-        public PortableInstallJob(string zipPath, string destDir)
-        {
-            _zipPath = zipPath;
-            _destDir = destDir;
-        }
-
-        public void Start()
-        {
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                try
-                {
-                    NodePath = ZipInstaller.ExtractNodeZip(_zipPath, _destDir);
-                    Success = true;
-                }
-                catch (Exception ex)
-                {
-                    Error = ex.Message;
-                    Success = false;
-                }
-                Finished = true;
-            });
-        }
-    }
-
-    /// <summary>
-    /// 后台下载（Node.js zip/MSI、Python 安装包）。
-    ///
-    /// 用 HttpWebRequest + 工作线程，而不是 WebClient.DownloadFileAsync：
-    /// 「WebClient + DownloadFile + 随后 Process.Start」是杀软 ML 里权重很高的
-    /// 下载器组合，而这个类做的本来就是普通的 HTTP GET + 自己写文件。
-    /// 先写 `.part` 再改名，下载中断不会留下半截文件被后续步骤当成成品。
-    /// </summary>
-    internal sealed class DownloadJob : IDisposable
-    {
-        private readonly object _sync = new object();
-        private readonly string _url;
-        private readonly string _filePath;
-        private HttpWebRequest _request;
-        private Stream _stream;
-        private volatile bool _cancelled;
-        private long _received;
-        private long _total;
-        private bool _finished;
-        private bool _success;
-        private string _error;
-
-        public DownloadJob(string url, string filePath)
-        {
-            _url = url;
-            _filePath = filePath;
-        }
-
-        public string Url
-        {
-            get { return _url; }
-        }
-
-        public string FilePath
-        {
-            get { return _filePath; }
-        }
-
-        public long Received
-        {
-            get { lock (_sync) return _received; }
-        }
-
-        public long Total
-        {
-            get { lock (_sync) return _total; }
-        }
-
-        public bool Finished
-        {
-            get { lock (_sync) return _finished; }
-        }
-
-        public bool Success
-        {
-            get { lock (_sync) return _success; }
-        }
-
-        public string Error
-        {
-            get { lock (_sync) return _error; }
-        }
-
-        public void Start()
-        {
-            Thread worker = new Thread(Download);
-            worker.IsBackground = true;
-            worker.Name = "atlisp-download";
-            worker.Start();
-        }
-
-        private void Download()
-        {
-            string temp = _filePath + ".part";
-            bool ok = false;
-            string error = null;
-            try
-            {
-                string directory = Path.GetDirectoryName(_filePath);
-                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-                if (File.Exists(temp))
-                {
-                    try { File.Delete(temp); } catch { }
-                }
-
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(new Uri(_url));
-                request.UserAgent = "atlisp-tray/" + Program.AppVersion;
-                request.Timeout = 60000;
-                request.ReadWriteTimeout = 60000;
-                request.AllowAutoRedirect = true;
-                _request = request;
-
-                using (WebResponse response = request.GetResponse())
-                {
-                    long total = response.ContentLength;
-                    lock (_sync) _total = total;
-
-                    using (Stream remote = response.GetResponseStream())
-                    {
-                        _stream = remote;
-                        using (FileStream local = new FileStream(temp, FileMode.Create,
-                            FileAccess.Write, FileShare.None, 81920))
-                        {
-                            byte[] buffer = new byte[81920];
-                            while (true)
-                            {
-                                if (_cancelled) throw new OperationCanceledException();
-                                int read = remote.Read(buffer, 0, buffer.Length);
-                                if (read <= 0) break;
-                                local.Write(buffer, 0, read);
-                                lock (_sync) _received += read;
-                            }
-                        }
-                    }
-                }
-
-                FileInfo info = new FileInfo(temp);
-                if (!info.Exists || info.Length <= 0)
-                {
-                    throw new IOException("下载文件为空。");
-                }
-                if (_total > 0 && info.Length != _total)
-                {
-                    throw new IOException("下载不完整（" + info.Length + " / " + _total + " 字节）。");
-                }
-                if (File.Exists(_filePath)) File.Delete(_filePath);
-                File.Move(temp, _filePath);
-                ok = true;
-            }
-            catch (Exception ex)
-            {
-                error = _cancelled ? "下载已取消" : ex.Message;
-            }
-            finally
-            {
-                _stream = null;
-                _request = null;
-                if (!ok) TryDelete(temp);
-                lock (_sync)
-                {
-                    _success = ok;
-                    if (!ok) _error = error ?? "下载失败。";
-                    _finished = true;
-                }
-            }
-        }
-
-        private static void TryDelete(string path)
-        {
-            try
-            {
-                if (File.Exists(path)) File.Delete(path);
-            }
-            catch (Exception)
-            {
-                // 文件被占用时留给下次下载覆盖，不打扰用户
-            }
-        }
-
-        public void Dispose()
-        {
-            _cancelled = true;
-            try
-            {
-                if (_request != null) _request.Abort();
-            }
-            catch (Exception)
-            {
-            }
-            try
-            {
-                if (_stream != null) _stream.Close();
-            }
-            catch (Exception)
-            {
-            }
-        }
-    }
-
     /// <summary>
     /// Python 环境快照（知识库是 Python 包，没 Python 就装不了）。
     /// 与 ServerInfo 分开：Node/CAD 与 Python 是两条独立的依赖链。
@@ -3744,7 +2357,7 @@ namespace Atlisp.Tray
         {
             get
             {
-                if (!HasPython) return "运行环境：未检测到 Python 3.10+（可自动安装）";
+                if (!HasPython) return "运行环境：未检测到 Python 3.10+（请自行安装）";
                 string text = "运行环境：Python " + (Version ?? "?");
                 text += " · 本机包 " + (HasPackage ? "v" + PackageVersion : "未安装");
                 if (!HasPip) text += " · pip 不可用";
@@ -3893,169 +2506,6 @@ namespace Atlisp.Tray
         }
     }
 
-    internal static class PythonRunner
-    {
-        public static string DetectArch()
-        {
-            string arch = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "")
-                .ToUpperInvariant();
-            string arch64 = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432") ?? "")
-                .ToUpperInvariant();
-            if (arch.IndexOf("ARM64", StringComparison.Ordinal) >= 0 ||
-                arch64.IndexOf("ARM64", StringComparison.Ordinal) >= 0)
-            {
-                return "arm64";
-            }
-            if (Environment.Is64BitOperatingSystem) return "amd64";
-            return "win32";
-        }
-
-        /// <summary>
-        /// 官方安装包地址。32 位包名没有架构后缀（python-3.12.8.exe），
-        /// 这是 installers 的命名规则，别统一加后缀。
-        /// </summary>
-        public static string BuildInstallerUrl(TrayConfig config, string version, string arch)
-        {
-            string mirror = string.IsNullOrEmpty(config.PythonMirror)
-                ? "https://registry.npmmirror.com/-/binary/python"
-                : config.PythonMirror;
-            string suffix = arch == "win32" ? "" : "-" + arch;
-            return mirror.TrimEnd('/') + "/" + version + "/python-" + version +
-                suffix + ".exe";
-        }
-
-        public static Process CreatePipInstall(string pythonPath, string package,
-            DataReceivedEventHandler outputHandler, DataReceivedEventHandler errorHandler)
-        {
-            string arguments = "-m pip install --upgrade --disable-pip-version-check " + package;
-            return ProcessRunner.Create(pythonPath, arguments, Encoding.UTF8, null,
-                outputHandler, errorHandler);
-        }
-
-        /// <summary>
-        /// 清理 pip 卸载中断留下的「~包名」残留目录。
-        /// pip 卸载时先把包目录改名成 "~&lt;包名&gt;" 再删；删除失败（.pyd/.dll 被正在运行的
-        /// 进程占用）就把改名后的目录留在 site-packages 里，之后**每条 pip 命令**都会刷
-        /// "WARNING: Ignoring invalid distribution ~tlisp-dwg-kb"。
-        /// 返回值：删除的目录数。
-        /// </summary>
-        public static int CleanBrokenDistributions(string pythonPath, string package)
-        {
-            int removed = 0;
-            try
-            {
-                if (string.IsNullOrEmpty(pythonPath) || string.IsNullOrEmpty(package) ||
-                    package.Length < 2)
-                {
-                    return 0;
-                }
-                string root = Path.GetDirectoryName(pythonPath);
-                if (string.IsNullOrEmpty(root)) return 0;
-                string sitePackages = Path.Combine(root, "Lib", "site-packages");
-                if (!Directory.Exists(sitePackages)) return 0;
-
-                // pip 的改名规则是把首字符换成 '~'；.dist-info 目录还会把 '-' 换成 '_'
-                string dashed = "~" + package.Substring(1).ToLowerInvariant();
-                string underscored = "~" + package.Replace('-', '_')
-                    .Substring(1).ToLowerInvariant();
-                foreach (string dir in Directory.GetDirectories(sitePackages, "~*"))
-                {
-                    string name = Path.GetFileName(dir).ToLowerInvariant();
-                    if (!name.StartsWith(dashed) && !name.StartsWith(underscored)) continue;
-                    try
-                    {
-                        Directory.Delete(dir, true);
-                        removed++;
-                    }
-                    catch (Exception ex)
-                    {
-                        // 又被占用就留着，下次 pip 任务前再试
-                        AppLog.Write("pip cleanup: 删除 " + dir + " 失败: " + ex.Message);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("pip cleanup: " + ex.Message);
-            }
-            return removed;
-        }
-
-        /// <summary>
-        /// 查询 PyPI 上某个包的最新版本，不安装任何东西。
-        /// 先走 PyPI JSON（一次 HTTP，快）；失败再回退 `pip index versions`
-        /// （会走用户配置的镜像/代理，也能兼容公司内网源）。
-        /// </summary>
-        public static string CheckLatestVersion(PythonInfo info, string package, out string error)
-        {
-            error = null;
-            string latest = PyPiClient.LatestVersion(package, 8000, out error);
-            if (!string.IsNullOrEmpty(latest)) return latest.Trim();
-            string pypiError = error;
-
-            if (info == null || !info.HasPython) return null;
-
-            int code;
-            string output = ProcessRunner.Run(info.PythonPath,
-                "-m pip index versions " + package + " --disable-pip-version-check",
-                40000, out code, Encoding.UTF8);
-            if (code == 0)
-            {
-                Match match = Regex.Match(output,
-                    Regex.Escape(package) + @"\s*\(([^)]+)\)",
-                    RegexOptions.IgnoreCase);
-                if (match.Success)
-                {
-                    error = null;
-                    return match.Groups[1].Value.Trim();
-                }
-            }
-            if (string.IsNullOrEmpty(pypiError))
-            {
-                pypiError = "pip index 退出码 " + code;
-            }
-            error = pypiError;
-            return null;
-        }
-
-        /// <summary>
-        /// 静默安装官方安装包到用户目录：InstallAllUsers=0 是**免 UAC** 的关键，
-        /// PrependPath=0 不改用户 PATH（路径由托盘自己记），Shortcuts=0 不建快捷方式。
-        /// </summary>
-        public static int InstallSilently(string installerPath, string targetDir, out string error)
-        {
-            error = null;
-            try
-            {
-                string arguments = "/quiet InstallAllUsers=0 TargetDir=\"" + targetDir + "\" " +
-                    "PrependPath=0 Shortcuts=0 Include_pip=1 Include_test=0 Include_doc=0 " +
-                    "Include_tcltk=0 Include_launcher=0";
-                int exitCode;
-                string output = ProcessRunner.Run(installerPath, arguments, 300000,
-                    out exitCode, Encoding.UTF8);
-                if (exitCode != 0)
-                {
-                    error = "安装程序退出码 " + exitCode +
-                        (string.IsNullOrEmpty(output) ? "" : "：" + TailText(output, 300));
-                }
-                return exitCode;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return -1;
-            }
-        }
-
-        private static string TailText(string text, int max)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            text = text.Trim();
-            if (text.Length <= max) return text;
-            return text.Substring(text.Length - max);
-        }
-    }
-
     /// <summary>
     /// 本地知识库服务（atlisp-dwg-kb serve）的启动/停止。
     /// 只管理「托盘自己启动的」进程：PID 记在 dwgkb.pid，别人手动起的服务不会被误杀。
@@ -4153,41 +2603,18 @@ namespace Atlisp.Tray
         public static int FindListener(int port, out string imageName)
         {
             imageName = null;
-            int code;
-            string output = ProcessRunner.Run("netstat.exe", "-ano", 6000, out code, Encoding.Default);
-            if (code != 0 || string.IsNullOrEmpty(output)) return 0;
-
-            string[] lines = output.Split(new char[] { '\r', '\n' },
-                StringSplitOptions.RemoveEmptyEntries);
-            for (int i = 0; i < lines.Length; i++)
+            int pid = PortInspector.FindListenerPid(port);
+            if (pid <= 0) return 0;
+            try
             {
-                string[] parts = lines[i].Trim().Split(
-                    new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 5) continue;
-                if (!parts[0].Equals("TCP", StringComparison.OrdinalIgnoreCase)) continue;
-                if (parts[3].IndexOf("LISTEN", StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-                string local = parts[1];
-                int colon = local.LastIndexOf(':');
-                if (colon <= 0) continue;
-                int listenerPort;
-                if (!int.TryParse(local.Substring(colon + 1), out listenerPort)) continue;
-                if (listenerPort != port) continue;
-
-                int pid;
-                if (!int.TryParse(parts[4], out pid)) continue;
-                try
-                {
-                    Process process = Process.GetProcessById(pid);
-                    imageName = process.ProcessName;
-                }
-                catch
-                {
-                    imageName = null;
-                }
-                return pid;
+                Process process = Process.GetProcessById(pid);
+                imageName = process.ProcessName;
             }
-            return 0;
+            catch
+            {
+                imageName = null;
+            }
+            return pid;
         }
 
         /// <summary>只允许停止看起来像知识库的进程，避免误杀占用同一端口的其他程序。</summary>
@@ -4452,77 +2879,6 @@ namespace Atlisp.Tray
     }
 
     /// <summary>
-    /// PyPI 版本查询。只用公开 JSON API（`https://pypi.org/pypi/&lt;pkg&gt;/json`），
-    /// 不下载任何文件；网络不通时返回 null 并由调用方回退到 `pip index versions`
-    /// （pip 会走用户自己配置的镜像/代理，国内网络更可靠）。
-    /// </summary>
-    internal static class PyPiClient
-    {
-        public static string LatestVersion(string package, int timeoutMs, out string error)
-        {
-            error = null;
-            try
-            {
-                string url = "https://pypi.org/pypi/" + package + "/json";
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-                request.Method = "GET";
-                request.Proxy = null;
-                request.KeepAlive = false;
-                request.Timeout = timeoutMs;
-                request.ReadWriteTimeout = timeoutMs;
-                request.UserAgent = "atlisp-tray/" + Program.AppVersion;
-
-                string body;
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (Stream stream = response.GetResponseStream())
-                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
-                {
-                    body = reader.ReadToEnd();
-                }
-
-                JavaScriptSerializer serializer = new JavaScriptSerializer();
-                Dictionary<string, object> root =
-                    serializer.DeserializeObject(body) as Dictionary<string, object>;
-                if (root == null)
-                {
-                    error = "PyPI 响应不是 JSON 对象";
-                    return null;
-                }
-                object infoValue;
-                if (!root.TryGetValue("info", out infoValue))
-                {
-                    error = "PyPI 响应缺少 info 字段";
-                    return null;
-                }
-                Dictionary<string, object> info = infoValue as Dictionary<string, object>;
-                if (info == null)
-                {
-                    error = "PyPI 响应 info 字段格式异常";
-                    return null;
-                }
-                object versionValue;
-                if (!info.TryGetValue("version", out versionValue) || versionValue == null)
-                {
-                    error = "PyPI 响应缺少 version 字段";
-                    return null;
-                }
-                string version = Convert.ToString(versionValue).Trim();
-                if (version.Length == 0)
-                {
-                    error = "PyPI 返回空版本号";
-                    return null;
-                }
-                return version;
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
-        }
-    }
-
-    /// <summary>
     /// 知识库地址 / API Key 设置对话框（托盘不依赖 InputBox，自绘一个最小窗体）。
     /// </summary>
     internal sealed class DwgKbSettingsForm : Form
@@ -4673,10 +3029,7 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _nodeItem;
         private readonly ToolStripMenuItem _trayAutoItem;
         private readonly ToolStripMenuItem _serverAutoItem;
-        private readonly ToolStripMenuItem _mirrorItem;
         private readonly ToolStripMenuItem _diagItem;
-        private readonly ToolStripMenuItem _autoInstallItem;
-        private readonly ToolStripMenuItem _autoUpgradeItem;
 
         // 图纸知识库（atlisp-dwg-kb）子菜单。状态在后台线程检测、UI 线程渲染，
         // 与 HealthMonitor 的分工一致：菜单永远不因为知识库慢而卡住。
@@ -4691,7 +3044,6 @@ namespace Atlisp.Tray
         private readonly ToolStripMenuItem _dwgKbStopItem;
         private readonly ToolStripMenuItem _dwgKbRestartItem;
         private readonly ToolStripMenuItem _dwgKbAutoStartItem;
-        private readonly ToolStripMenuItem _dwgKbAutoUpgradeItem;
         private readonly ToolStripMenuItem _dwgKbRebuildItem;
         private readonly ToolStripMenuItem _dwgKbConfigItem;
         private readonly object _dwgKbLock = new object();
@@ -4700,23 +3052,7 @@ namespace Atlisp.Tray
         private DateTime _dwgKbCheckedAt = DateTime.MinValue;
         private bool _dwgKbBusy;
         private bool _dwgKbBuilding;
-        private bool _pythonInstalling;
-        private bool _dwgKbStartPipRequested;
         private bool _dwgKbAutoStartAttempted;
-        // ---- 知识库自动安装 / 自动升级（零人工干预）----
-        // _dwgKbAutoFlow 表示当前这轮 pip/Python 流程是自动发起的：失败只记日志 +
-        // 退避重试，不弹模态框（无人值守时模态框会让托盘卡死）。
-        private bool _dwgKbAutoFlow;
-        private bool _dwgKbUpdateChecking;
-        private bool _dwgKbAutoStartAfterInstall;
-        private bool _dwgKbRestartAfterUpgrade;
-        private string _dwgKbLatestVersion;
-        /// <summary>本次 pip 任务开始前已安装的知识库版本，用于判断是否真的升级了。</summary>
-        private string _dwgKbVersionBefore;
-        private string _dwgKbPendingUpgrade;
-        private DateTime _nextDwgKbCheckAt = DateTime.MinValue;
-        private DateTime _dwgKbTaskRetryAt = DateTime.MinValue;
-        private int _dwgKbTaskFailures;
         // 后台线程不能直接碰 NotifyIcon：把气泡请求挂在字段上，由 UI 定时器展示。
         private bool _dwgKbBalloonPending;
         private string _dwgKbBalloonTitle;
@@ -4728,17 +3064,13 @@ namespace Atlisp.Tray
         private bool _firstTick = true;
         private bool _suppressNotifications;
         private bool _startupUpdateChecked;
+        // 首次启动只尝试拉起一次服务（失败留给用户手动点）
+        private bool _autoStartAttempted;
         private DateTime _createdAt = DateTime.UtcNow;
-        private DateTime _nextUpdateCheckAt = DateTime.MinValue;
         // 服务异常退出后自动拉起（退避 1/2/5/10/30 分钟，连续 5 次失败后停手）
         private const int ServerRestartMaxFailures = 5;
         private DateTime _serverRestartRetryAt = DateTime.MinValue;
         private int _serverRestartFailures;
-        // 升级/安装时不再一开始就停服务；只有替换文件被占用（Windows 文件锁）时才
-        // 释放包目录占用并重试（见 ReleasePackageDir）。这里是最多重试次数。
-        private const int InstallStopMaxRetries = 2;
-        private int _installStopRetries;
-        private int _dwgKbStopRetries;
         // 用户点过「停止知识库服务」后不再自动拉起，直到手动启动或下次开托盘
         private bool _dwgKbUserStopped;
         private DateTime _dwgKbRestartRetryAt = DateTime.MinValue;
@@ -4747,37 +3079,14 @@ namespace Atlisp.Tray
         private DateTime _dwgKbSyncRetryAt = DateTime.MinValue;
         private int _dwgKbSyncFailures;
         private readonly bool _startServerOnLaunch;
-        private bool _restartForSelfUpdate;
         private string _latestVersion;
         private string _lastNotifiedError;
-        private LongTask _task;
-        private OutputForm _taskWindow;
-        private string _taskAction;
-        private bool _restartAfterTask;
-        private bool _taskElevated;
-        private bool _showTaskWindow;
+        private bool _updateChecking;
+        private bool _updateBalloonPending;
+        private string _updateBalloonTitle;
+        private string _updateBalloonText;
+        private ToolTipIcon _updateBalloonIcon;
         private int _activePort;
-
-        private DownloadJob _downloadJob;
-        private string _downloadVersion;
-        private string _downloadArch;
-        private string _downloadUrl;
-        private string _nodeMsiPath;
-        private string _nodeMsiLog;
-        private bool _nodeNeedsReboot;
-        private bool _restartAfterNodeInstall;
-
-        // ---- 自动补齐运行环境（零人工干预）----
-        private const int AutoInstallMaxFailures = 3;
-        private bool _autoInstallDone;
-        private bool _autoStartAttempted;
-        private bool _portableNodeAttempted;
-        private bool _msiFallbackTried;
-        private int _autoInstallFailures;
-        private DateTime _autoInstallRetryAt = DateTime.MinValue;
-        private string _downloadKind;
-        private bool _bootstrapMode;
-        private PortableInstallJob _portableJob;
 
         public TrayApplication(bool silent, bool startServerOnLaunch)
         {
@@ -4785,7 +3094,6 @@ namespace Atlisp.Tray
             _startServerOnLaunch = startServerOnLaunch;
             _config = TrayConfig.Load();
             _activePort = _config.Port;
-            LoadBootstrapState();
             ServerLocator.Resolve(_config, true);
             _health = new HealthMonitor(_config.Port, _config.HealthyPollSeconds * 1000);
             _health.CheckNow();
@@ -4833,15 +3141,15 @@ namespace Atlisp.Tray
             _checkItem.ToolTipText = "对比 npm 上的最新版本，不修改任何文件";
             _checkItem.Click += delegate { CheckUpdate(false); };
 
-            _upgradeItem = new ToolStripMenuItem("升级到最新版");
-            _upgradeItem.Click += delegate { UpgradeServer(); };
+            _upgradeItem = new ToolStripMenuItem("如何升级…");
+            _upgradeItem.Click += delegate { ShowUpgradeHelp(); };
 
-            _installItem = new ToolStripMenuItem("下载并安装 @lisp MCP Server");
-            _installItem.Click += delegate { InstallServer(); };
+            _installItem = new ToolStripMenuItem("如何安装 @lisp MCP Server…");
+            _installItem.Click += delegate { ShowInstallServerHelp(); };
 
-            _nodeItem = new ToolStripMenuItem("安装 Node.js…");
-            _nodeItem.ToolTipText = "自动下载安装 Node.js（国内走 npmmirror 镜像）";
-            _nodeItem.Click += delegate { InstallNodeFromMirror(true); };
+            _nodeItem = new ToolStripMenuItem("如何安装 Node.js…");
+            _nodeItem.ToolTipText = "托盘不代下载、不代执行安装包，只给命令提示";
+            _nodeItem.Click += delegate { ShowInstallNodeHelp(); };
 
             _trayAutoItem = new ToolStripMenuItem("随 Windows 启动托盘");
             _trayAutoItem.ToolTipText = "开机后自动启动托盘，由托盘拉起各服务";
@@ -4850,17 +3158,6 @@ namespace Atlisp.Tray
             _serverAutoItem = new ToolStripMenuItem("启动托盘时自动启动 MCP");
             _serverAutoItem.ToolTipText = "关闭后托盘只做管理，不主动启动 MCP 服务";
             _serverAutoItem.Click += delegate { ToggleServerAutostart(); };
-
-            _mirrorItem = new ToolStripMenuItem("使用 npmmirror 国内镜像");
-            _mirrorItem.ToolTipText = "国内网络建议开启，下载 Node.js / npm 包更快";
-            _mirrorItem.Click += delegate { ToggleMirror(); };
-
-            _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
-            _autoInstallItem.ToolTipText = "缺 Node.js / @lisp/mcp / Python / 知识库时自动下载安装";
-            _autoInstallItem.Click += delegate { ToggleAutoInstall(); };
-
-            _autoUpgradeItem = new ToolStripMenuItem("自动升级 @lisp/mcp");
-            _autoUpgradeItem.Click += delegate { ToggleAutoUpgrade(); };
 
             _dwgKbStatusItem = new ToolStripMenuItem("图纸知识库：检测中…");
             _dwgKbStatusItem.Enabled = false;
@@ -4891,16 +3188,12 @@ namespace Atlisp.Tray
             _dwgKbRestartItem.Click += delegate { RestartDwgKbService(); };
 
             _dwgKbAutoStartItem = new ToolStripMenuItem("随托盘自动启动");
-            _dwgKbAutoStartItem.ToolTipText = "未安装时自动补齐 Python 与知识库包，然后启动";
+            _dwgKbAutoStartItem.ToolTipText = "已装好 atlisp-dwg-kb 时，托盘启动后拉起本地服务";
             _dwgKbAutoStartItem.Click += delegate { ToggleDwgKbAutoStart(); };
 
-            _dwgKbAutoUpgradeItem = new ToolStripMenuItem("自动检查新版本");
-            _dwgKbAutoUpgradeItem.ToolTipText = "定时查 PyPI，发现新版本静默升级，完成后自动恢复服务";
-            _dwgKbAutoUpgradeItem.Click += delegate { ToggleDwgKbAutoUpgrade(); };
-
-            _dwgKbInstallItem = new ToolStripMenuItem("安装 / 升级知识库…");
-            _dwgKbInstallItem.ToolTipText = "从 PyPI 安装或升级 atlisp-dwg-kb";
-            _dwgKbInstallItem.Click += delegate { InstallDwgKb(); };
+            _dwgKbInstallItem = new ToolStripMenuItem("如何安装 / 升级知识库…");
+            _dwgKbInstallItem.ToolTipText = "显示 pip 命令（托盘不代下载、不代执行）";
+            _dwgKbInstallItem.Click += delegate { ShowInstallDwgKbHelp(); };
 
             _dwgKbRebuildItem = new ToolStripMenuItem("重建索引…");
             _dwgKbRebuildItem.ToolTipText = "在知识库服务器上重建索引（管理员操作）";
@@ -4952,7 +3245,6 @@ namespace Atlisp.Tray
             _dwgKbMenu.DropDownItems.Add(_dwgKbRebuildItem);
             _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
             _dwgKbMenu.DropDownItems.Add(_dwgKbAutoStartItem);
-            _dwgKbMenu.DropDownItems.Add(_dwgKbAutoUpgradeItem);
             _dwgKbMenu.DropDownItems.Add(new ToolStripSeparator());
             _dwgKbMenu.DropDownItems.Add(_dwgKbConfigItem);
 
@@ -4966,9 +3258,6 @@ namespace Atlisp.Tray
             _settingsMenu = CreateSubmenu("设置");
             _settingsMenu.DropDownItems.Add(_trayAutoItem);
             _settingsMenu.DropDownItems.Add(_serverAutoItem);
-            _settingsMenu.DropDownItems.Add(_autoInstallItem);
-            _settingsMenu.DropDownItems.Add(_autoUpgradeItem);
-            _settingsMenu.DropDownItems.Add(_mirrorItem);
             _settingsMenu.DropDownItems.Add(new ToolStripSeparator());
             _settingsMenu.DropDownItems.Add(reloadItem);
             _settingsMenu.DropDownItems.Add(configItem);
@@ -5020,14 +3309,7 @@ namespace Atlisp.Tray
 
             if (_config.AutoStartServer || _startServerOnLaunch)
             {
-                // 开启自动补齐时由 AutoBootstrap 统一编排（缺依赖会先装再启动）；
-                // 关闭时保持原行为：缺依赖就报启动失败。
-                ServerInfo bootInfo = ServerLocator.Resolve(_config, false);
-                if (!_config.AutoInstall ||
-                    (!string.IsNullOrEmpty(bootInfo.NodePath) && bootInfo.IsInstalled))
-                {
-                    EnsureServerStartedOnLaunch();
-                }
+                EnsureServerStartedOnLaunch();
             }
 
             if (!_silent)
@@ -5120,215 +3402,11 @@ namespace Atlisp.Tray
             }
         }
 
-        /// <summary>
-        /// 启动后按环境自动补齐依赖，全程不需要人工确认：
-        ///   1) 没有 Node.js → 从 npmmirror 下载 zip 解压到用户目录（免 UAC）
-        ///   2) 没有 @lisp/mcp → npm install -g（用户级前缀，同样免 UAC）
-        ///   3) 都齐了 → 按 AutoStartServer 启动服务
-        /// 安装动作按指数退避重试并限次，但环境就绪的检测一直继续，
-        /// 这样用户手动装好依赖后托盘仍能自动启动服务。
-        /// </summary>
-        private void AutoBootstrap()
-        {
-            if (!_config.AutoInstall || _autoInstallDone) return;
-            if (DateTime.UtcNow < _autoInstallRetryAt) return;
-            if (TaskBusy()) return;
-
-            try
-            {
-                // 用缓存版：force=true 每次都会拉起 npm root -g，1s 一次的定时器扛不住
-                ServerInfo info = ServerLocator.Resolve(_config, false);
-
-                if (!string.IsNullOrEmpty(info.NodePath) && info.IsInstalled)
-                {
-                    _autoInstallDone = true;
-                    _bootstrapMode = false;
-                    if (_autoInstallFailures > 0)
-                    {
-                        _autoInstallFailures = 0;
-                        SaveBootstrapState();
-                    }
-                    AppLog.Write("auto-install: 运行环境就绪 node=" + info.NodePath +
-                        " version=" + info.VersionText);
-
-                    if (_config.AutoStartServer || _startServerOnLaunch) EnsureServerStartedOnLaunch();
-                    return;
-                }
-
-                if (_autoInstallFailures >= AutoInstallMaxFailures) return;
-
-                if (string.IsNullOrEmpty(info.NodePath))
-                {
-                    StartPortableNode();
-                    return;
-                }
-
-                _bootstrapMode = true;
-                AppLog.Write("auto-install: 正在安装 @lisp/mcp");
-                InstallServer();
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("auto-install 异常: " + ex);
-                ScheduleAutoInstallRetry();
-            }
-        }
-
-        private void ScheduleAutoInstallRetry()
-        {
-            _autoInstallFailures++;
-            int minutes = _autoInstallFailures <= 1 ? 1 :
-                (_autoInstallFailures <= 2 ? 5 : 30);
-            _autoInstallRetryAt = DateTime.UtcNow.AddMinutes(minutes);
-            AppLog.Write("auto-install 第 " + _autoInstallFailures +
-                " 次失败，" + minutes + " 分钟后重试");
-            SaveBootstrapState();
-        }
-
-        /// <summary>
-        /// 退避时间写入磁盘：托盘每次开机自启都会重新开始，
-        /// 不落盘会导致网络故障时反复重下 35MB。
-        /// </summary>
-        private void SaveBootstrapState()
-        {
-            try
-            {
-                Directory.CreateDirectory(Paths.DataDir);
-                File.WriteAllText(Paths.BootstrapStatePath,
-                    _autoInstallRetryAt.ToString("o") + Environment.NewLine +
-                    _autoInstallFailures.ToString(CultureInfo.InvariantCulture),
-                    new UTF8Encoding(false));
-            }
-            catch
-            {
-                // 状态文件写不了不影响主流程
-            }
-        }
-
-        private void LoadBootstrapState()
-        {
-            try
-            {
-                if (!File.Exists(Paths.BootstrapStatePath)) return;
-                string[] lines = File.ReadAllLines(Paths.BootstrapStatePath);
-                if (lines.Length > 0)
-                {
-                    DateTime retryAt;
-                    if (DateTime.TryParse(lines[0], CultureInfo.InvariantCulture,
-                        DateTimeStyles.RoundtripKind, out retryAt))
-                    {
-                        _autoInstallRetryAt = retryAt;
-                    }
-                }
-                if (lines.Length > 1)
-                {
-                    int failures;
-                    if (int.TryParse(lines[1], NumberStyles.Integer,
-                        CultureInfo.InvariantCulture, out failures))
-                    {
-                        _autoInstallFailures = failures;
-                    }
-                }
-            }
-            catch
-            {
-                _autoInstallRetryAt = DateTime.MinValue;
-            }
-        }
-
-        /// <summary>下载并解压免管理员的 portable Node.js。</summary>
-        private void StartPortableNode()
-        {
-            if (_portableNodeAttempted) return;
-            _portableNodeAttempted = true;
-            _bootstrapMode = true;
-
-            string version = _config.NodeVersion;
-            string arch = DetectNodeArch();
-            string url = BuildNodeZipUrl(version, arch);
-            string filePath = Path.Combine(Paths.DownloadDir,
-                "node-v" + version + "-win-" + arch + ".zip");
-
-            _downloadKind = "portable";
-            _downloadVersion = version;
-            _downloadArch = arch;
-            _downloadUrl = url;
-            _portableJob = null;
-            _downloadJob = new DownloadJob(url, filePath);
-
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                try { _taskWindow.Close(); } catch { }
-            }
-            OutputForm form = new OutputForm("自动安装 Node.js v" + version, "", true);
-            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
-            _taskWindow = form;
-            form.Show();
-            form.Append("未检测到 Node.js，正在自动下载（无需管理员权限）\r\n");
-            form.Append("下载地址：" + url + "\r\n");
-            form.Append("安装目录：" + Paths.PortableNodeDir + "\r\n\r\n");
-
-            Balloon("自动安装中", "未检测到 Node.js，正在下载 v" + version + "…",
-                ToolTipIcon.Info);
-
-            AppLog.Write("auto-install: 下载 portable Node.js " + url);
-            _downloadJob.Start();
-            if (_downloadJob.Finished) PollDownload();
-        }
-
-        private string BuildNodeZipUrl(string version, string arch)
-        {
-            string mirror = _config.NodeMirror;
-            if (string.IsNullOrEmpty(mirror))
-            {
-                mirror = "https://npmmirror.com/mirrors/node";
-            }
-            return mirror.TrimEnd('/') + "/v" + version +
-                "/node-v" + version + "-win-" + arch + ".zip";
-        }
-
-        private void PollPortableInstall()
-        {
-            PortableInstallJob job = _portableJob;
-            if (job == null || !job.Finished) return;
-            _portableJob = null;
-
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                if (job.Success)
-                {
-                    _taskWindow.Append("\r\nNode.js 解压完成：" + job.NodePath + "\r\n");
-                    _taskWindow.SetStatus("Node.js 就绪，正在继续安装 @lisp/mcp…");
-                }
-                else
-                {
-                    _taskWindow.Append("\r\nNode.js 解压失败：" + job.Error + "\r\n");
-                    _taskWindow.SetFinished(false, -1);
-                }
-            }
-
-            if (!job.Success)
-            {
-                AppLog.Write("auto-install: portable Node.js 解压失败 " + job.Error);
-                ScheduleAutoInstallRetry();
-                Balloon("自动安装 Node.js 失败", job.Error, ToolTipIcon.Warning);
-                return;
-            }
-
-            AppLog.Write("auto-install: portable Node.js 就绪 " + job.NodePath);
-            // 解压完就删掉 35MB 的 zip
-            try { File.Delete(job.ZipPath); } catch { }
-            ServerLocator.Invalidate();
-        }
-
         private void OnUiTimer(object sender, EventArgs e)
         {
             try
             {
                 UpdateUi();
-                PollDownload();
-                PollPortableInstall();
-                PollTask();
 
                 // 知识库重建结果由后台线程产生，气泡只能在这里（UI 线程）弹
                 if (_dwgKbBalloonPending)
@@ -5337,50 +3415,27 @@ namespace Atlisp.Tray
                     Balloon(_dwgKbBalloonTitle, _dwgKbBalloonText, _dwgKbBalloonIcon);
                 }
 
-                // Python 装好了 → 在 UI 线程接着跑 pip（后台线程不能建任务窗口）
-                if (_dwgKbStartPipRequested)
+                // 后台线程查到的更新结果：在 UI 线程弹气泡
+                if (_updateBalloonPending)
                 {
-                    _dwgKbStartPipRequested = false;
-                    InstallDwgKb(_dwgKbAutoFlow);
+                    _updateBalloonPending = false;
+                    Balloon(_updateBalloonTitle, _updateBalloonText, _updateBalloonIcon);
                 }
 
-                // 后台线程查到的知识库新版本：在 UI 线程启动 pip（LongTask 只能在 UI 线程建）
-                string pendingUpgrade = null;
-                lock (_dwgKbLock)
-                {
-                    if (_dwgKbPendingUpgrade != null)
-                    {
-                        pendingUpgrade = _dwgKbPendingUpgrade;
-                        _dwgKbPendingUpgrade = null;
-                    }
-                }
-                if (pendingUpgrade != null) AutoUpgradeDwgKb(pendingUpgrade);
-
-                // 启动后稍等片刻再补齐环境，避免和首轮 UI/健康检测抢线程
-                if (_config.AutoInstall && !_autoInstallDone &&
-                    (DateTime.UtcNow - _createdAt).TotalSeconds > 3)
-                {
-                    AutoBootstrap();
-                }
-
-                // 知识库自动启动：等首轮环境检测稳定后再拉，避免和 AutoBootstrap 抢线程。
-                // 没装 Python/包时这里会触发自动安装，装好后自动拉起（见 EnsureDwgKbStartedOnLaunch）。
+                // 知识库自动启动：等首轮环境检测稳定后再拉
                 if (_config.DwgKbAutoStart && !_dwgKbAutoStartAttempted &&
-                    (DateTime.UtcNow - _createdAt).TotalSeconds > 5 &&
-                    !TaskBusy() && !_pythonInstalling)
+                    (DateTime.UtcNow - _createdAt).TotalSeconds > 5 && !TaskBusy())
                 {
                     EnsureDwgKbStartedOnLaunch();
                 }
 
-                if (_config.CheckUpdateOnStart && !_config.AutoUpgrade && !_startupUpdateChecked &&
+                if (_config.CheckUpdateOnStart && !_startupUpdateChecked &&
                     (DateTime.UtcNow - _createdAt).TotalSeconds > 20)
                 {
                     _startupUpdateChecked = true;
                     CheckUpdate(true);
                 }
 
-                MaybeAutoUpgrade();
-                MaybeAutoUpgradeDwgKb();
                 MaybeSyncDwgKbVersion();
                 MaybeRestartServer();
                 MaybeRestartDwgKbService();
@@ -5441,8 +3496,8 @@ namespace Atlisp.Tray
             _stateItem.Text = stateText;
 
             bool running = state == ServerState.Running || state == ServerState.Starting;
-            bool busy = _task != null && !_task.Finished;
-            bool updating = busy || _downloadJob != null;
+            bool busy = _dwgKbBuilding;
+            bool updating = _updateChecking || busy;
 
             // 只显示当前能做的事：运行中给「停止/重启」，停止时给「启动」，
             // 避免菜单里同时出现一组互斥项还要用户自己判断哪个可用。
@@ -5460,32 +3515,25 @@ namespace Atlisp.Tray
             _upgradeItem.Enabled = !updating;
             _installItem.Enabled = !updating;
             _installItem.Text = info.IsInstalled
-                ? "重新安装 / 修复安装"
-                : "下载并安装 @lisp MCP Server";
+                ? "如何升级 @lisp MCP Server…"
+                : "如何安装 @lisp MCP Server…";
             _nodeItem.Enabled = !updating;
-            _nodeItem.Text = "安装 Node.js v" + _config.NodeVersion + "…";
 
             bool updateAvailable = !string.IsNullOrEmpty(_latestVersion) &&
                 VersionUtil.IsNewer(_latestVersion, info.Version);
             if (updateAvailable)
             {
-                _upgradeItem.Text = "升级到 v" + _latestVersion +
-                    "（当前 " + info.VersionText + "）";
+                _upgradeItem.Text = "有新版 v" + _latestVersion + "（如何升级…）";
                 _updateMenu.Text = "更新与安装（有新版 v" + _latestVersion + "）";
             }
             else
             {
-                _upgradeItem.Text = "升级到最新版";
+                _upgradeItem.Text = "如何升级…";
                 _updateMenu.Text = "更新与安装";
             }
 
             _trayAutoItem.Checked = AutostartHelper.IsEnabled();
             _serverAutoItem.Checked = _config.AutoStartServer;
-            _mirrorItem.Checked = !string.IsNullOrEmpty(_config.NpmRegistry);
-            _autoInstallItem.Checked = _config.AutoInstall;
-            _autoUpgradeItem.Checked = _config.AutoUpgrade;
-            _autoUpgradeItem.Text = "自动升级 @lisp/mcp（每 " +
-                (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时）";
 
             _tray.Text = Truncate("@lisp MCP · " + StateText(state) + " · 端口 " + _config.Port, 63);
 
@@ -5550,12 +3598,10 @@ namespace Atlisp.Tray
         {
             DwgKbStatus status;
             PythonInfo python;
-            string latest;
             lock (_dwgKbLock)
             {
                 status = _dwgKbStatus;
                 python = _dwgKbPython;
-                latest = _dwgKbLatestVersion;
             }
 
             bool online = status != null && status.Reachable;
@@ -5589,11 +3635,6 @@ namespace Atlisp.Tray
                 if (serviceVersion.Length > 0) text += " · 服务 v" + serviceVersion;
                 if (status.Triples > 0) text += " · " + FormatCount(status.Triples) + "条三元组";
                 if (!status.RdfLoaded) text += " · 索引加载中";
-                if (!string.IsNullOrEmpty(latest) && installed &&
-                    VersionUtil.IsNewer(latest, localVersion))
-                {
-                    text += " · 正在升级到 v" + latest + "…";
-                }
                 _dwgKbStatusItem.Text = text;
             }
 
@@ -5614,7 +3655,7 @@ namespace Atlisp.Tray
                 else if (ownedRunning)
                 {
                     _dwgKbVersionHintItem.Text = "服务 v" + serviceVersion +
-                        " 比本机 v" + localVersion + " 新，可点「升级知识库」";
+                        " 比本机 v" + localVersion + " 新，可按菜单提示升级本机包";
                 }
                 else if (localNewer)
                 {
@@ -5624,7 +3665,7 @@ namespace Atlisp.Tray
                 else
                 {
                     _dwgKbVersionHintItem.Text = "本机 v" + localVersion +
-                        " 落后于服务 v" + serviceVersion + "，可点「升级知识库」";
+                        " 落后于服务 v" + serviceVersion + "，可按菜单提示升级本机包";
                 }
                 _dwgKbVersionHintItem.Visible = true;
             }
@@ -5638,21 +3679,10 @@ namespace Atlisp.Tray
                 _dwgKbVersionHintItem.Visible = false;
             }
 
-            _dwgKbInstallItem.Enabled = !_dwgKbBuilding && !_pythonInstalling && !TaskBusy();
-            if (installed)
-            {
-                string upgrade = "升级知识库（当前 v" + localVersion;
-                if (!string.IsNullOrEmpty(latest) &&
-                    VersionUtil.IsNewer(latest, localVersion))
-                {
-                    upgrade += " → v" + latest;
-                }
-                _dwgKbInstallItem.Text = upgrade + "）…";
-            }
-            else
-            {
-                _dwgKbInstallItem.Text = "安装知识库…";
-            }
+            _dwgKbInstallItem.Enabled = !_dwgKbBuilding && !TaskBusy();
+            _dwgKbInstallItem.Text = installed
+                ? "如何升级知识库（当前 v" + localVersion + "）…"
+                : "如何安装知识库…";
 
             _dwgKbOpenItem.Enabled = online;
             _dwgKbRebuildItem.Enabled = online && !_dwgKbBuilding;
@@ -5667,7 +3697,7 @@ namespace Atlisp.Tray
 
             // 启停只对「本机」有意义；停止对托盘自己启动和外部启动的本机实例都可用
             // （外部实例按端口找 PID，先确认再停）。远程服务不在这里管理。
-            bool canManage = local && !_dwgKbBuilding && !_pythonInstalling && !TaskBusy();
+            bool canManage = local && !_dwgKbBuilding && !TaskBusy();
             _dwgKbStartItem.Visible = local;
             _dwgKbStartItem.Enabled = canManage && installed && !online && !ownedRunning;
             _dwgKbStopItem.Visible = local;
@@ -5675,10 +3705,7 @@ namespace Atlisp.Tray
             _dwgKbRestartItem.Visible = local;
             _dwgKbRestartItem.Enabled = canManage && installed && (ownedRunning || online);
             _dwgKbAutoStartItem.Checked = _config.DwgKbAutoStart;
-            // 未装包时也要能关掉「自动安装/自动启动」，否则用户没有出口
             _dwgKbAutoStartItem.Enabled = local;
-            _dwgKbAutoUpgradeItem.Checked = _config.DwgKbAutoUpgrade;
-            _dwgKbAutoUpgradeItem.Enabled = local;
         }
 
         private void OpenDwgKbUi()
@@ -5699,7 +3726,7 @@ namespace Atlisp.Tray
                 if (!quiet)
                 {
                     Balloon("尚未安装知识库",
-                        "先用菜单「图纸知识库 → 安装 / 升级知识库…」安装 atlisp-dwg-kb。",
+                        "先用菜单「图纸知识库 → 如何安装 / 升级知识库…」按提示安装 atlisp-dwg-kb。",
                         ToolTipIcon.Info);
                 }
                 return;
@@ -5723,7 +3750,6 @@ namespace Atlisp.Tray
                 if (quiet)
                 {
                     AppLog.Write("dwg-kb: 自动启动失败 " + error);
-                    ScheduleDwgKbRetry("知识库服务启动失败：" + error);
                 }
                 else
                 {
@@ -5861,30 +3887,14 @@ namespace Atlisp.Tray
             UpdateDwgKbUi();
             if (_config.DwgKbAutoStart && !DwgKbServer.IsRunning())
             {
-                // 勾选那一刻就把服务拉起来，语义比「下次启动才生效」直观；
-                // 还没装包时按配置自动补齐（Python → pip → 启动）。
-                PythonInfo info = PythonLocator.Resolve(_config, false);
-                if (!info.HasPackage && _config.AutoInstall) AutoInstallDwgKb();
-                else StartDwgKbService();
-            }
-        }
-
-        private void ToggleDwgKbAutoUpgrade()
-        {
-            _config.DwgKbAutoUpgrade = !_config.DwgKbAutoUpgrade;
-            _config.Save();
-            UpdateDwgKbUi();
-            if (_config.DwgKbAutoUpgrade)
-            {
-                // 勾选后立刻查一次，不必等下一个定时周期
-                _nextDwgKbCheckAt = DateTime.MinValue;
-                _dwgKbTaskRetryAt = DateTime.MinValue;
+                // 勾选那一刻就把服务拉起来，语义比「下次启动才生效」直观
+                StartDwgKbService();
             }
         }
 
         /// <summary>
-        /// 知识库自动启动：地址必须是本机。没装包时（且 AutoInstall 开启）自动建环境：
-        /// 没 Python → 下载静默安装；有 Python → pip 装包；装完自动拉起服务。
+        /// 知识库自动启动：地址必须是本机，且本机已装好 atlisp-dwg-kb。
+        /// 托盘不再代装 Python / pip 包，装好后重启托盘即可自动拉起。
         /// </summary>
         private void EnsureDwgKbStartedOnLaunch()
         {
@@ -5904,156 +3914,22 @@ namespace Atlisp.Tray
                 _dwgKbAutoStartAttempted = true;
                 return;
             }
-            if (_dwgKbAutoFlow || _pythonInstalling || TaskBusy()) return;
-            if (DateTime.UtcNow < _dwgKbTaskRetryAt) return;
+            if (TaskBusy()) return;
 
             PythonInfo info = PythonLocator.Resolve(_config, false);
             lock (_dwgKbLock) { _dwgKbPython = info; }
 
             if (!info.HasPackage)
             {
-                if (!_config.AutoInstall)
-                {
-                    _dwgKbAutoStartAttempted = true;
-                    return;
-                }
-                AppLog.Write("dwg-kb: auto-provision（Python=" +
-                    (info.HasPython ? info.Version : "未安装") + "）");
+                // 托盘不再代装 Python / pip 包：装好后下次启动（或手动点启动）即可
+                AppLog.Write("dwg-kb: 未安装 atlisp-dwg-kb，跳过自动启动");
                 _dwgKbAutoStartAttempted = true;
-                AutoInstallDwgKb();
                 return;
             }
 
             _dwgKbAutoStartAttempted = true;
             AppLog.Write("dwg-kb: auto-start on launch");
             StartDwgKbService();
-        }
-
-        /// <summary>
-        /// 定时检查知识库新版本并自动升级（间隔与 @lisp/mcp 共用 AutoUpgradeHours）。
-        /// 只对「本机地址」生效：配成局域网服务器时本机装的包用不上。
-        /// </summary>
-        private void MaybeAutoUpgradeDwgKb()
-        {
-            if (!_config.DwgKbAutoUpgrade && !_config.AutoInstall) return;
-            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
-            if (TaskBusy() || _pythonInstalling || _dwgKbUpdateChecking || _dwgKbAutoFlow) return;
-
-            DateTime now = DateTime.UtcNow;
-            if (_nextDwgKbCheckAt == DateTime.MinValue)
-            {
-                if ((now - _createdAt).TotalSeconds < 30) return;
-            }
-            else if (now < _nextDwgKbCheckAt)
-            {
-                return;
-            }
-            if (now < _dwgKbTaskRetryAt) return;
-
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
-            _nextDwgKbCheckAt = now.AddHours(hours);
-
-            PythonInfo info = PythonLocator.Resolve(_config, false);
-            lock (_dwgKbLock) { _dwgKbPython = info; }
-
-            if (!info.HasPackage)
-            {
-                // 自动补齐：启动阶段没装完（或当时任务冲突）的在这里继续
-                if (_config.AutoInstall && _config.DwgKbAutoStart) AutoInstallDwgKb();
-                return;
-            }
-            if (!_config.DwgKbAutoUpgrade) return;
-            StartDwgKbVersionCheck(info);
-        }
-
-        /// <summary>
-        /// 后台线程查 PyPI 最新版本（HTTP + 可能的 pip index，几秒），
-        /// 结果放 _dwgKbPendingUpgrade，由 UI 定时器启动 pip。
-        /// </summary>
-        private void StartDwgKbVersionCheck(PythonInfo info)
-        {
-            _dwgKbUpdateChecking = true;
-            PythonInfo snapshot = info;
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                string error;
-                string latest = PythonRunner.CheckLatestVersion(snapshot, "atlisp-dwg-kb", out error);
-                bool newer = !string.IsNullOrEmpty(latest) &&
-                    VersionUtil.IsNewer(latest, snapshot.PackageVersion);
-                lock (_dwgKbLock)
-                {
-                    _dwgKbUpdateChecking = false;
-                    _dwgKbLatestVersion = latest;
-                    if (newer) _dwgKbPendingUpgrade = latest;
-                }
-                if (string.IsNullOrEmpty(latest))
-                {
-                    AppLog.Write("dwg-kb update check failed: " + error);
-                }
-                else if (newer)
-                {
-                    AppLog.Write("dwg-kb update: " + snapshot.PackageVersion + " -> " + latest);
-                }
-            });
-        }
-
-        /// <summary>
-        /// 静默升级：先停掉托盘启动的知识库进程（Windows 会锁 .pyd），pip 升级完成后
-        /// 由 HandleTaskSuccess 自动拉起。不弹任务窗口、不询问，失败走退避重试。
-        /// </summary>
-        private void AutoUpgradeDwgKb(string latest)
-        {
-            if (TaskBusy() || _pythonInstalling) return;
-
-            PythonInfo info = PythonLocator.Resolve(_config, false);
-            lock (_dwgKbLock) { _dwgKbPython = info; }
-            if (!info.HasPackage || !VersionUtil.IsNewer(latest, info.PackageVersion)) return;
-
-            // 不在开始时停知识库：pip 先下载，真正替换 .pyd 被占用时失败处理里
-            // 会停服务并重试（见 HandleTaskFailure）
-            _dwgKbAutoFlow = true;
-            AppLog.Write("dwg-kb auto-upgrade: " + info.PackageVersion + " -> " + latest);
-            if (!_silent)
-            {
-                Balloon("正在自动升级知识库",
-                    "atlisp-dwg-kb " + info.PackageVersion + " → " + latest +
-                    "，完成后自动恢复服务。",
-                    ToolTipIcon.Info);
-            }
-            RunPipTask(info, "自动升级知识库（v" + latest + "）", "dwgkb-upgrade-auto", false);
-        }
-
-        /// <summary>无人值守安装：没 Python 先装 Python，装完由定时器接着 pip 装包。</summary>
-        private void AutoInstallDwgKb()
-        {
-            if (_dwgKbAutoFlow || _pythonInstalling) return;
-            if (TaskBusy()) return;
-            if (DateTime.UtcNow < _dwgKbTaskRetryAt) return;
-            if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
-
-            _dwgKbAutoFlow = true;
-            _dwgKbAutoStartAfterInstall = true;
-            AppLog.Write("dwg-kb auto: 开始自动安装");
-            InstallDwgKb(true);
-        }
-
-        /// <summary>自动流程失败后的退避：5 → 30 → 180 分钟，避免网络故障时反复下载。</summary>
-        private void ScheduleDwgKbRetry(string reason)
-        {
-            _dwgKbTaskFailures++;
-            int minutes = _dwgKbTaskFailures <= 1 ? 5 : (_dwgKbTaskFailures <= 2 ? 30 : 180);
-            _dwgKbTaskRetryAt = DateTime.UtcNow.AddMinutes(minutes);
-            _dwgKbAutoFlow = false;
-            _dwgKbAutoStartAfterInstall = false;
-            AppLog.Write("dwg-kb auto: " + reason + "（第 " + _dwgKbTaskFailures +
-                " 次失败，" + minutes + " 分钟后重试）");
-            // 按退避时间重新检查，而不是干等下一个整点
-            _nextDwgKbCheckAt = _dwgKbTaskRetryAt;
-            // 这个函数也可能从后台线程（Python 静默安装结束）调用，气泡交给 UI 定时器弹
-            _dwgKbBalloonTitle = "知识库自动安装/升级失败";
-            _dwgKbBalloonText = reason + "\r\n将在 " + minutes + " 分钟后自动重试。";
-            _dwgKbBalloonIcon = ToolTipIcon.Warning;
-            _dwgKbBalloonPending = true;
         }
 
         /// <summary>
@@ -6112,7 +3988,7 @@ namespace Atlisp.Tray
             if (_dwgKbUserStopped) return;
             if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
             if ((DateTime.UtcNow - _createdAt).TotalSeconds < 90) return;
-            if (TaskBusy() || _pythonInstalling || _dwgKbAutoFlow || _dwgKbUpdateChecking) return;
+            if (TaskBusy() || _dwgKbBuilding) return;
             if (DateTime.UtcNow < _dwgKbRestartRetryAt) return;
 
             // 托盘自己起的进程还活着，或端口上已有别的实例 → 不需要干预
@@ -6150,8 +4026,7 @@ namespace Atlisp.Tray
         private void MaybeSyncDwgKbVersion()
         {
             if (!DwgKbServer.IsLocalUrl(_config.DwgKbUrl)) return;
-            if (TaskBusy() || _pythonInstalling || _dwgKbAutoFlow || _dwgKbUpdateChecking ||
-                _dwgKbBuilding) return;
+            if (TaskBusy() || _dwgKbBuilding) return;
             if (DateTime.UtcNow < _dwgKbSyncRetryAt) return;
             if (!DwgKbServer.IsRunning())
             {
@@ -6263,279 +4138,6 @@ namespace Atlisp.Tray
             }
         }
 
-        /// <summary>
-        /// 「安装 / 升级知识库」：从 PyPI 安装 atlisp-dwg-kb。
-        /// 没 Python 先走自动安装 Python（用户目录、免 UAC），装完自动接着装包。
-        /// auto=true 时用于无人值守流程：不弹确认框、不弹任务窗口，失败走退避重试。
-        /// </summary>
-        private void InstallDwgKb(bool auto = false)
-        {
-            if (_pythonInstalling)
-            {
-                if (!auto) Balloon("请稍候", "正在安装 Python，完成后会自动继续。", ToolTipIcon.Info);
-                return;
-            }
-            if (TaskBusy())
-            {
-                if (!auto) Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-
-            PythonInfo info = PythonLocator.Resolve(_config, false);
-            lock (_dwgKbLock) { _dwgKbPython = info; }
-            UpdateDwgKbUi();
-
-            if (!info.HasPython)
-            {
-                if (auto)
-                {
-                    AppLog.Write("dwg-kb auto: 未检测到 Python，开始自动下载安装");
-                    _dwgKbAutoFlow = true;
-                    InstallPythonFromMirror();
-                }
-                else
-                {
-                    PromptInstallPython();
-                }
-                return;
-            }
-            if (!info.HasPip)
-            {
-                if (auto)
-                {
-                    ScheduleDwgKbRetry("Python " + info.Version + " 缺少 pip");
-                }
-                else
-                {
-                    ShowError("无法安装知识库",
-                        "检测到 Python " + info.Version + "，但 pip 不可用。\r\n\r\n" +
-                        "请重新安装 Python（勾选 pip），或手动执行：\r\n" +
-                        info.PythonPath + " -m ensurepip --upgrade");
-                }
-                return;
-            }
-
-            // 不再升级前停止知识库：pip 先下载，只有在替换 .pyd 被占用时
-            // HandleTaskFailure 会停服务并重试一次；成功后自动按原状态拉起。
-            string title = info.HasPackage ? "升级知识库（PyPI）" : "安装知识库（PyPI）";
-            string action = (info.HasPackage ? "dwgkb-upgrade" : "dwgkb-install") +
-                (auto ? "-auto" : "");
-            _dwgKbAutoFlow = auto;
-            if (auto) AppLog.Write("dwg-kb auto: " + title);
-            RunPipTask(info, title, action, !auto);
-        }
-
-        private void PromptInstallPython()
-        {
-            string version = _config.PythonVersion;
-            string arch = PythonRunner.DetectArch();
-            DialogResult result = MessageBox.Show(
-                "未检测到 Python 3.10+。知识库（atlisp-dwg-kb）是 Python 包，需要先安装 Python。\r\n\r\n" +
-                "是否自动下载并安装 Python v" + version + "（" + arch + "）？\r\n" +
-                "约 25 MB，安装到用户目录：\r\n" + Paths.PythonDir + "\r\n" +
-                "（无需管理员权限，不改系统 PATH）",
-                "@lisp MCP 托盘 - 知识库",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (result != DialogResult.Yes) return;
-            InstallPythonFromMirror();
-        }
-
-        private void InstallPythonFromMirror()
-        {
-            if (_pythonInstalling) return;
-
-            string version = _config.PythonVersion;
-            string arch = PythonRunner.DetectArch();
-            string url = PythonRunner.BuildInstallerUrl(_config, version, arch);
-            string filePath = Path.Combine(Paths.DownloadDir,
-                "python-" + version + "-" + arch + ".exe");
-            try { Directory.CreateDirectory(Paths.DownloadDir); } catch { }
-
-            _downloadKind = "python";
-            _downloadVersion = version;
-            _downloadArch = arch;
-            _downloadUrl = url;
-            _downloadJob = new DownloadJob(url, filePath);
-
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                try { _taskWindow.Close(); } catch { }
-            }
-            OutputForm form = new OutputForm("自动安装 Python v" + version, "", true);
-            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
-            _taskWindow = form;
-            form.Show();
-            form.Append("未检测到 Python 3.10+，正在自动下载 v" + version +
-                "（" + arch + "）\r\n");
-            form.Append("下载地址：" + url + "\r\n");
-            form.Append("安装目录：" + Paths.PythonDir + "（无需管理员权限）\r\n\r\n");
-
-            Balloon("正在安装 Python", "下载 v" + version + "，完成后自动安装知识库…",
-                ToolTipIcon.Info);
-            AppLog.Write("python: 下载 " + url);
-            _downloadJob.Start();
-            if (_downloadJob.Finished) PollDownload();
-        }
-
-        /// <summary>
-        /// 下载完成后的静默安装 + 接着装知识库。安装器是 GUI 程序（/quiet 静默），
-        /// 用后台线程等它退出，避免卡住 UI 定时器。
-        /// </summary>
-        /// <summary>配置的 PythonVersion 的 major.minor（如 3.12），用于 winget 包名。</summary>
-        private string PythonMinorVersion()
-        {
-            string version = _config.PythonVersion ?? "";
-            string[] parts = version.Split('.');
-            if (parts.Length >= 2) return parts[0] + "." + parts[1];
-            return "3.12";
-        }
-
-        private void StartPythonInstall(string installerPath)
-        {
-            // 校验 Authenticode：只执行能确认来源的安装包（这是「不把自己变成 dropper」的关键）
-            string signer;
-            string sigError;
-            if (!CodeSignature.Verify(installerPath, out signer, out sigError))
-            {
-                AppLog.Write("python: 安装包签名校验失败 " + sigError + "（" + installerPath + "）");
-                try { File.Delete(installerPath); } catch { }
-                if (_dwgKbAutoFlow)
-                {
-                    ScheduleDwgKbRetry("Python 安装包签名校验失败：" + sigError);
-                }
-                else
-                {
-                    ShowError("Python 安装包未通过校验",
-                        "已拒绝执行签名校验失败的安装包：\r\n" + sigError + "\r\n\r\n" +
-                        "安装包：" + installerPath + "\r\n\r\n" +
-                        "可改用 winget 安装 Python：\r\n" +
-                        "  winget install Python.Python." + PythonMinorVersion() + "\r\n" +
-                        "装好后托盘会自动检测到。");
-                }
-                return;
-            }
-            if (string.IsNullOrEmpty(signer) ||
-                signer.IndexOf("Python Software Foundation", StringComparison.OrdinalIgnoreCase) < 0)
-            {
-                AppLog.Write("python: 签名主体不是 PSF（仍放行，签名本身有效）：" + signer);
-            }
-
-            _pythonInstalling = true;
-            string targetDir = Paths.PythonDir;
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.SetStatus("正在安装 Python 到用户目录（无需管理员权限）…");
-            }
-            AppLog.Write("python: 静默安装 " + installerPath + " -> " + targetDir);
-
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                string error;
-                int code = PythonRunner.InstallSilently(installerPath, targetDir, out error);
-                try { File.Delete(installerPath); } catch { }
-
-                PythonLocator.Invalidate();
-                PythonInfo info = PythonLocator.Resolve(_config, true);
-                _pythonInstalling = false;
-                lock (_dwgKbLock) { _dwgKbPython = info; }
-
-                if (info.HasPython)
-                {
-                    // pip 任务要建窗口/LongTask，只能在 UI 线程启动：这里只挂个请求，
-                    // 由 OnUiTimer 在下一拍调用 InstallDwgKb()。
-                    _dwgKbStartPipRequested = true;
-                    _dwgKbBalloonTitle = "Python 已安装";
-                    _dwgKbBalloonText = "Python " + info.Version + "，继续安装知识库…";
-                    _dwgKbBalloonIcon = ToolTipIcon.Info;
-                }
-                else
-                {
-                    if (_dwgKbAutoFlow)
-                    {
-                        ScheduleDwgKbRetry("安装 Python 失败" +
-                            (string.IsNullOrEmpty(error) ? "（退出码 " + code + "）" : "：" + error));
-                    }
-                    else
-                    {
-                        _dwgKbBalloonTitle = "安装 Python 失败";
-                        _dwgKbBalloonText = string.IsNullOrEmpty(error)
-                            ? ("安装程序退出码 " + code)
-                            : error;
-                        _dwgKbBalloonIcon = ToolTipIcon.Error;
-                    }
-                }
-                _dwgKbBalloonPending = true;
-            });
-        }
-
-        private void RunPipTask(PythonInfo info, string title, string action)
-        {
-            RunPipTask(info, title, action, true);
-        }
-
-        private void RunPipTask(PythonInfo info, string title, string action, bool showWindow)
-        {
-            if (TaskBusy())
-            {
-                if (!showWindow) ScheduleDwgKbRetry("已有下载/更新任务正在进行");
-                else Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-
-            string logFile = NewTaskLogFile("pip");
-            LongTask task = new LongTask(title, logFile);
-            task.AppendLine("Python: " + info.PythonPath);
-            task.AppendLine("命令: " + info.PythonPath +
-                " -m pip install --upgrade atlisp-dwg-kb");
-            // 上一次升级被中断时 pip 会留下 "~tlisp-dwg-kb" 目录，之后每条 pip 命令都刷
-            // "Ignoring invalid distribution" 警告，这里先清掉（纯文件操作，不额外起进程）。
-            int cleaned = PythonRunner.CleanBrokenDistributions(info.PythonPath, "atlisp-dwg-kb");
-            if (cleaned > 0)
-            {
-                task.AppendLine("已清理 " + cleaned + " 个 pip 残留目录（~ 开头的无效分发包）");
-            }
-            _dwgKbVersionBefore = info.PackageVersion;
-            task.AppendLine("");
-
-            Process process = PythonRunner.CreatePipInstall(info.PythonPath, "atlisp-dwg-kb",
-                delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                },
-                delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                });
-            if (process == null)
-            {
-                task.Dispose();
-                if (showWindow)
-                {
-                    ShowError(title, "无法启动 Python 进程，请检查安装是否完整。");
-                }
-                else
-                {
-                    if (_dwgKbRestartAfterUpgrade)
-                    {
-                        _dwgKbRestartAfterUpgrade = false;
-                        StartDwgKbService(true);
-                    }
-                    ScheduleDwgKbRetry("无法启动 pip 进程");
-                }
-                return;
-            }
-
-            _task = task;
-            _taskAction = action;
-            _restartAfterTask = false;
-            _taskElevated = false;
-            _showTaskWindow = showWindow;
-            _taskWindow = null;
-            task.Attach(process);
-            if (showWindow) ShowTaskWindow(title, task);
-        }
-
         private static string StateText(ServerState state)
         {
             switch (state)
@@ -6632,12 +4234,12 @@ namespace Atlisp.Tray
                 ServerInfo info = ServerLocator.Resolve(_config, true);
                 if (string.IsNullOrEmpty(info.NodePath))
                 {
-                    PromptInstallNode();
+                    ShowInstallNodeHelp();
                     return;
                 }
                 if (!info.IsInstalled)
                 {
-                    PromptInstallServer();
+                    ShowInstallServerHelp();
                     return;
                 }
 
@@ -6661,393 +4263,6 @@ namespace Atlisp.Tray
         {
             _suppressNotifications = false;
             _server.RestartAsync();
-        }
-
-        private void PromptInstallNode()
-        {
-            if (TaskBusy())
-            {
-                Balloon("请稍候", "Node.js 下载/安装或其他更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-
-            string arch = DetectNodeArch();
-            DialogResult result = MessageBox.Show(
-                "未检测到 Node.js。\r\n\r\n" +
-                "是否从 npmmirror 下载并安装 Node.js v" + _config.NodeVersion +
-                "（" + arch + "）？\r\n" +
-                "安装包约 30 MB，安装时需要管理员授权。",
-                "@lisp MCP 托盘",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (result != DialogResult.Yes) return;
-
-            InstallNodeFromMirror();
-        }
-
-        private static string DetectNodeArch()
-        {
-            string arch = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "")
-                .ToUpperInvariant();
-            string arch64 = (Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432") ?? "")
-                .ToUpperInvariant();
-            if (arch.IndexOf("ARM64", StringComparison.Ordinal) >= 0 ||
-                arch64.IndexOf("ARM64", StringComparison.Ordinal) >= 0)
-            {
-                return "arm64";
-            }
-            if (Environment.Is64BitOperatingSystem) return "x64";
-            return "x86";
-        }
-
-        private string BuildNodeMsiUrl(string version, string arch)
-        {
-            string mirror = _config.NodeMirror;
-            if (string.IsNullOrEmpty(mirror))
-            {
-                mirror = "https://npmmirror.com/mirrors/node";
-            }
-            // 注意：MSI 的命名没有 "win-"（node-vX.Y.Z-x64.msi），zip 才有（node-vX.Y.Z-win-x64.zip）
-            return mirror.TrimEnd('/') + "/v" + version + "/node-v" + version + "-" + arch + ".msi";
-        }
-
-        /// <summary>
-        /// 下载并安装 Node.js。preferWinget=true（菜单手动触发）时先试 winget：
-        /// winget 的清单带哈希校验、安装包直接来自官方，比托盘自己下载更干净。
-        /// 自动补齐流程仍走 portable zip（免 UAC），失败才降级。
-        /// </summary>
-        private void InstallNodeFromMirror()
-        {
-            InstallNodeFromMirror(false);
-        }
-
-        private void InstallNodeFromMirror(bool preferWinget)
-        {
-            if (preferWinget)
-            {
-                string wingetPath = ProcessRunner.Where("winget.exe");
-                if (!string.IsNullOrEmpty(wingetPath))
-                {
-                    AppLog.Write("node: 手动安装优先使用 winget");
-                    InstallNodeWithWinget();
-                    return;
-                }
-                AppLog.Write("node: 未找到 winget，回退到镜像 MSI");
-            }
-            if (TaskBusy())
-            {
-                Balloon("请稍候", "已有下载/安装任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-
-            string arch = DetectNodeArch();
-            ServerInfo existing = ServerLocator.Resolve(_config, true);
-            if (!string.IsNullOrEmpty(existing.NodePath))
-            {
-                DialogResult confirm = MessageBox.Show(
-                    "检测到已有 Node.js：\r\n" + existing.NodePath + "\r\n\r\n" +
-                    "仍要下载并安装 v" + _config.NodeVersion + "（" + arch + "）吗？\r\n" +
-                    "安装会覆盖现有的 Node.js。",
-                    "@lisp MCP 托盘",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-                if (confirm != DialogResult.Yes) return;
-            }
-
-            string version = _config.NodeVersion;
-            string url = BuildNodeMsiUrl(version, arch);
-            string directory = Paths.DownloadDir;
-            _restartAfterNodeInstall = false;
-            _nodeNeedsReboot = false;
-            string fileName = "node-v" + version + "-" + arch + ".msi";
-            string filePath = Path.Combine(directory, fileName);
-
-            _downloadVersion = version;
-            _downloadArch = arch;
-            _downloadUrl = url;
-            _nodeMsiPath = filePath;
-            _nodeMsiLog = null;
-            _downloadJob = new DownloadJob(url, filePath);
-
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                try { _taskWindow.Close(); } catch { }
-            }
-            OutputForm form = new OutputForm("下载 Node.js v" + version, "", true);
-            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
-            _taskWindow = form;
-            form.Show();
-            form.Append("下载地址：" + url + "\r\n");
-            form.Append("保存到：" + filePath + "\r\n\r\n");
-
-            AppLog.Write("download Node.js " + version + " " + arch + " from " + url);
-            _downloadJob.Start();
-            if (_downloadJob.Finished) PollDownload();
-        }
-
-        private void PollDownload()
-        {
-            DownloadJob job = _downloadJob;
-            if (job == null) return;
-
-            long received = job.Received;
-            long total = job.Total;
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                string status = (_downloadKind == "python"
-                        ? "正在下载 Python v"
-                        : "正在下载 Node.js v") + _downloadVersion +
-                    "（" + _downloadArch + "）：" + FormatBytes(received);
-                if (total > 0)
-                {
-                    status += " / " + FormatBytes(total) + "  " +
-                        (received * 100 / total).ToString(CultureInfo.InvariantCulture) + "%";
-                }
-                _taskWindow.SetStatus(status);
-            }
-
-            if (!job.Finished) return;
-
-            _downloadJob = null;
-            bool success = job.Success;
-            string error = job.Error;
-            string path = job.FilePath;
-            long expected = job.Total;
-            job.Dispose();
-
-            if (!success)
-            {
-                if (_taskWindow != null && !_taskWindow.IsDisposed)
-                {
-                    _taskWindow.Append("\r\n下载失败：" + error + "\r\n");
-                    _taskWindow.SetFinished(false, -1);
-                }
-                if (_downloadKind == "python")
-                {
-                    // Python 下载失败不能走 Node 的降级链（那会去装 Node MSI）
-                    _downloadKind = null;
-                    AppLog.Write("python installer download failed: " + error +
-                        " url=" + _downloadUrl);
-                    if (_dwgKbAutoFlow)
-                    {
-                        ScheduleDwgKbRetry("下载 Python 安装包失败：" + error);
-                    }
-                    else
-                    {
-                        Balloon("下载 Python 失败", error + "\r\n可稍后重试，或手动安装 Python 3.10+。",
-                            ToolTipIcon.Warning);
-                    }
-                    return;
-                }
-                AppLog.Write("Node.js download failed: " + error + " url=" + _downloadUrl);
-                OnNodeDownloadFailed(error);
-                return;
-            }
-
-            long actual = 0;
-            try { actual = new FileInfo(path).Length; } catch { }
-            if (expected > 0 && actual != expected)
-            {
-                string sizeError = "下载文件大小不一致（" + actual + " / " + expected + " 字节）。";
-                if (_taskWindow != null && !_taskWindow.IsDisposed)
-                {
-                    _taskWindow.Append("\r\n" + sizeError + "\r\n");
-                    _taskWindow.SetFinished(false, -1);
-                }
-                if (_downloadKind == "python")
-                {
-                    _downloadKind = null;
-                    if (_dwgKbAutoFlow) ScheduleDwgKbRetry("Python 安装包大小校验失败");
-                    else Balloon("下载 Python 失败", sizeError, ToolTipIcon.Warning);
-                    return;
-                }
-                OnNodeDownloadFailed(sizeError);
-                return;
-            }
-
-            if (_downloadKind == "portable")
-            {
-                string verifyError;
-                if (!DownloadVerifier.VerifyNodeZip(path, _downloadVersion,
-                    _config.NodeMirror, out verifyError))
-                {
-                    AppLog.Write("portable: Node.js 压缩包校验失败 " + verifyError);
-                    try { File.Delete(path); } catch { }
-                    _downloadKind = null;
-                    OnNodeDownloadFailed("下载包校验失败：" + verifyError);
-                    return;
-                }
-                AppLog.Write("portable Node.js downloaded: " + path);
-                _downloadKind = null;
-                _portableJob = new PortableInstallJob(path, Paths.PortableNodeDir);
-                _portableJob.Start();
-                return;
-            }
-
-            if (_downloadKind == "python")
-            {
-                AppLog.Write("python installer downloaded: " + path);
-                _downloadKind = null;
-                if (_taskWindow != null && !_taskWindow.IsDisposed)
-                {
-                    _taskWindow.Append("\r\n下载完成：" + path +
-                        "（" + FormatBytes(actual) + "）\r\n");
-                }
-                StartPythonInstall(path);
-                return;
-            }
-
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.Append("\r\n下载完成：" + path +
-                    "（" + FormatBytes(actual) + "）\r\n");
-                _taskWindow.SetStatus("正在安装 Node.js，请在 UAC 窗口中选择“是”…");
-            }
-            AppLog.Write("Node.js downloaded: " + path);
-            StartNodeMsiInstall(path);
-        }
-
-        private void OnNodeDownloadFailed(string error)
-        {
-            // 自动补齐流程：portable zip 失败后降级到需要 UAC 的安装方式（MSI → winget），
-            // UAC 本身需要用户点一次，这里不再额外询问。只降级一次，避免循环。
-            if (_bootstrapMode)
-            {
-                _downloadKind = null;
-                if (!_msiFallbackTried)
-                {
-                    _msiFallbackTried = true;
-                    AppLog.Write("auto-install: portable 路线失败，改用 MSI 安装 " + error);
-                    InstallNodeFromMirror();
-                    return;
-                }
-                ScheduleAutoInstallRetry();
-                Balloon("自动安装 Node.js 失败",
-                    error + "\r\n\r\n将在稍后自动重试，也可在托盘菜单手动操作。",
-                    ToolTipIcon.Warning);
-                return;
-            }
-            OfferWingetFallback(error);
-        }
-
-        private void OfferWingetFallback(string error)
-        {
-            DialogResult result = MessageBox.Show(
-                "从 npmmirror 下载 Node.js 失败：\r\n" + error +
-                "\r\n\r\n是否改用 winget 安装 Node.js LTS？",
-                "@lisp MCP 托盘",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-            if (result == DialogResult.Yes) InstallNodeWithWinget();
-        }
-
-        private void InstallNodeWithWinget()
-        {
-            string winget = ProcessRunner.Where("winget.exe");
-            if (string.IsNullOrEmpty(winget))
-            {
-                OpenUrl("https://nodejs.org/zh-cn/download");
-                return;
-            }
-
-            _nodeMsiLog = null;
-            _nodeMsiPath = null;
-            _nodeNeedsReboot = false;
-            _restartAfterNodeInstall = IsServerBusy();
-            StopServerForUpdate();
-
-            RunWingetTask(winget,
-                "install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements");
-        }
-
-        private void StartNodeMsiInstall(string msiPath)
-        {
-            if (!File.Exists(msiPath))
-            {
-                ShowError("安装 Node.js 失败", "安装包不存在：" + msiPath);
-                return;
-            }
-
-            // 只执行签名有效的 MSI（来源可验证），校验失败就别把它变成 dropper
-            string signer;
-            string sigError;
-            if (!CodeSignature.Verify(msiPath, out signer, out sigError))
-            {
-                AppLog.Write("node-msi: 签名校验失败 " + sigError + "（" + msiPath + "）");
-                try { File.Delete(msiPath); } catch { }
-                if (_bootstrapMode)
-                {
-                    ScheduleAutoInstallRetry();
-                    Balloon("Node.js 安装包未通过校验",
-                        sigError + "\r\n\r\n稍后自动重试，或改用 winget 安装。",
-                        ToolTipIcon.Warning);
-                }
-                else
-                {
-                    ShowError("Node.js 安装包未通过校验",
-                        "已拒绝执行签名校验失败的安装包：\r\n" + sigError + "\r\n\r\n" +
-                        "安装包：" + msiPath + "\r\n\r\n" +
-                        "可改用 winget（微软会校验清单哈希）：\r\n" +
-                        "  winget install OpenJS.NodeJS.LTS");
-                }
-                return;
-            }
-            if (string.IsNullOrEmpty(signer) ||
-                signer.IndexOf("OpenJS", StringComparison.OrdinalIgnoreCase) < 0)
-            {
-                AppLog.Write("node-msi: 签名主体不是 OpenJS（仍放行，签名本身有效）：" + signer);
-            }
-
-            // 覆盖安装 node.exe 前必须先停止服务，否则 Windows 会锁定正在运行的可执行文件
-            _restartAfterNodeInstall = IsServerBusy();
-            StopServerForUpdate();
-
-            string taskLog = NewTaskLogFile("node-msi-task");
-            string msiLog = NewMsiLogFile();
-            _nodeMsiPath = msiPath;
-            _nodeMsiLog = msiLog;
-
-            LongTask task = new LongTask("安装 Node.js", taskLog);
-            task.AppendLine("安装包：" + msiPath);
-            task.AppendLine("安装日志：" + msiLog);
-
-            string arguments = "/i " + ProcessRunner.Quote(msiPath) +
-                " /qn /norestart /l*v " + ProcessRunner.Quote(msiLog);
-            string error;
-            Process process = ProcessRunner.StartElevatedExecutable(
-                "msiexec.exe", arguments, out error);
-            if (process == null)
-            {
-                task.Dispose();
-                string message = string.IsNullOrEmpty(error) ? "无法启动安装程序。" : error;
-                AppLog.Write("Node.js msiexec start failed: " + message);
-                if (_taskWindow != null && !_taskWindow.IsDisposed)
-                {
-                    _taskWindow.Append("\r\n安装未执行：" + message + "\r\n");
-                    _taskWindow.SetFinished(false, -1);
-                }
-                if (message != "已取消管理员授权")
-                {
-                    ShowError("安装 Node.js 失败", message);
-                }
-                if (_restartAfterNodeInstall)
-                {
-                    _restartAfterNodeInstall = false;
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            _task = task;
-            _taskAction = "node-msi";
-            _restartAfterTask = false;
-            _taskElevated = true;
-            _showTaskWindow = true;
-            task.AttachElevated(process, null);
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.SetStatus("正在安装 Node.js，请稍候…");
-            }
         }
 
         private static string FormatBytes(long bytes)
@@ -7090,63 +4305,9 @@ namespace Atlisp.Tray
             return a == b;
         }
 
-        private void PromptInstallServer()
-        {
-            DialogResult result = MessageBox.Show(
-                "尚未安装 @lisp MCP Server。\r\n\r\n是否现在通过 npm 下载并安装最新版？",
-                "@lisp MCP 托盘",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            if (result != DialogResult.Yes) return;
-            InstallServer();
-        }
-
         private bool TaskBusy()
         {
-            return (_task != null && !_task.Finished) || _downloadJob != null;
-        }
-
-        private void InstallServer()
-        {
-            if (TaskBusy())
-            {
-                Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-            bool shouldRunAfter = !info.IsInstalled || IsServerBusy();
-            // 新的一轮安装：重置「文件被占用」重试计数（否则上一轮的失败会影响本轮）
-            _installStopRetries = 0;
-            // 不在开始时停服务：npm 先下载，真正替换文件时若被占用，失败处理里会停服务重试；
-            // 但半装/残留的包目录同样会挡住 npm 改名，自动安装流程里静默释放一次。
-            if (!EnsurePackageDirFree(info.PackageDir, !_bootstrapMode, shouldRunAfter)) return;
-            RunNpmTask("安装 @lisp MCP Server",
-                NpmRunner.InstallServerArgs(_config),
-                "install", true, shouldRunAfter);
-        }
-
-        private void UpgradeServer()
-        {
-            if (TaskBusy())
-            {
-                Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-            if (!info.IsInstalled)
-            {
-                InstallServer();
-                return;
-            }
-            bool shouldRunAfter = IsServerBusy();
-            // 新的一轮升级：重置「文件被占用」重试计数
-            _installStopRetries = 0;
-            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试），但先探测一次
-            // 包目录是否被别的进程占着——占着就现在处理掉，别等 npm 下完包才 EBUSY。
-            if (!EnsurePackageDirFree(info.PackageDir, true, shouldRunAfter)) return;
-            RunNpmTask("升级 @lisp MCP Server",
-                NpmRunner.InstallServerArgs(_config),
-                "upgrade", true, shouldRunAfter);
+            return _dwgKbBuilding;
         }
 
         private bool IsServerBusy()
@@ -7157,1062 +4318,136 @@ namespace Atlisp.Tray
                    _server.State == ServerState.Error;
         }
 
-        private void StopServerForUpdate()
-        {
-            // Windows 会锁定已加载的 edge-js 原生模块，升级前必须先停止服务
-            if (!IsServerBusy()) return;
-            _suppressNotifications = true;
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                _server.StopSync();
-            }
-            finally
-            {
-                Cursor.Current = Cursors.Default;
-            }
-        }
-
-        /// <summary>
-        /// 释放 npm 包目录上的所有占用，为 `npm install -g` 让路。
-        ///
-        /// npm 替换全局包的方式是把整个包目录改名（`@atlisp/mcp` → `.mcp-XXXXXX`），
-        /// 只要目录里还有进程的 CWD 或已映射的原生模块，Windows 就拒绝改名（EBUSY）。
-        /// 托盘能控制的先停（自己拉起的服务、Windows 服务、自己的 CWD），剩下的
-        /// 只能按「可执行文件路径 / 命令行里带包目录」匹配后结束——那通常是
-        /// MCP 客户端拉起的 server、残留的 cad-worker 或从包目录运行的旧托盘。
-        /// </summary>
-        /// <param name="ask">true 时结束第三方进程前先确认（手动升级）；自动升级静默处理</param>
-        /// <param name="blockers">失败时返回占用清单/原因，可直接展示给用户</param>
-        private bool ReleasePackageDir(string packageDir, bool ask, out string blockers)
-        {
-            blockers = "";
-            if (string.IsNullOrEmpty(packageDir) || !Directory.Exists(packageDir)) return true;
-
-            Cursor.Current = Cursors.WaitCursor;
-            try
-            {
-                return ReleasePackageDirCore(packageDir, ask, out blockers);
-            }
-            finally
-            {
-                Cursor.Current = Cursors.Default;
-            }
-        }
-
-        private bool ReleasePackageDirCore(string packageDir, bool ask, out string blockers)
-        {
-            blockers = "";
-            // 1) 托盘自己拉起的服务：它的 CWD 曾在包目录里，且 edge-js 原生模块已加载
-            if (IsServerBusy()) StopServerForUpdate();
-
-            // 2) 排除托盘自身的 CWD 占用（从包目录启动、自迁移又失败的情况）
-            DetachCurrentDirectory(packageDir);
-
-            // 3) Windows 服务模式：服务进程同样会锁目录
-            try
-            {
-                bool serviceExists;
-                bool serviceRunning;
-                ServiceHelper.Query(out serviceExists, out serviceRunning, true);
-                if (serviceExists && serviceRunning)
-                {
-                    string error = ServiceHelper.Stop();
-                    AppLog.Write("locked: 停止 Windows 服务 " + (error == null ? "成功" : error));
-                    int waited = 0;
-                    while (ServiceHelper.IsRunning() && waited < 15000)
-                    {
-                        Thread.Sleep(300);
-                        waited += 300;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("locked: 停止 Windows 服务失败: " + ex.Message);
-            }
-
-            // 4) 给句柄留一点释放时间（进程结束 / sc stop 都是异步完成的）
-            if (PackageDirLock.WaitFree(packageDir, 2500)) return true;
-
-            // 5) 还有占用：找出来，必要时结束
-            List<LockHolder> holders = PackageDirLock.Find(packageDir);
-            if (holders == null)
-            {
-                AppLog.Write("locked: 无法枚举占用进程（WMI 不可用或被策略限制）");
-                if (PackageDirLock.WaitFree(packageDir, 5000)) return true;
-            }
-            else if (holders.Count > 0)
-            {
-                // 只结束确定属于本包的进程（node / AtlispTray）。
-                // 命令行里刚好带这个路径的编辑器、终端等不碰，交给用户自己关。
-                List<LockHolder> killable = new List<LockHolder>();
-                List<LockHolder> others = new List<LockHolder>();
-                for (int i = 0; i < holders.Count; i++)
-                {
-                    if (IsKillableHolder(holders[i])) killable.Add(holders[i]);
-                    else others.Add(holders[i]);
-                }
-                AppLog.Write("locked: 包目录仍被占用 " + PackageDirLock.DescribeOneLine(holders));
-                if (others.Count > 0)
-                {
-                    AppLog.Write("locked: 不自动结束的占用进程（请用户自己关）: " +
-                        PackageDirLock.DescribeOneLine(others));
-                }
-                if (killable.Count > 0)
-                {
-                    if (ask && !ConfirmEndHolders(packageDir, killable))
-                    {
-                        blockers = PackageDirLock.Describe(holders) +
-                            "（已取消，未结束这些进程）";
-                        return false;
-                    }
-                    PackageDirLock.Kill(killable);
-                    if (PackageDirLock.WaitFree(packageDir, 6000)) return true;
-                }
-            }
-
-            List<LockHolder> remaining = null;
-            if (holders != null && holders.Count > 0) remaining = PackageDirLock.Find(packageDir);
-            blockers = PackageDirLock.Describe(remaining);
-            if (string.IsNullOrEmpty(blockers))
-            {
-                blockers = "未能确定是哪个进程：可能是杀毒软件/索引服务正在扫描该目录，" +
-                    "或者有命令行窗口/编辑器的「当前目录」就在这个目录里。\r\n";
-            }
-            if (IsInsideDir(Application.ExecutablePath, packageDir))
-            {
-                blockers += "托盘正在从包目录运行（" + Application.ExecutablePath +
-                    "），结束托盘后重试，或重新执行一次 atlisp-tray 让它迁移到用户目录。\r\n";
-            }
-            return false;
-        }
-
-        /// <summary>结束第三方占用进程前的确认（手动升级才问）。</summary>
-        private static bool ConfirmEndHolders(string packageDir, List<LockHolder> holders)
-        {
-            string message =
-                "升级需要替换目录：\r\n" + packageDir + "\r\n\r\n" +
-                "但以下进程正在使用它：\r\n" + PackageDirLock.Describe(holders) + "\r\n" +
-                "结束它们才能继续升级。它们多半是 MCP 客户端（Claude Desktop / VSCode / " +
-                "opencode 等）拉起的服务或残留的 node.exe，升级后需要在对应客户端里重启一次 " +
-                "MCP 服务。\r\n\r\n是否结束这些进程并继续升级？";
-            return MessageBox.Show(message, "升级 @lisp MCP Server",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
-        }
-
-        /// <summary>
-        /// 升级前预检：包目录被占用就先释放（手动升级会先问一次），避免把带宽和时间
-        /// 花在一次注定失败的 npm 上（npm 是在安装末尾才去改名包目录的）。
-        /// 返回 false 表示无法释放或用户取消，调用方应直接放弃本轮升级。
-        /// </summary>
-        private bool EnsurePackageDirFree(string packageDir, bool ask, bool restartIfFailed)
-        {
-            if (string.IsNullOrEmpty(packageDir) || !Directory.Exists(packageDir)) return true;
-            // 服务正在启动时不要改名探测（它还在从包目录加载文件）；其余情况先探一下：
-            // 目录真的空闲就不必停服务，npm 一边下载一边照常提供服务。
-            if (_server.State != ServerState.Starting && !PackageDirLock.IsBusy(packageDir))
-            {
-                return true;
-            }
-
-            AppLog.Write("locked: 升级前探测到包目录被占用 dir=" + packageDir);
-            string blockers;
-            if (ReleasePackageDir(packageDir, ask, out blockers)) return true;
-
-            if (!string.IsNullOrEmpty(blockers) &&
-                blockers.IndexOf("已取消", StringComparison.Ordinal) >= 0)
-            {
-                Balloon("升级已取消", "占用的进程保留着，未执行升级。", ToolTipIcon.Info);
-            }
-            else if (!_silent)
-            {
-                ShowError("升级失败：包目录被占用",
-                    PackageDirBusyMessage(packageDir, blockers, false));
-            }
-            else
-            {
-                AppLog.Write("upgrade: 包目录被占用，稍后重试");
-            }
-            if (restartIfFailed) _server.RestartAsync();
-            return false;
-        }
-
-        /// <summary>包目录无法替换时给用户看的说明（对话框文本）。</summary>
-        private static string PackageDirBusyMessage(string packageDir, string blockers,
-            bool retriesExhausted)
-        {
-            return
-                "npm 无法替换包目录（EBUSY / 文件被占用）。\r\n\r\n" +
-                (string.IsNullOrEmpty(packageDir) ? "" : "目录：" + packageDir + "\r\n\r\n") +
-                (string.IsNullOrEmpty(blockers)
-                    ? (retriesExhausted
-                        ? "已重试 " + InstallStopMaxRetries + " 次，目录仍不可替换。\r\n\r\n"
-                        : "托盘已经停掉自己启动的服务并等待句柄释放，但仍未能释放该目录。\r\n\r\n")
-                    : "仍然占用该目录：\r\n" + blockers + "\r\n") +
-                "处理办法（任选其一）：\r\n" +
-                "1) 关闭占用它的程序（MCP 客户端 / 旧版托盘 / 残留 node.exe）后，" +
-                "在托盘菜单里重试升级；\r\n" +
-                "2) 或关掉托盘后在命令行执行：\r\n" +
-                "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
-                "查看谁在占用：任务管理器 → 详细信息，找 node.exe / AtlispTray.exe，" +
-                "\r\n" +
-                "  右键「打开文件所在位置」，确认路径是否在 @atlisp\\mcp 目录内。";
-        }
-
-        /// <summary>
-        /// 是否是可以直接结束的占用者：本包的 node 进程（server / cad-worker）、
-        /// 包内托盘。别的程序（编辑器、终端）哪怕命令行里带这个路径也不动。
-        /// </summary>
-        private static bool IsKillableHolder(LockHolder holder)
-        {
-            if (holder == null) return false;
-            string name = holder.Name ?? "";
-            if (name.IndexOf("node", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            if (name.IndexOf("atlisp", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            return false;
-        }
-
-        /// <summary>
-        /// 托盘自己的当前目录如果在包目录里，Windows 会一直锁着包目录。切到临时目录即可释放。
-        /// </summary>
-        private static void DetachCurrentDirectory(string packageDir)
-        {
-            try
-            {
-                string cwd = Directory.GetCurrentDirectory();
-                if (!IsInsideDir(cwd, packageDir)) return;
-                string temp = Path.GetTempPath();
-                Directory.SetCurrentDirectory(temp);
-                AppLog.Write("locked: 托盘当前目录在包目录内，已切到 " + temp);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("locked: 切换工作目录失败: " + ex.Message);
-            }
-        }
-
-        private static bool IsInsideDir(string path, string dir)
-        {
-            if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(dir)) return false;
-            try
-            {
-                string full = Path.GetFullPath(path).TrimEnd('\\');
-                string root = Path.GetFullPath(dir).TrimEnd('\\');
-                return full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         private void CheckUpdate(bool silentCheck)
         {
-            CheckUpdate(silentCheck, false);
-        }
-
-        private void CheckUpdate(bool silentCheck, bool autoUpgrade)
-        {
-            RunNpmTask("检查更新",
-                NpmRunner.WithRegistry(_config, "view @atlisp/mcp version"),
-                autoUpgrade ? "check-auto" : (silentCheck ? "check-silent" : "check"),
-                false, false);
-        }
-
-        /// <summary>
-        /// 定时检查更新（AutoUpgrade，默认每小时一次）：发现新版本直接静默升级。
-        /// 启动 20 秒后才开始首轮，避免和自动补齐环境/首轮健康检查抢线程。
-        /// </summary>
-        private void MaybeAutoUpgrade()
-        {
-            if (!_config.AutoUpgrade) return;
-            if (TaskBusy()) return;
-
-            DateTime now = DateTime.UtcNow;
-            if (_nextUpdateCheckAt == DateTime.MinValue &&
-                (now - _createdAt).TotalSeconds < 20)
+            if (_updateChecking) return;
+            _updateChecking = true;
+            bool silent = silentCheck;
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                return;
-            }
-            if (now < _nextUpdateCheckAt) return;
-
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
-            _nextUpdateCheckAt = now.AddHours(hours);
-            AppLog.Write("auto-upgrade: 开始检查 @lisp/mcp 新版本");
-            CheckUpdate(true, true);
-        }
-
-        /// <summary>
-        /// 自动升级：和手动升级一样走 npm 全局安装，但不弹任务窗口、不询问 UAC。
-        /// 服务运行中会先停止，升级完成后再重启（见 HandleTaskSuccess）。
-        /// </summary>
-        private void AutoUpgradeServer()
-        {
-            if (TaskBusy()) return;
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-            if (!info.IsInstalled) return;
-            bool shouldRunAfter = IsServerBusy();
-            _installStopRetries = 0;
-            // 不在开始时停服务（见 HandleTaskFailure 里的文件占用重试）；
-            // 自动升级静默释放占用（不弹确认框），失败就留给下一轮。
-            if (!EnsurePackageDirFree(info.PackageDir, false, shouldRunAfter)) return;
-            RunNpmTask("自动升级 @lisp MCP Server",
-                NpmRunner.InstallServerArgs(_config),
-                "upgrade-auto", false, shouldRunAfter);
-        }
-
-        /// <summary>
-        /// 升级 @lisp/mcp 成功后，如果新版本的托盘与当前运行的托盘不同，
-        /// 启动 atlisp-tray（等本进程退出后下载/校验/拉起）并退出。
-        /// 托盘自己**不下载、不替换 exe**。
-        /// </summary>
-        private bool TryApplyTraySelfUpdate(ServerInfo info, bool startServerAfter)
-        {
-            string message;
-            if (!TraySelfUpdate.TryStartLauncherUpdate(info, startServerAfter, out message))
-            {
-                if (!string.IsNullOrEmpty(message))
+                // 只读一次 registry 元数据：不再 spawn npm，也不下载/执行任何东西。
+                string latest = null;
+                string error = null;
+                try
                 {
-                    AppLog.Write("tray-update: " + message);
-                    if (!_silent)
+                    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
+                        "https://registry.npmjs.org/@atlisp%2Fmcp/latest");
+                    request.UserAgent = "atlisp-tray/" + Program.AppVersion;
+                    request.Timeout = 15000;
+                    request.ReadWriteTimeout = 15000;
+                    request.AutomaticDecompression =
+                        DecompressionMethods.GZip | DecompressionMethods.Deflate;
+                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                    using (Stream stream = response.GetResponseStream())
+                    using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
                     {
-                        Balloon("托盘未能自动更新",
-                            message + "\r\n可退出托盘后运行 atlisp-tray 更新。",
-                            ToolTipIcon.Warning);
+                        Match match = Regex.Match(reader.ReadToEnd(),
+                            "\"version\"\\s*:\\s*\"([^\"]+)\"");
+                        if (match.Success) latest = match.Groups[1].Value.Trim();
                     }
+                    if (string.IsNullOrEmpty(latest)) error = "npm registry 返回内容里没有版本号";
                 }
-                return false;
-            }
-
-            AppLog.Write("tray-update: " + message);
-            if (!_silent)
-            {
-                Balloon("托盘更新", "正在退出，由 atlisp-tray 安装新版本…", ToolTipIcon.Info);
-            }
-            _restartForSelfUpdate = true;
-            _uiTimer.Stop();
-            ExitApplication();
-            return true;
-        }
-
-        private void RunWingetTask(string wingetPath, string arguments)
-        {
-            if (_task != null && !_task.Finished) return;
-            string logFile = NewTaskLogFile("winget");
-            LongTask task = new LongTask("安装 Node.js", logFile);
-            Process process = ProcessRunner.Create(
-                wingetPath, arguments, Encoding.UTF8, null,
-                delegate(object sender, DataReceivedEventArgs e)
+                catch (Exception ex)
                 {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                },
-                delegate(object sender, DataReceivedEventArgs e)
+                    error = ex.Message;
+                }
+
+                _updateChecking = false;
+                if (error != null)
                 {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                });
-            if (process == null)
-            {
-                ShowError("安装 Node.js", "无法启动 winget。");
-                return;
-            }
-
-            _task = task;
-            _taskAction = "node";
-            _restartAfterTask = false;
-            _taskElevated = false;
-            _showTaskWindow = true;
-            task.Attach(process);
-            ShowTaskWindow("安装 Node.js", task);
-        }
-
-        private void RunNpmTask(string title, string arguments, string action,
-            bool showWindow, bool restartAfter)
-        {
-            if (TaskBusy())
-            {
-                Balloon("请稍候", "已有下载/更新任务正在进行。", ToolTipIcon.Info);
-                return;
-            }
-
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-            if (string.IsNullOrEmpty(info.NodePath) && string.IsNullOrEmpty(info.NpmPath))
-            {
-                if (action == "check-silent" || action == "check-auto")
-                {
-                    AppLog.Write("定时检查更新失败：未检测到 Node.js/npm");
+                    AppLog.Write("检查更新失败" + (silent ? "（启动时静默）" : "") + ": " + error);
+                    if (!silent)
+                    {
+                        _updateBalloonTitle = "检查更新失败";
+                        _updateBalloonText = error;
+                        _updateBalloonIcon = ToolTipIcon.Warning;
+                        _updateBalloonPending = true;
+                    }
                     return;
                 }
-                PromptInstallNode();
-                return;
-            }
 
-            string logFile = NewTaskLogFile("npm");
-            LongTask task = new LongTask(title, logFile);
-            if (arguments != null &&
-                arguments.IndexOf("--ignore-scripts", StringComparison.Ordinal) >= 0)
-            {
-                task.AppendLine("提示：未检测到 .NET SDK（dotnet），已跳过 npm 安装脚本。" +
-                    "edge-js 原生文件会在安装完成后自动补齐，不影响使用。");
-            }
-            Process process = NpmRunner.Create(_config, info, arguments,
-                delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                },
-                delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null) task.AppendLine(e.Data);
-                });
-            if (process == null)
-            {
-                task.Dispose();
-                ShowError(title, "找不到可用的 npm，请检查 Node.js 安装。");
-                return;
-            }
-
-            _task = task;
-            _taskAction = action;
-            _restartAfterTask = restartAfter;
-            _taskElevated = false;
-            _showTaskWindow = showWindow;
-            // 静默任务不要把输出追加到上一次遗留的窗口里
-            if (!showWindow) _taskWindow = null;
-            task.Attach(process);
-            if (showWindow) ShowTaskWindow(title, task);
-            else if (action != "check-silent" && action != "check-auto")
-            {
-                Balloon(title, "正在执行，请稍候…", ToolTipIcon.Info);
-            }
-        }
-
-        private void RetryElevated(string title, string action, bool restartAfter)
-        {
-            // 自动补齐流程里不再多问一次，直接弹 UAC（UAC 本身需要用户点“是”）
-            if (!_bootstrapMode)
-            {
-                DialogResult result = MessageBox.Show(
-                    "当前用户没有写入全局 npm 目录的权限。\r\n\r\n是否以管理员身份重试？" +
-                    "\r\n（会弹出 Windows UAC 授权窗口）",
-                    "@lisp MCP 托盘",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question);
-                if (result != DialogResult.Yes) return;
-            }
-
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-            string arguments = action == "upgrade" || action == "install"
-                ? NpmRunner.InstallServerArgs(_config)
-                : NpmRunner.WithRegistry(_config, "view @atlisp/mcp version");
-            string commandLine = NpmRunner.BuildCommandLine(info, arguments);
-            if (string.IsNullOrEmpty(commandLine))
-            {
-                ShowError(title, "找不到可用的 npm，请检查 Node.js 安装。");
-                return;
-            }
-
-            string logFile = NewTaskLogFile("npm-elevated");
-            LongTask task = new LongTask(title + "（管理员）", logFile);
-            string error;
-            Process process = ProcessRunner.StartElevated(commandLine, logFile, out error);
-            if (process == null)
-            {
-                task.Dispose();
-                if (!string.IsNullOrEmpty(error) && error != "已取消管理员授权")
-                {
-                    ShowError(title, error);
-                }
-                else if (_bootstrapMode)
-                {
-                    // 用户主动取消了 UAC，停止自动重试以免反复弹窗
-                    AppLog.Write("auto-install: 用户取消了 UAC 授权，停止自动安装");
-                    _autoInstallDone = true;
-                    Balloon("自动安装已取消",
-                        "管理员授权被取消，未能完成 @lisp/mcp 安装。\r\n可在托盘菜单手动重试。",
-                        ToolTipIcon.Warning);
-                }
-                return;
-            }
-
-            _task = task;
-            _taskAction = action;
-            _restartAfterTask = restartAfter;
-            _taskElevated = true;
-            _showTaskWindow = true;
-            task.AttachElevated(process, logFile);
-            ShowTaskWindow(title + "（管理员）", task);
-        }
-
-        private void PollTask()
-        {
-            LongTask task = _task;
-            if (task == null) return;
-
-            string chunk = task.Drain();
-            if (!string.IsNullOrEmpty(chunk) && _taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.Append(chunk);
-            }
-
-            if (!task.Poll()) return;
-
-            chunk = task.Drain();
-            if (!string.IsNullOrEmpty(chunk) && _taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.Append(chunk);
-            }
-
-            int exitCode = task.ExitCode;
-            string output = task.Output;
-            string action = _taskAction;
-            bool restartAfter = _restartAfterTask;
-            bool elevated = _taskElevated;
-            bool showWindow = _showTaskWindow;
-
-            // MSI 的 3010/1641 表示安装成功但需要重启
-            bool success = exitCode == 0 || exitCode == 3010 || exitCode == 1641;
-            _nodeNeedsReboot = action == "node-msi" && (exitCode == 3010 || exitCode == 1641);
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                _taskWindow.SetFinished(success, exitCode);
-            }
-
-            _task = null;
-            _taskAction = null;
-            _taskWindow = null;
-            task.Dispose();
-
-            if (success)
-            {
-                HandleTaskSuccess(action, output, restartAfter, showWindow);
-            }
-            else
-            {
-                HandleTaskFailure(action, output, elevated, showWindow, restartAfter, exitCode);
-            }
-        }
-
-        private void HandleTaskSuccess(string action, string output, bool restartAfter, bool showWindow)
-        {
-            if (action != null &&
-                (action.StartsWith("dwgkb-install", StringComparison.Ordinal) ||
-                 action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal)))
-            {
-                bool auto = action.EndsWith("-auto", StringComparison.Ordinal);
-                bool upgraded = action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal);
-                PythonLocator.Invalidate();
-                PythonInfo after = PythonLocator.Resolve(_config, true);
-                lock (_dwgKbLock) { _dwgKbPython = after; }
-
-                _dwgKbTaskFailures = 0;
-                _dwgKbTaskRetryAt = DateTime.MinValue;
-                _dwgKbStopRetries = 0;
-                _dwgKbAutoFlow = false;
-
-                bool restart = _dwgKbRestartAfterUpgrade;
-                bool startFresh = _dwgKbAutoStartAfterInstall;
-                _dwgKbRestartAfterUpgrade = false;
-                _dwgKbAutoStartAfterInstall = false;
-                string versionBefore = _dwgKbVersionBefore;
-                _dwgKbVersionBefore = null;
-                bool changed = upgraded && after.HasPackage &&
-                    !string.Equals(after.PackageVersion, versionBefore,
-                        StringComparison.OrdinalIgnoreCase);
-
-                if (auto)
-                {
-                    if (upgraded && !changed)
-                    {
-                        AppLog.Write("dwg-kb auto: 已是最新 " +
-                            (after.HasPackage ? after.PackageVersion : "?"));
-                    }
-                    else
-                    {
-                        AppLog.Write("dwg-kb auto: " + (upgraded ? "升级" : "安装") +
-                            "完成 " + (after.HasPackage ? after.PackageVersion : "?"));
-                    }
-                }
-                else
-                {
-                    string title;
-                    string body;
-                    if (!upgraded)
-                    {
-                        title = "知识库已安装";
-                        body = (after.HasPackage ? "atlisp-dwg-kb " + after.PackageVersion
-                            : "安装完成");
-                    }
-                    else if (changed)
-                    {
-                        title = "知识库已升级";
-                        body = "atlisp-dwg-kb " + after.PackageVersion;
-                    }
-                    else
-                    {
-                        // pip 说 "Requirement already satisfied" 时不要把「没变」说成升级成功
-                        title = "知识库已是最新";
-                        body = "atlisp-dwg-kb " +
-                            (after.HasPackage ? after.PackageVersion : versionBefore) +
-                            " 已是 PyPI 上的最新版本";
-                    }
-                    Balloon(title, body +
-                        "。\r\n本地启动：atlisp-dwg-kb serve（或在「设置知识库地址」里指向已有的知识库服务）。",
-                        ToolTipIcon.Info);
-                }
-
-                // 升级前停过服务 → 恢复；自动流程安装完成 → 按配置拉起；
-                // 手动安装且开了自动启动 → 也顺手拉起，语义一致。
-                if (restart || (startFresh && _config.DwgKbAutoStart) ||
-                    (!auto && _config.DwgKbAutoStart &&
-                     DwgKbServer.IsLocalUrl(_config.DwgKbUrl)))
-                {
-                    StartDwgKbService(auto);
-                }
-                UpdateDwgKbUi();
-                RefreshDwgKbStatus(true);
-                return;
-            }
-
-            ServerLocator.Invalidate();
-            ServerInfo info = ServerLocator.Resolve(_config, true);
-
-            // 没有 .NET SDK 时安装用 --ignore-scripts 跳过了 edge-js 的安装脚本，
-            // 这里补上它本该做的事（复制 VC 运行时 DLL）；正常安装时是幂等空操作。
-            if (action == "install" || action == "upgrade" || action == "upgrade-auto")
-            {
-                _installStopRetries = 0;
-                AppLog.Write("edge-js: " + EdgeNativeSupport.Repair(info));
-            }
-
-            if (action == "check" || action == "check-silent" || action == "check-auto")
-            {
-                bool autoCheck = action == "check-auto";
-                string latest = VersionUtil.Extract(output);
                 _latestVersion = latest;
-                if (latest == null)
+                ServerInfo info = ServerLocator.Resolve(_config, false);
+                bool newer = VersionUtil.IsNewer(latest, info.Version);
+                AppLog.Write("检查更新: 最新 v" + latest + "，本机 " +
+                    (info.IsInstalled ? info.VersionText : "未安装"));
+                if (!silent || newer)
                 {
-                    if (showWindow) return;
-                    if (!autoCheck)
-                    {
-                        Balloon("检查更新", "无法解析 npm 返回的版本号。", ToolTipIcon.Warning);
-                    }
-                    else
-                    {
-                        AppLog.Write("auto-upgrade: 无法解析 npm 返回的版本号");
-                    }
-                    return;
+                    _updateBalloonTitle = newer
+                        ? "发现新版本 v" + latest
+                        : "已是最新版本";
+                    _updateBalloonText = newer
+                        ? "本机 " + (info.IsInstalled ? info.VersionText : "未安装") +
+                          "。升级方式见菜单「更新与安装 → 如何升级…」。"
+                        : "当前已是最新版本。";
+                    _updateBalloonIcon = newer ? ToolTipIcon.Info : ToolTipIcon.None;
+                    _updateBalloonPending = true;
                 }
-                AppLog.Write("latest version: " + latest);
-                if (!info.IsInstalled)
-                {
-                    if (!_silent && !autoCheck)
-                    {
-                        Balloon("尚未安装",
-                            "@lisp MCP Server v" + latest +
-                            " 可用。右键托盘图标 → “下载并安装 @lisp MCP Server”。",
-                            ToolTipIcon.Info);
-                    }
-                    UpdateUi();
-                    return;
-                }
-                if (VersionUtil.IsNewer(latest, info.Version))
-                {
-                    if (autoCheck)
-                    {
-                        AppLog.Write("auto-upgrade: 发现新版本 " + latest +
-                            "（当前 " + info.VersionText + "），开始自动升级");
-                        if (!_silent)
-                        {
-                            Balloon("正在自动升级",
-                                "@lisp MCP Server v" + latest + " 已发布（当前 " +
-                                info.VersionText + "），正在后台升级。",
-                                ToolTipIcon.Info);
-                        }
-                        AutoUpgradeServer();
-                    }
-                    else
-                    {
-                        Balloon("发现新版本",
-                            "@lisp MCP Server v" + latest + " 可用（当前 " + info.VersionText + "）。" +
-                            "右键托盘图标 → 升级到最新版。",
-                            ToolTipIcon.Info);
-                    }
-                }
-                else if (!string.IsNullOrEmpty(info.Version) && action == "check")
-                {
-                    Balloon("已是最新版本", "当前版本 " + info.VersionText + "。", ToolTipIcon.Info);
-                }
-                UpdateUi();
-                return;
-            }
-
-            if (action == "upgrade-auto")
-            {
-                if (!string.IsNullOrEmpty(info.Version))
-                {
-                    _latestVersion = info.Version;
-                }
-                AppLog.Write("auto-upgrade: 已升级到 " + info.VersionText);
-                if (!_silent)
-                {
-                    Balloon("自动升级完成", "已升级到 " + info.VersionText + "。", ToolTipIcon.Info);
-                }
-                ServerLocator.Invalidate();
-                if (TryApplyTraySelfUpdate(info, restartAfter))
-                {
-                    return;
-                }
-                if (restartAfter)
-                {
-                    _server.RestartAsync();
-                }
-                UpdateUi();
-                return;
-            }
-
-            if (action == "install" || action == "upgrade")
-            {
-                if (!string.IsNullOrEmpty(info.Version))
-                {
-                    _latestVersion = info.Version;
-                }
-                Balloon("安装完成",
-                    (action == "install" ? "已安装 " : "已升级到 ") + info.VersionText + "。",
-                    ToolTipIcon.Info);
-
-                if (TryApplyTraySelfUpdate(info, restartAfter || _config.AutoStartServer))
-                {
-                    return;
-                }
-                if (restartAfter)
-                {
-                    _server.RestartAsync();
-                }
-                else if (_config.AutoStartServer)
-                {
-                    try { _server.Start(); } catch (Exception ex) { AppLog.Write("安装后启动失败: " + ex.Message); }
-                }
-                ServerLocator.Invalidate();
-                _autoInstallDone = true;
-                _autoInstallFailures = 0;
-                _bootstrapMode = false;
-                UpdateUi();
-                return;
-            }
-
-            if (action == "node" || action == "node-msi")
-            {
-                ServerLocator.Invalidate();
-                ServerInfo after = ServerLocator.Resolve(_config, true);
-                bool restart = _restartAfterNodeInstall;
-                _restartAfterNodeInstall = false;
-
-                string message;
-                if (_nodeNeedsReboot)
-                {
-                    message = "安装完成，需要重启电脑后生效。";
-                }
-                else if (string.IsNullOrEmpty(after.NodePath))
-                {
-                    message = "安装完成，但暂未检测到 Node.js。请重启托盘或检查 NodePath 配置。";
-                }
-                else
-                {
-                    message = "已检测到 Node.js：" + after.NodePath;
-                }
-                Balloon("Node.js 安装完成", message, ToolTipIcon.Info);
-
-                if (restart && !string.IsNullOrEmpty(after.NodePath))
-                {
-                    _server.RestartAsync();
-                }
-                else if (!string.IsNullOrEmpty(after.NodePath) && after.IsInstalled &&
-                    _config.AutoStartServer)
-                {
-                    try { _server.Start(); } catch (Exception ex) { AppLog.Write(ex.Message); }
-                }
-                else if (!string.IsNullOrEmpty(after.NodePath) && !after.IsInstalled)
-                {
-                    if (_bootstrapMode) InstallServer();
-                    else PromptInstallServer();
-                }
-                UpdateUi();
-            }
+            });
         }
 
-        private void HandleTaskFailure(string action, string output, bool elevated,
-            bool showWindow, bool restartAfter, int exitCode)
+        private void ShowInstallNodeHelp()
         {
-            string text = output ?? "";
-            AppLog.Write("task failed action=" + action + " exitCode=" + exitCode +
-                " output=" + Tail(text, 2000));
-
-            if (action != null &&
-                (action.StartsWith("dwgkb-install", StringComparison.Ordinal) ||
-                 action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal)))
-            {
-                bool auto = action.EndsWith("-auto", StringComparison.Ordinal);
-                bool upgraded = action.StartsWith("dwgkb-upgrade", StringComparison.Ordinal);
-
-                // 现在升级不再提前停服务；pip 真正替换被占用的 .pyd/.dll 时会报
-                // PermissionError / WinError 32，这时才停知识库并重试一次。
-                if (_dwgKbStopRetries < 1 && LooksLikeFileLock(text))
-                {
-                    _dwgKbStopRetries++;
-                    string stopError = null;
-                    if (DwgKbServer.IsRunning() && DwgKbServer.Stop(out stopError))
-                    {
-                        _dwgKbRestartAfterUpgrade = true;
-                        AppLog.Write("dwg-kb: 替换文件被占用，停止知识库后重试");
-                    }
-                    else
-                    {
-                        AppLog.Write("dwg-kb: 替换文件被占用，停止知识库未成功（继续重试）: " +
-                            (stopError ?? "服务未运行"));
-                    }
-                    PythonInfo retryInfo = PythonLocator.Resolve(_config, false);
-                    lock (_dwgKbLock) { _dwgKbPython = retryInfo; }
-                    RunPipTask(retryInfo,
-                        upgraded ? "升级知识库（PyPI）" : "安装知识库（PyPI）", action, !auto);
-                    return;
-                }
-
-                // 自动升级失败：知识库可能在升级前被停掉了，先按旧版本恢复服务
-                if (auto && _dwgKbRestartAfterUpgrade)
-                {
-                    _dwgKbRestartAfterUpgrade = false;
-                    StartDwgKbService(true);
-                }
-                // pip 失败最常见的原因：网络（PyPI 超时）或 Python 安装缺 pip
-                string hint = text.IndexOf("Could not find a version", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    text.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    text.IndexOf("ProxyError", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    text.IndexOf("Connection", StringComparison.OrdinalIgnoreCase) >= 0
-                    ? "看起来是网络问题。可换用国内镜像重试：\r\n" +
-                      "  python -m pip install --upgrade atlisp-dwg-kb -i https://pypi.tuna.tsinghua.edu.cn/simple"
-                    : "详细输出见任务窗口或 logs 目录下的 pip-*.log。";
-                if (auto)
-                {
-                    ScheduleDwgKbRetry("pip 退出码 " + exitCode + "（" +
-                        (upgraded ? "升级" : "安装") + "知识库）");
-                    return;
-                }
-                ShowError(upgraded ? "升级知识库失败" : "安装知识库失败",
-                    "pip 退出码 " + exitCode + "\r\n\r\n" + hint);
-                Balloon("知识库安装失败", "pip 退出码 " + exitCode, ToolTipIcon.Warning);
-                return;
-            }
-
-            // 升级/安装不再一开始就停服务：npm 真正替换包目录时才会撞上 Windows 文件锁
-            // （EBUSY / EPERM + rename）。命中后释放包目录占用再重试（见 ReleasePackageDir）。
-            bool npmFileLock = LooksLikeFileLock(text) &&
-                (action == "install" || action == "upgrade" || action == "upgrade-auto");
-            if (npmFileLock)
-            {
-                _installStopRetries++;
-                bool autoUpgrade = action == "upgrade-auto";
-                bool wasRunning = IsServerBusy();
-                ServerInfo lockInfo = ServerLocator.Resolve(_config, false);
-                string pkgDir = lockInfo == null ? "" : lockInfo.PackageDir;
-                AppLog.Write("upgrade: 替换文件被占用（第 " + _installStopRetries + "/" +
-                    InstallStopMaxRetries + " 次），开始释放包目录 dir=" + pkgDir);
-
-                string blockers;
-                bool released = ReleasePackageDir(pkgDir, !autoUpgrade, out blockers);
-                if (released && _installStopRetries <= InstallStopMaxRetries)
-                {
-                    AppLog.Write("upgrade: 包目录已释放，重新执行 npm install（原服务" +
-                        (wasRunning ? "已停止，升级后重启" : "未运行") + "）");
-                    RunNpmTask(autoUpgrade
-                            ? "自动升级 @lisp MCP Server"
-                            : "升级 @lisp MCP Server",
-                        NpmRunner.InstallServerArgs(_config), action, showWindow, wasRunning);
-                    return;
-                }
-
-                AppLog.Write("upgrade: 包目录仍被占用 dir=" + pkgDir + " exitCode=" + exitCode);
-                bool cancelled = !string.IsNullOrEmpty(blockers) &&
-                    blockers.IndexOf("已取消", StringComparison.Ordinal) >= 0;
-                if (cancelled)
-                {
-                    Balloon("升级已取消", "占用的进程保留着，未执行升级。", ToolTipIcon.Info);
-                }
-                else if (!_silent && !autoUpgrade)
-                {
-                    ShowError("升级失败：包目录被占用",
-                        PackageDirBusyMessage(pkgDir, blockers,
-                            _installStopRetries > InstallStopMaxRetries));
-                }
-                else
-                {
-                    AppLog.Write("upgrade: 包目录被占用，稍后重试");
-                    Balloon("升级失败：包目录被占用",
-                        "有进程在用 @atlisp/mcp 目录，关闭 MCP 客户端或托盘后重试。",
-                        ToolTipIcon.Warning);
-                }
-                if (restartAfter)
-                {
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            if (action == "node-msi")
-            {
-                StringBuilder message = new StringBuilder();
-                message.AppendLine("msiexec 退出码：" + exitCode);
-                if (!string.IsNullOrEmpty(_nodeMsiLog))
-                {
-                    message.AppendLine("安装日志：" + _nodeMsiLog);
-                }
-                if (!string.IsNullOrEmpty(_nodeMsiPath))
-                {
-                    message.AppendLine("安装包：" + _nodeMsiPath);
-                }
-                message.AppendLine();
-                message.AppendLine("可尝试手动以管理员身份运行安装包，或改用 winget 安装。");
-                if (_bootstrapMode)
-                {
-                    ScheduleAutoInstallRetry();
-                    Balloon("自动安装 Node.js 失败",
-                        "msiexec 退出码：" + exitCode + "\r\n\r\n将在稍后自动重试。",
-                        ToolTipIcon.Warning);
-                }
-                else
-                {
-                    ShowError("安装 Node.js 失败", message.ToString().Trim());
-                }
-                if (_restartAfterNodeInstall)
-                {
-                    _restartAfterNodeInstall = false;
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            bool permissionError =
-                text.IndexOf("EPERM", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("EACCES", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("permission denied", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("Access is denied", StringComparison.OrdinalIgnoreCase) >= 0;
-
-            if (permissionError && !elevated &&
-                (action == "install" || action == "upgrade" || action == "check"))
-            {
-                RetryElevated(
-                    action == "upgrade" ? "升级 @lisp MCP Server" : "安装 @lisp MCP Server",
-                    action,
-                    restartAfter);
-                return;
-            }
-
-            if (action == "check-silent")
-            {
-                AppLog.Write("启动时检查更新失败（已静默）");
-                return;
-            }
-
-            if (action == "check-auto")
-            {
-                AppLog.Write("auto-upgrade: 检查更新失败，将在下一次定时检查时重试");
-                return;
-            }
-
-            if (action == "upgrade-auto")
-            {
-                AppLog.Write("auto-upgrade: 升级失败 exitCode=" + exitCode +
-                    " output=" + Tail(text, 2000));
-                if (!_silent)
-                {
-                    Balloon("自动升级失败",
-                        LastLines(text, 3) + "\r\n\r\n将在下一次定时检查时重试。",
-                        ToolTipIcon.Warning);
-                }
-                if (restartAfter)
-                {
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            // edge-js 安装脚本在没有 .NET SDK 的机器上会 spawn dotnet 失败。正常路径
-            // 已用 --ignore-scripts 规避（见 EdgeNativeSupport），走到这里说明兜底没生效，
-            // 直接给出可复制的命令，避免用户对着 "退出码 1" 发呆。
-            bool dotnetScriptFailure =
-                text.IndexOf("spawn dotnet", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                (text.IndexOf("tools/install.js", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                 text.IndexOf("ENOENT", StringComparison.OrdinalIgnoreCase) >= 0);
-            if (dotnetScriptFailure && !_bootstrapMode && !elevated &&
-                (action == "install" || action == "upgrade"))
-            {
-                AppLog.Write("安装失败：edge-js 安装脚本找不到 dotnet（--ignore-scripts 兜底未生效）");
-                ShowError("安装失败：缺少 .NET SDK",
-                    "edge-js 的 npm 安装脚本会调用 dotnet 构建 CoreCLR bootstrap，" +
-                    "本机没有 .NET SDK 时报 spawn dotnet ENOENT。\r\n\r\n" +
-                    "请关闭托盘后在命令行执行：\r\n" +
-                    "  npm install -g @atlisp/mcp --ignore-scripts\r\n\r\n" +
-                    LastLines(text, 6));
-                if (restartAfter)
-                {
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            string detail = LastLines(text, 12);
-
-            // 自动补齐流程：按退避重试，不打扰用户
-            if (_bootstrapMode)
-            {
-                ScheduleAutoInstallRetry();
-                Balloon("自动安装未成功",
-                    LastLines(text, 3) + "\r\n\r\n将在稍后自动重试，也可在托盘菜单手动操作。",
-                    ToolTipIcon.Warning);
-                if (_restartAfterNodeInstall)
-                {
-                    _restartAfterNodeInstall = false;
-                    _server.RestartAsync();
-                }
-                return;
-            }
-
-            ShowError("操作失败", string.IsNullOrEmpty(detail) ? "命令执行失败，请查看日志。" : detail);
-
-            // 预检/重试时可能已经把服务停了（为了释放包目录），失败后要把旧版本的服务拉回来
-            if ((action == "install" || action == "upgrade") && restartAfter)
-            {
-                _server.RestartAsync();
-            }
-            if (action == "node" && _restartAfterNodeInstall)
-            {
-                _restartAfterNodeInstall = false;
-                _server.RestartAsync();
-            }
+            MessageBox.Show(
+                "托盘不再自动下载、安装或执行外部安装包。\r\n\r\n" +
+                "请自行安装 Node.js（建议 LTS），任选一种：\r\n\r\n" +
+                "  winget install OpenJS.NodeJS.LTS\r\n\r\n" +
+                "或从 https://nodejs.org/zh-cn/download 下载安装包。\r\n\r\n" +
+                "装好后右键托盘 →「重新加载配置」，或重启托盘。",
+                "@lisp MCP 托盘 - 安装 Node.js",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
-        /// <summary>
-        /// 安装/升级失败输出里是否包含「本地文件被占用」的特征（Windows 文件锁）。
-        /// 升级流程默认不停服务，只有命中这些特征时才停服务并重试一次。
-        /// </summary>
-        private static bool LooksLikeFileLock(string text)
+        private void ShowInstallServerHelp()
         {
-            if (string.IsNullOrEmpty(text)) return false;
-            bool lockPhrase =
-                text.IndexOf("EBUSY", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("resource busy", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("WinError 32", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("PermissionError", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("另一个程序正在使用", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("正在使用此文件", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                text.IndexOf("文件被占用", StringComparison.OrdinalIgnoreCase) >= 0;
-            // npm 在 Windows 上替换被加载的文件时常见 EPERM + unlink/rename，
-            // 单看 EPERM 会和「权限不足」混淆，所以只在伴随删除/改名时算文件锁。
-            bool epermOnReplace =
-                text.IndexOf("EPERM", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                (text.IndexOf("unlink", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 text.IndexOf("rename", StringComparison.OrdinalIgnoreCase) >= 0);
-            return lockPhrase || epermOnReplace;
+            string command = "npm install -g @atlisp/mcp@latest";
+            MessageBox.Show(
+                "托盘不再自动下载、安装或执行外部安装包。\r\n\r\n" +
+                "请在命令行执行：\r\n\r\n  " + command + "\r\n\r\n" +
+                "若机器上没有 .NET SDK，追加 --ignore-scripts 可跳过 edge-js 的编译脚本：\r\n\r\n" +
+                "  " + command + " --ignore-scripts\r\n\r\n" +
+                "装好后右键托盘 →「重新加载配置」，或重启托盘。",
+                "@lisp MCP 托盘 - 安装 @lisp MCP Server",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private void ShowUpgradeHelp()
+        {
+            ServerInfo info = ServerLocator.Resolve(_config, false);
+            string command = "npm install -g @atlisp/mcp@latest";
+            MessageBox.Show(
+                (string.IsNullOrEmpty(_latestVersion)
+                    ? "先点「检查更新」看看有没有新版本。\r\n\r\n"
+                    : "最新版本：v" + _latestVersion + "（本机 " +
+                      (info.IsInstalled ? info.VersionText : "未安装") + "）\r\n\r\n") +
+                "托盘不再代替你下载和执行安装包。请自行在命令行执行：\r\n\r\n  " +
+                command + "\r\n\r\n" +
+                "若机器上没有 .NET SDK，追加 --ignore-scripts。\r\n" +
+                "装好后右键托盘 →「重新加载配置」，或重启托盘。",
+                "@lisp MCP 托盘 - 升级",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private void ShowInstallDwgKbHelp()
+        {
+            PythonInfo info = PythonLocator.Resolve(_config, false);
+            string python = info.HasPython ? info.PythonPath : "python";
+            string text =
+                "托盘不再自动下载、安装或执行外部安装包。\r\n\r\n";
+            if (!info.HasPython)
+            {
+                text += "未检测到 Python 3.10+。请先自行安装，例如：\r\n\r\n" +
+                    "  winget install Python.Python.3.12\r\n\r\n" +
+                    "或从 https://www.python.org/downloads/ 下载。\r\n\r\n";
+            }
+            text += "然后执行（建议加国内镜像参数）：\r\n\r\n  " + python +
+                " -m pip install --upgrade atlisp-dwg-kb\r\n\r\n" +
+                "装好后在本菜单点「刷新状态」，再点「启动知识库服务」。";
+            MessageBox.Show(text, "@lisp MCP 托盘 - 安装知识库",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private static string Tail(string text, int maxLength)
@@ -8234,34 +4469,6 @@ namespace Atlisp.Tray
                 builder.AppendLine(lines[i]);
             }
             return builder.ToString().Trim();
-        }
-
-        private string NewTaskLogFile(string prefix)
-        {
-            Directory.CreateDirectory(Paths.LogDir);
-            return Path.Combine(Paths.LogDir,
-                prefix + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
-        }
-
-        private string NewMsiLogFile()
-        {
-            Directory.CreateDirectory(Paths.LogDir);
-            return Path.Combine(Paths.LogDir,
-                "node-msi-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
-        }
-
-        private void ShowTaskWindow(string title, LongTask task)
-        {
-            if (_taskWindow != null && !_taskWindow.IsDisposed)
-            {
-                try { _taskWindow.Close(); } catch { }
-            }
-            OutputForm form = new OutputForm(title, "", true);
-            form.FormClosed += delegate { if (_taskWindow == form) _taskWindow = null; };
-            _taskWindow = form;
-            form.Show();
-            string initial = task.Drain();
-            if (!string.IsNullOrEmpty(initial)) form.Append(initial);
         }
 
         private void ToggleTrayAutostart()
@@ -8286,71 +4493,6 @@ namespace Atlisp.Tray
             _config.AutoStartServer = !_config.AutoStartServer;
             _config.Save();
             UpdateUi();
-        }
-
-        private void ToggleAutoInstall()
-        {
-            _config.AutoInstall = !_config.AutoInstall;
-            _config.Save();
-            if (_config.AutoInstall)
-            {
-                // 重新开启时重置所有开关，否则本进程内的自动补齐不会恢复
-                _autoInstallDone = false;
-                _autoStartAttempted = false;
-                _portableNodeAttempted = false;
-                _msiFallbackTried = false;
-                _autoInstallFailures = 0;
-                _autoInstallRetryAt = DateTime.MinValue;
-                SaveBootstrapState();
-            }
-            else
-            {
-                // 关闭后停止当前进程里的自动重试；已装好的依赖和服务不受影响
-                _autoInstallDone = true;
-                _portableNodeAttempted = true;
-            }
-            UpdateUi();
-            Balloon("自动补齐运行环境",
-                _config.AutoInstall
-                    ? "开启：缺少 Node.js 或 @lisp/mcp 时会自动下载安装。"
-                    : "关闭：缺少依赖时只提示，需要手动从菜单安装。",
-                ToolTipIcon.Info);
-        }
-
-        private void ToggleAutoUpgrade()
-        {
-            _config.AutoUpgrade = !_config.AutoUpgrade;
-            _config.Save();
-            // 重新开启时立即按新周期重新计时（20 秒启动宽限仍生效）
-            _nextUpdateCheckAt = DateTime.MinValue;
-            _startupUpdateChecked = _config.AutoUpgrade;
-            UpdateUi();
-
-            int hours = _config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24;
-            Balloon("定时自动检查并升级",
-                _config.AutoUpgrade
-                    ? "开启：每 " + hours + " 小时检查一次 @lisp/mcp 新版本，发现后自动升级。"
-                    : "关闭：不再自动检查/升级，可在“更新与安装”里手动操作。",
-                ToolTipIcon.Info);
-        }
-
-        private void ToggleMirror()
-        {
-            if (string.IsNullOrEmpty(_config.NpmRegistry))
-            {
-                _config.NpmRegistry = "https://registry.npmmirror.com";
-            }
-            else
-            {
-                _config.NpmRegistry = "";
-            }
-            _config.Save();
-            UpdateUi();
-            Balloon("npm 源",
-                string.IsNullOrEmpty(_config.NpmRegistry)
-                    ? "已恢复使用 npm 默认源。"
-                    : "已切换到 npmmirror 镜像：" + _config.NpmRegistry,
-                ToolTipIcon.Info);
         }
 
         private void ReloadConfig()
@@ -8378,12 +4520,7 @@ namespace Atlisp.Tray
             _activePort = _config.Port;
             ServerLocator.Invalidate();
             _health.SetPort(_config.Port);
-            // 定时自动升级按新配置重新计时
-            _nextUpdateCheckAt = DateTime.MinValue;
-            _startupUpdateChecked = _config.AutoUpgrade;
-            // 知识库的自动启动/自动升级也重新计时
-            _nextDwgKbCheckAt = DateTime.MinValue;
-            _dwgKbTaskRetryAt = DateTime.MinValue;
+            _startupUpdateChecked = false;
             _dwgKbAutoStartAttempted = false;
 
             if (restart)
@@ -8426,20 +4563,10 @@ namespace Atlisp.Tray
             builder.AppendLine("端口         : " + _config.Port);
             builder.AppendLine("托盘自启     : " + (AutostartHelper.IsEnabled() ? "已启用" : "未启用"));
             builder.AppendLine("启动时启服务 : " + (_config.AutoStartServer ? "是" : "否"));
-            builder.AppendLine("自动补齐环境 : " + (_config.AutoInstall ? "开" : "关") + BootstrapStateText());
-            builder.AppendLine("自动升级     : " +
-                (_config.AutoUpgrade
-                    ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时检查并升级"
-                    : "关"));
-            builder.AppendLine("npm 源       : " +
-                (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
             builder.AppendLine("知识库地址   : " + _config.DwgKbUrl);
-            builder.AppendLine("知识库自动   : " + (_config.DwgKbAutoStart ? "随托盘启动" : "手动启动") +
-                " / " + (_config.DwgKbAutoUpgrade ? "自动升级" : "不自动升级"));
+            builder.AppendLine("知识库自动   : " + (_config.DwgKbAutoStart ? "随托盘启动" : "手动启动"));
             PythonInfo python = PythonLocator.Resolve(_config, false);
             builder.AppendLine("知识库环境   : " + (python == null ? "检测中" : python.RuntimeText));
-            builder.AppendLine("知识库最新版 : " +
-                (string.IsNullOrEmpty(_dwgKbLatestVersion) ? "未检查" : "v" + _dwgKbLatestVersion));
             builder.AppendLine();
             builder.AppendLine("Node.js      : " + (string.IsNullOrEmpty(info.NodePath) ? "未检测到" : info.NodePath));
             if (Directory.Exists(Paths.PortableNodeDir))
@@ -8479,20 +4606,6 @@ namespace Atlisp.Tray
             form.Show();
         }
 
-        private string BootstrapStateText()
-        {
-            if (_autoInstallDone) return "（环境已就绪）";
-            if (_autoInstallFailures >= AutoInstallMaxFailures) return "（已重试 " +
-                _autoInstallFailures + " 次，停止自动重试）";
-            if (_bootstrapMode) return "（进行中…）";
-            if (DateTime.UtcNow < _autoInstallRetryAt)
-            {
-                return "（退避至 " + _autoInstallRetryAt.ToLocalTime()
-                    .ToString("HH:mm:ss") + "）";
-            }
-            return "";
-        }
-
         private static string FormatUptime(double seconds)
         {
             if (seconds <= 0) return "未知";
@@ -8515,10 +4628,9 @@ namespace Atlisp.Tray
                 "服务版本：" + info.VersionText + "\r\n" +
                 "端口：" + _config.Port + "\r\n\r\n" +
                 "双击托盘图标打开 https://atlisp.cn/agent/chat；\r\n" +
-                "右键菜单可启动/停止服务、\r\n" +
-                "检查更新、升级、安装以及设置开机自启。\r\n" +
-                "托盘随 @lisp/mcp 自动升级（默认每小时检查一次）；\r\n" +
-                "知识库（atlisp-dwg-kb）同样自动安装、自动升级、异常自愈。\r\n\r\n" +
+                "右键菜单可启动/停止服务、检查更新、设置开机自启。\r\n" +
+                "托盘不代下载、不代安装：缺 Node.js / Python / 包时只显示命令。\r\n" +
+                "升级托盘请退出后重新运行 atlisp-tray。\r\n\r\n" +
                 "项目主页：https://gitee.com/atlisp",
                 "关于 @lisp MCP 托盘",
                 MessageBoxButtons.OK,
@@ -8619,17 +4731,7 @@ namespace Atlisp.Tray
 
         private void ExitApplication()
         {
-            if (TaskBusy())
-            {
-                DialogResult result = MessageBox.Show(
-                    "正在下载/更新，退出托盘不会中断该操作。\r\n\r\n确定要退出吗？",
-                    "@lisp MCP 托盘",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question);
-                if (result != DialogResult.Yes) return;
-            }
-
-            if (_config.StopServerOnExit && !_restartForSelfUpdate)
+            if (_config.StopServerOnExit)
             {
                 // 退出时必须同步等待停止完成，否则后台线程会随进程一起结束
                 _server.StopSync();
@@ -8644,16 +4746,6 @@ namespace Atlisp.Tray
                 try { _currentIcon.Dispose(); } catch { }
                 _currentIcon = null;
             }
-            if (_task != null)
-            {
-                try { _task.Dispose(); } catch { }
-                _task = null;
-            }
-            if (_downloadJob != null)
-            {
-                try { _downloadJob.Dispose(); } catch { }
-                _downloadJob = null;
-            }
             ExitThread();
         }
 
@@ -8667,11 +4759,6 @@ namespace Atlisp.Tray
                 try { _server.Dispose(); } catch { }
                 try { _uiTimer.Dispose(); } catch { }
                 try { _menu.Dispose(); } catch { }
-                if (_downloadJob != null)
-                {
-                    try { _downloadJob.Dispose(); } catch { }
-                    _downloadJob = null;
-                }
                 if (_currentIcon != null)
                 {
                     try { _currentIcon.Dispose(); } catch { }

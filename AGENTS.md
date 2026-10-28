@@ -71,9 +71,9 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
   `spawn dotnet build`（CoreCLR bootstrap），没装 .NET SDK 的机器会以
   `Error: spawn dotnet ENOENT` 让 `npm install -g @atlisp/mcp` 退出码 1。因此依赖**锁在
   24.0.5**（最后一个带 dotnet 探测的版本，`lib/edge.js` 与 25.0.1 完全一致，只少 Node 25
-  预编译原生文件）。升级 edge-js 前先确认上游修了这个脚本；兜底逻辑仍保留：托盘
-  `EdgeNativeSupport.InstallArgs()/Repair()`、`install.ps1` 的 `Repair-EdgeNative` 在检测不到
-  `dotnet` 时用 `--ignore-scripts` 安装，并把 VC 运行时 DLL 复制到
+  预编译原生文件）。升级 edge-js 前先确认上游修了这个脚本；兜底逻辑保留在
+  `install.ps1` 的 `Repair-EdgeNative`：检测不到 `dotnet` 时用 `--ignore-scripts` 安装，
+  并把 VC 运行时 DLL 复制到
   `edge-js/lib/native/win32/<arch>/<node-abi>/`（安装脚本本该做的唯一有用步骤）
 
 ### CAD 侧生成 LISP 的硬约束（踩过的坑）
@@ -257,8 +257,7 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `src/trigger-engine.js` | 触发器引擎：CAD 变更事件注册/等待 |
 | `src/webhook-engine.js` | Webhook 引擎：事件驱动 HTTP 回调，持久化到 `~/.atlisp/webhooks.json` |
 | `src/html/*.html` | UI 模板：API 文档、调试面板、Playground（`__KEY__` 占位符） |
-| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、检查更新/定时自动升级、按 manifest 判断托盘更新（交给 atlisp-tray 执行，不自我替换）、知识库（Python）自动安装/升级/自愈、Node.js 安装（zip 校 SHA256 / MSI 校签名 / 手动优先 winget）、日志/面板、自启动（单文件 C# 5，见 `tray/README.md`） |
-| `tray/CodeSign.cs` | `WinVerifyTrust` 封装：校验下载到的安装包与托盘 exe 的 Authenticode 签名 |
+| `tray/AtlispTray.cs` | Windows 托盘管理工具：启停服务、只读检查更新、知识库启停/自愈、日志/面板、自启动。**不具备下载/安装/解压/枚举进程能力**（缺依赖只显示命令），端口→PID 用 `GetExtendedTcpTable`（不用 netstat/WMI），单文件 C# 5，见 `tray/README.md` |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
 | `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小 + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成 |
