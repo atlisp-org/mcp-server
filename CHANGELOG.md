@@ -2,7 +2,15 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.19] - 2026-10-28
+
+### 更新内容
+
+- chore: 重新发布——1.12.18 因 npm registry bug（issue npm/cli#9889）卡死在 staged 队列未能上线，版本号不可复用；内容与 1.12.18 相同（fix(tray)：去掉自动下载安装、WMI 与 netstat，托盘只做管理 (c316d08)）
+
 ## [1.12.18] - 2026-10-28
+
+> 注：该版本被 npm registry 卡死在 staged 队列，实际未发布到 npm（以 1.12.19 为准）。
 
 ### 更新内容
 
