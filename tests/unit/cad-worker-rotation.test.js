@@ -131,6 +131,19 @@ describe('worker 轮换计数（外部请求计算，内部请求不计）', () 
     expect(logError.mock.calls.filter((c) => String(c[0]).includes('轮换'))).toHaveLength(0);
   });
 
+  it('轮换时把旧 worker 上的在途请求立即失败，不等超时', async () => {
+    const oldWorker = worker;
+    // 另一个还在等回话的请求（模拟并发探测/命令）
+    const pending = dispatch({ type: 'send', code: '(princ 2)' });
+    expect(pending.entry._worker).toBe(oldWorker);
+    expect(conn._pendingRequests.size).toBe(1);
+
+    conn._rotateWorker(oldWorker);
+
+    expect(conn._pendingRequests.size).toBe(0);
+    await expect(pending.promise).rejects.toThrow('Worker rotated');
+  });
+
   it('心跳/内部请求不计入轮换计数，也不会触发轮换', () => {
     conn._rotateWorker = vi.fn();
 

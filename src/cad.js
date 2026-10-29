@@ -672,6 +672,17 @@ class CadConnection {
   _rotateWorker(oldWorker) {
     // 清除轮换标记：旧 worker 上可能仍有在途请求，避免它们再次触发轮换
     oldWorker._needsRotation = false;
+    /* 轮换不是故障：把仍挂在旧 worker 上的在途请求立即失败。
+       否则旧 worker 的 exit 处理器会因为 _primaryWorker 已经被替换而提前 return，
+       这些请求只能干等到自己的超时（命令 30s、探测 5s）——高频轮换时表现为
+       偶发的「命令超时」和心跳误判。 */
+    for (const [id, entry] of this._pendingRequests) {
+      if (entry._worker !== oldWorker) continue;
+      clearTimeout(entry.timeout);
+      entry._skipCb = true;
+      this._pendingRequests.delete(id);
+      entry.reject(new Error('Worker rotated'));
+    }
     // 优雅地关闭旧 worker
     try {
       oldWorker.connected = false;
