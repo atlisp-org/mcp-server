@@ -41,6 +41,14 @@ const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
 // 可配置：高频调用场景调大可以减少 worker 冷启动（CLR 初始化）次数。
 const MAX_REQUESTS_PER_WORKER = config.workerMaxRequests ?? 100;
 
+// 探测类消息：只回答「worker/CAD 现在是什么状态」，不是业务请求。
+// 超时不计熔断、不触发熔断 OPEN 时的自动恢复——否则 CAD 阻塞期间托盘/监控的
+// 高频探测（/health ping、isBusy 等）会把熔断器打到 OPEN，自动恢复反复杀 worker、
+// 打断在途命令（心跳探测同样是 noCircuitBreaker=true，语义一致）。
+const PROBE_MESSAGE_TYPES = new Set([
+  'ping', 'isBusy', 'hasdoc', 'healthCheck', 'getActiveDocInfo', 'startMonitor',
+]);
+
 const MAX_BUFFER_SIZE = 8 * 1024 * 1024;
 
 const _docChangeCallbacks = [];
@@ -132,8 +140,8 @@ class CadConnection {
   /** 文档轮询是否在途（worker 串行，避免轮询排到命令后面叠加超时） */
   _docPollInFlight = false;
   _docPollCooldownUntil = 0;
-  /** 上一次心跳触发的自动重启时间（限频用） */
-  _lastHeartbeatResetAt = 0;
+  /** 上一次 worker 重置时间（限频用：CAD 阻塞时反复杀 worker 无助于恢复） */
+  _lastWorkerResetAt = 0;
   /** @type {string|null} */
   _connectionId = null;
   /** @type {NodeJS.Timeout[]} */
@@ -191,7 +199,7 @@ class CadConnection {
         this._clearStall();
         setCadConnected(true);
         this._activeDocName = null;
-        this._lastHeartbeatResetAt = 0;
+        this._lastWorkerResetAt = 0;
         this._commandQueue.enableBatcher();
         this._startMonitor();
         callPluginHook('onCadConnected', { platform: result.platform, version: result.version });
@@ -589,9 +597,15 @@ class CadConnection {
   }
 
   _resetWorker() {
-    for (const { reject, timeout } of this._pendingRequests.values()) {
-      clearTimeout(timeout);
-      reject(new Error('Worker reset'));
+    // 统一在这里打时间戳：心跳重置、熔断自动恢复、重启调度等所有重置路径
+    // 共用同一个限频窗口，避免 CAD 阻塞时被多路逻辑连续杀 worker。
+    this._lastWorkerResetAt = Date.now();
+    for (const entry of this._pendingRequests.values()) {
+      clearTimeout(entry.timeout);
+      // 重置是恢复动作而不是故障：被打断的在途请求不计熔断（与 exit 处理器一致），
+      // 否则一次重置就会把熔断器重新推回 OPEN
+      entry._skipCb = true;
+      entry.reject(new Error('Worker reset'));
     }
     this._pendingRequests.clear();
     this._commandQueue.clear();
@@ -738,15 +752,14 @@ class CadConnection {
       if (consecutiveFailures < 3) return;
 
       const now = Date.now();
-      const sinceLastReset = now - self._lastHeartbeatResetAt;
-      if (self._lastHeartbeatResetAt && sinceLastReset < HEARTBEAT_RESET_COOLDOWN) {
+      const sinceLastReset = now - self._lastWorkerResetAt;
+      if (self._lastWorkerResetAt && sinceLastReset < HEARTBEAT_RESET_COOLDOWN) {
         const waitSec = Math.ceil((HEARTBEAT_RESET_COOLDOWN - sinceLastReset) / 1000);
         logWarn(`[${self._connectionId}] worker 连续 ${consecutiveFailures} 次无响应，但 ${waitSec}s 内已重启过，暂不重启（CAD 可能停在模态对话框或长命令中）`);
         return;
       }
 
       logError(`[${self._connectionId}] heartbeat failed ${consecutiveFailures} times, resetting worker`);
-      self._lastHeartbeatResetAt = now;
       self._resetWorker();
       consecutiveFailures = 0;
     };
@@ -842,7 +855,27 @@ class CadConnection {
   }
 
   async _sendMessage(msg) {
+    /* 探测类消息直通（noCircuitBreaker）：不参与熔断计数，也不触发下面的
+       自动恢复。探测超时的语义是「现在没答话」，不等于「worker 死亡」。 */
+    if (PROBE_MESSAGE_TYPES.has(msg.type)) {
+      return withSpan(`cad.${msg.type}`, { 'cad.msg_type': msg.type }, () =>
+        this._sendMessageInternal(msg, true)
+      );
+    }
     if (!this._cb.allowRequest()) {
+      const sinceLastReset = Date.now() - (this._lastWorkerResetAt || 0);
+      if (this._lastWorkerResetAt && sinceLastReset < HEARTBEAT_RESET_COOLDOWN) {
+        // 冷却期内不重复杀 worker：CAD 停在模态对话框/长命令里时，杀 worker 不能
+        // 让它恢复，只会把在途请求一起打断。快速失败，把重试决策交给上层
+        // （与心跳的重置限频共用同一窗口）。
+        const remainMs = HEARTBEAT_RESET_COOLDOWN - sinceLastReset;
+        throw new MCPError(
+          ERROR_CODES.CAD_BUSY,
+          `CAD 无响应且处于恢复冷却期（剩余约 ${Math.ceil(remainMs / 1000)}s）：` +
+          '请检查 CAD 是否停在对话框/长命令中，处理后重试，或打开新 CAD 实例继续任务',
+          { remainingMs: remainMs }
+        );
+      }
       // 自愈动作：重置熔断器 + 重建 worker，不属于新的故障
       logWarn(`[${this._connectionId}] Circuit breaker OPEN, auto-recovering...`);
       this._cb.reset();
@@ -884,9 +917,15 @@ class CadConnection {
         if (p) {
           self._pendingRequests.delete(requestId);
           if (p.timeout !== timeout) clearTimeout(p.timeout);
-          if (!noCircuitBreaker) self._cb.recordFailure();
-          if (!noCircuitBreaker && msg.type !== 'ping') {
-            self._markStalled(t('cad.stallTimeout', [msg.type, effectiveTimeout]));
+          if (!noCircuitBreaker) {
+            self._cb.recordFailure();
+            // 只计一次：reject 包装器还会再计，跳过它，否则每次超时等于两次失败，
+            // 熔断阈值实际减半（5 次阈值 ≈ 2-3 次真实超时就 OPEN）
+            p._skipCb = true;
+          }
+          // 按被 reject 条目自身的语义决定错误类型（见 entry 的 _probe/_msgType 注释）
+          if (!p._probe && p._msgType !== 'ping') {
+            self._markStalled(t('cad.stallTimeout', [p._msgType || msg.type, effectiveTimeout]));
             p.reject(self._stallError());
             return;
           }
@@ -922,6 +961,12 @@ class CadConnection {
         _startedAt: Date.now(),
         // 记录归属 worker：读 worker 退出时只清理自己的在途请求
         _worker: w,
+        // 超时回调 reject 的是「当前 map 中同一 requestId 的条目」。requestId 重复时
+        // （测试 mock 恒定 UUID）那可能是另一条消息的条目，错误语义必须跟随被
+        // reject 的条目本身（探测条目→普通超时，真实命令→标记停滞），
+        // 而不是跟随触发定时器的闭包消息
+        _probe: noCircuitBreaker,
+        _msgType: msg.type,
       };
       self._pendingRequests.set(requestId, entry);
       try {
@@ -1007,6 +1052,7 @@ export function resolveCadConnection() {
  *   _reset(): void,
  *   _getQueueSize(): number,
  *   _getRestartCount(): number,
+ *   _hasCommandInFlight(): boolean,
  * }}
  */
 export const cad = {
@@ -1046,6 +1092,7 @@ export const cad = {
   _reset(reason) { return _resolveConn()._reset(reason); },
   _getQueueSize() { return _resolveConn()._getQueueSize(); },
   _getRestartCount() { return _resolveConn()._getRestartCount(); },
+  _hasCommandInFlight() { return _resolveConn()._hasCommandInFlight(); },
 };
 
 /** @typedef {typeof CadConnection.prototype} CadConnectionInstance */

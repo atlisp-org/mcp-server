@@ -248,6 +248,45 @@ describe('健康与文档路由', () => {
     expect(r.json.cad.responseTime).toBeGreaterThanOrEqual(0);
   });
 
+  it('真实命令在途（worker 正忙）时 /health 立即返回 busy，不排 ping', async () => {
+    cadMock.connected = true;
+    cadMock._hasCommandInFlight = vi.fn(() => true);
+    const pingCallsBefore = cadMock.ping.mock.calls.length;
+    try {
+      const t0 = Date.now();
+      const r = await req('/health');
+      const elapsed = Date.now() - t0;
+      expect(r.status).toBe(200);
+      expect(r.json.cad.status).toBe('busy');
+      expect(r.json.cad.probed).toBe(false);
+      expect(cadMock.ping.mock.calls.length).toBe(pingCallsBefore);
+      // 不排队探测：应在毫秒级返回，而不是等 fast probe 超时
+      expect(elapsed).toBeLessThan(500);
+    } finally {
+      delete cadMock._hasCommandInFlight;
+    }
+  });
+
+  it('CAD 阻塞（ping 永不返回）时 /health 在 fast probe 超时内有界返回', async () => {
+    cadMock.connected = true;
+    cadMock._hasCommandInFlight = vi.fn(() => false);
+    cadMock.ping.mockImplementationOnce(() => new Promise(() => {})); // 永不 resolve
+    process.env.HEALTH_FAST_PROBE_MS = '100';
+    try {
+      const t0 = Date.now();
+      const r = await req('/health');
+      const elapsed = Date.now() - t0;
+      expect(r.status).toBe(200);
+      expect(r.json.cad.status).toBe('timeout');
+      expect(r.json.cad.probed).toBe(true);
+      // 上限 ≈ fast probe 超时，远小于托盘 2s 的 HTTP 超时
+      expect(elapsed).toBeLessThan(1500);
+    } finally {
+      delete process.env.HEALTH_FAST_PROBE_MS;
+      delete cadMock._hasCommandInFlight;
+    }
+  });
+
   it('GET /health/full 包含 heap 限制信息', async () => {
     const r = await req('/health/full');
     expect(r.status).toBe(200);

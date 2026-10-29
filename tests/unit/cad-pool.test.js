@@ -150,6 +150,41 @@ describe('CadConnectionPool', () => {
     expect(pool['_instances'].get('retry').connection).toBe(conn);
     expect(release).toHaveBeenCalledTimes(2);
   });
+
+  it('healthCheck: 实例 ping 探测超时有界返回，保持原状态、不误判重连', async () => {
+    const fakeConn = {
+      // 永不 resolve：模拟 worker 卡在 COM 调用里（CAD 阻塞）
+      ping: () => new Promise(() => {}),
+      disconnect: async () => {},
+    };
+    pool['_instances'].set('stuck', {
+      key: 'stuck',
+      connection: fakeConn,
+      connected: true,
+      platform: 'AutoCAD',
+      label: 'stuck',
+      lastPing: 0,
+      autoReconnect: true,
+    });
+    const scheduleSpy = vi.spyOn(pool, '_scheduleReconnect');
+
+    vi.useFakeTimers();
+    try {
+      const p = pool.healthCheck();
+      // POOL_HEALTH_PING_TIMEOUT_MS 默认 5000（config mock 未配 heartbeatPingTimeout）
+      await vi.advanceTimersByTimeAsync(5000 + 10);
+      const results = await p;
+      expect(results).toHaveLength(1);
+      expect(results[0].probeTimedOut).toBe(true);
+      // 探测超时 ≠ 实例死亡：保持原有 connected 状态，不触发重连
+      expect(results[0].connected).toBe(true);
+      expect(scheduleSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      scheduleSpy.mockRestore();
+      pool['_instances'].delete('stuck');
+    }
+  });
 });
 
 describe('cad delegation wrapper', () => {

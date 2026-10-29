@@ -10,6 +10,10 @@ const POOL_STRATEGIES = {
   MANUAL: 'manual',
 };
 
+// 池健康检查的 ping 探测上限：worker 卡死时 ping 最长可等 MESSAGE_TIMEOUT(60s)，
+// 逐实例串行 await 会把整个健康检查拖得超过任何合理超时，按实例限住探测时长。
+const POOL_HEALTH_PING_TIMEOUT_MS = config.heartbeatPingTimeout || 5000;
+
 class CadConnectionPool {
   _instances = new Map();
   _maxPoolSize = 3;
@@ -285,14 +289,25 @@ class CadConnectionPool {
   async healthCheck() {
     const results = [];
     let anyConnected = false;
+    const PING_TIMEOUT = Symbol('pool-ping-timeout');
     for (const [key, entry] of this._instances) {
       try {
-        const pingOk = await entry.connection.ping();
-        entry.connected = pingOk;
+        const r = await Promise.race([
+          Promise.resolve(entry.connection.ping()).then(v => Boolean(v)).catch(() => false),
+          new Promise(resolve => setTimeout(() => resolve(PING_TIMEOUT), POOL_HEALTH_PING_TIMEOUT_MS)),
+        ]);
+        if (r === PING_TIMEOUT) {
+          // 探测超时 ≠ 实例死亡（CAD 可能只是忙/慢）：保持原有状态、不触发重连，
+          // 只在结果里标注，避免对忙碌实例做误判
+          results.push({ key, connected: entry.connected, platform: entry.platform, label: entry.label, probeTimedOut: true });
+          if (entry.connected) anyConnected = true;
+          continue;
+        }
+        entry.connected = r;
         entry.lastPing = Date.now();
-        if (pingOk) anyConnected = true;
-        results.push({ key, connected: pingOk, platform: entry.platform, label: entry.label });
-        if (!pingOk && entry.autoReconnect) {
+        if (r) anyConnected = true;
+        results.push({ key, connected: r, platform: entry.platform, label: entry.label });
+        if (!r && entry.autoReconnect) {
           this._scheduleReconnect(key);
         }
       } catch (e) {

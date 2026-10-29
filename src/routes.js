@@ -254,10 +254,13 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
         let probeTimedOut = false;
 
         const queueSize = cad._getQueueSize ? cad._getQueueSize() : 0;
+        /* 命令出队后 pending 仍在 worker 侧执行时队列为空但 CAD 正忙：
+           此时再发 ping 只会排队等当前命令结束（必然超时），直接按“忙碌”返回。 */
+        const commandInFlight = cad._hasCommandInFlight ? cad._hasCommandInFlight() : false;
         if (cad.connected || wantProbe) {
-            /* 忙时（队列非空）或已有 ping 在途时不排队探测：直接按“忙碌”返回，
-               保证 /health 的响应时间远小于托盘 2s 的 HTTP 超时。 */
-            probeSkipped = !wantProbe && (queueSize > 0 || healthProbeInFlight);
+            /* 忙时（队列非空、真实命令在途）或已有 ping 在途时不排队探测：
+               直接按“忙碌”返回，保证 /health 的响应时间远小于托盘 2s 的 HTTP 超时。 */
+            probeSkipped = !wantProbe && (queueSize > 0 || commandInFlight || healthProbeInFlight);
             if (!probeSkipped) {
                 const t0 = Date.now();
                 const envTimeout = Number(process.env.HEALTH_PROBE_TIMEOUT_MS) > 0
@@ -290,7 +293,7 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
             }
         }
         const cadStatus = probeSkipped
-            ? (queueSize > 0 ? 'busy' : 'unknown')
+            ? ((queueSize > 0 || commandInFlight) ? 'busy' : 'unknown')
             : probeOk === true ? 'ready' : probeOk === false ? 'down' : probeTimedOut ? 'timeout' : 'unknown';
 
         const memUsage = process.memoryUsage();

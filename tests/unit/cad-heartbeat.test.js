@@ -162,7 +162,7 @@ describe('CAD 心跳：区分「忙」与「死」', () => {
     conn._primaryWorker = makeLiveWorker();
     conn._sendMessageInternal = vi.fn().mockRejectedValue(new Error('Timeout waiting for worker'));
     conn._resetWorker = vi.fn();
-    conn._lastHeartbeatResetAt = Date.now();
+    conn._lastWorkerResetAt = Date.now();
     conn._startHeartbeat();
 
     await vi.advanceTimersByTimeAsync(INTERVAL * 3 + 10);
