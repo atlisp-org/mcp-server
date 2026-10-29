@@ -13,7 +13,7 @@ vi.mock('crypto', () => ({
 
 const mockWorker = {
   connected: true,
-  stdin: { write: vi.fn() },
+  stdin: { write: vi.fn(), on: vi.fn() },
   stdout: { on: vi.fn(), off: vi.fn() },
   stderr: { on: vi.fn() },
   kill: vi.fn(),

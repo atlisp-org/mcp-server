@@ -14,7 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { cad, onDocumentChanged } from './cad.js';
 import { installAtlispConnectHook } from './atlisp-bootstrap.js';
 import {  SERVER_NAME, BUILD_META } from './constants.js';
-import { log, error as logError, closeLog, setLoggingNotify } from './logger.js';
+import { log, error as logError, warn as logWarn, closeLog, setLoggingNotify } from './logger.js';
 import {  clearCache, RESOURCES } from './handlers/resource-handlers.js';
 import * as subMgr from './subscription-manager.js';
 import { sessionManager } from './subscription-manager.js';
@@ -47,6 +47,27 @@ enableConsoleTimestamp();
 // 兜底：CommandQueue 清理/去重、worker 重置等产生的 promise rejection 不应杀死服务器进程
 process.on('unhandledRejection', (reason) => {
   try { logError?.('[atlisp-mcp] unhandledRejection:', reason?.message || reason); } catch { /* 兜底 handler 自身异常忽略 */ }
+});
+
+/* 兜底：漏网的同步异常也不应该让常驻服务直接消失。
+   Node 默认行为是打印栈后退出进程（exit 1），长时间运行时（worker 崩溃后的
+   管道错误、网络抖动、第三方原生模块）很容易踩到；而托盘/服务管理器只会把状态
+   标成 Error，不会自动拉起，用户看到的就是「跑久了就退出」。
+   这里记录完整栈（可随错误上报回传）后继续运行；管道对端关闭一类的良性错误
+   只记 WARN，避免刷 ERROR。 */
+const BENIGN_UNCAUGHT_CODES = new Set([
+  'EPIPE', 'ECONNRESET', 'ECANCELED', 'ERR_STREAM_DESTROYED',
+  'ERR_STREAM_WRITE_AFTER_END', 'ERR_STREAM_PREMATURE_CLOSE',
+]);
+process.on('uncaughtException', (err) => {
+  try {
+    const code = err?.code;
+    if (code && BENIGN_UNCAUGHT_CODES.has(code)) {
+      logWarn?.('[atlisp-mcp] uncaughtException(已忽略):', code);
+    } else {
+      logError?.('[atlisp-mcp] uncaughtException:', err?.stack || err?.message || String(err));
+    }
+  } catch { /* 兜底 handler 自身异常忽略 */ }
 });
 
 export { tools, handleToolCall } from './mcp-tools.js';

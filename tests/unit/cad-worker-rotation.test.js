@@ -36,7 +36,7 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(() => ({
     connected: true,
     _requestCount: 0,
-    stdin: { write: vi.fn() },
+    stdin: { write: vi.fn(), on: vi.fn() },
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
     on: vi.fn(),
@@ -55,7 +55,7 @@ function makeWorker() {
     _workerType: 'primary',
     _requestCount: 0,
     _needsRotation: false,
-    stdin: { write: vi.fn() },
+    stdin: { write: vi.fn(), on: vi.fn() },
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
     on: vi.fn(),

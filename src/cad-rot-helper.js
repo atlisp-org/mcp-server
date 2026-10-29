@@ -7,9 +7,14 @@ const __filename = fileURLToPath(import.meta.url);
 const projectRoot = path.dirname(path.dirname(__filename));
 
 let _rotHelper = null;
+// 加载失败后不再重试：edge-js 原生模块/CLR 初始化失败时，每次 edge.func() 都是
+// 一次真实的原生调用，重复尝试既刷日志，也让主进程反复暴露在原生崩溃风险下
+// （日志里曾出现同一进程 65 次 "edge.initializeClrFunc is not a function"）。
+let _rotHelperFailed = false;
 
 function getRotHelper() {
   if (_rotHelper) return _rotHelper;
+  if (_rotHelperFailed) return null;
   const dllPath = path.join(projectRoot, 'dist', 'cad-rothelper.dll');
   try {
     _rotHelper = edge.func({
@@ -20,6 +25,7 @@ function getRotHelper() {
     return _rotHelper;
   } catch (e) {
     logError(`ROT 帮助器加载失败: ${e.message}`);
+    _rotHelperFailed = true;
     return null;
   }
 }

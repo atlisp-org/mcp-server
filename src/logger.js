@@ -40,10 +40,19 @@ function formatMessage(level, message, meta = {}) {
         timestamp: new Date().toISOString(),
         level,
         message,
-        ...meta,
-        pid: process.pid,
-        hostname: HOSTNAME,
     };
+    // 只有普通对象才展开成字段。字符串/数字/Buffer 直接 spread 会把内容拆成
+    // 逐字符/逐字节的键（worker stderr 因此被写成 {"0":"C","1":"o",...}，
+    // 单行日志膨胀十几倍，重启风暴时日志一天涨 70MB）。
+    const isPlainObject = meta && typeof meta === 'object'
+        && !Array.isArray(meta) && !Buffer.isBuffer(meta) && !(meta instanceof Error);
+    if (isPlainObject) {
+        Object.assign(entry, meta);
+    } else if (meta !== undefined && meta !== null && meta !== '') {
+        entry.meta = meta instanceof Error ? (meta.stack || meta.message) : meta;
+    }
+    entry.pid = process.pid;
+    entry.hostname = HOSTNAME;
     return JSON.stringify(entry);
 }
 

@@ -37,6 +37,11 @@ const HEARTBEAT_RESET_COOLDOWN = config.heartbeatResetCooldown ?? 60000;
 const DOC_POLL_COOLDOWN = Math.max(HEARTBEAT_INTERVAL * 2, 30000);
 const MAX_RESTART_ATTEMPTS = 10; // 增加重启次数
 const RESTART_BACKOFF_BASE = 500; // 减少基础延迟
+// worker 启动后存活多久才算「真的起来了」。存活时间短于该值就退出，说明是启动失败
+// （edge-js 原生模块缺失/ABI 不匹配、CLR 初始化失败、Node 版本不兼容等），
+// 重启多少次都不会好。必须保留失败计数走退避 + 上限，否则会变成 500ms 一次、
+// 永不停止的重启风暴（实测一台机器 3 小时重启 9644 次）。
+const WORKER_BOOT_GRACE_MS = config.workerBootGraceMs ?? 10000;
 // 每个 worker 最大处理请求数，超过后轮换（释放 edge-js/.NET 侧原生内存）。
 // 可配置：高频调用场景调大可以减少 worker 冷启动（CLR 初始化）次数。
 const MAX_REQUESTS_PER_WORKER = config.workerMaxRequests ?? 100;
@@ -180,6 +185,9 @@ class CadConnection {
   async connect(platform = null, options = {}) {
     if (!this.isAvailable()) return false;
     this._cb.recordSuccess();
+    // 显式连接是用户/上层的主动恢复动作：重置「连续启动失败」计数，
+    // 允许在给出放弃重启后再试一轮（自动重连有池自己的退避，不会形成风暴）。
+    this._restartCount = 0;
     try {
       const msg = platform ? { type: 'connect', platform } : { type: 'connect' };
       if (options.moniker) {
@@ -475,7 +483,7 @@ class CadConnection {
 
     this._setupStdoutHandler(w);
 
-    w.on('exit', (code) => {
+    w.on('exit', (code, signal) => {
       w.connected = false;
 
       if (type === 'primary') {
@@ -483,9 +491,18 @@ class CadConnection {
         // 主动轮换（_rotateWorker）和心跳重置（_resetWorker）不是故障：
         // 前者已经打过轮换日志，后者本身就是恢复动作，别再刷 ERROR。
         if (!w._intentionalExit) {
-          logError(`[${this._connectionId}] ${type} worker exited with code:`, code);
+          // code 为 null 表示被信号杀掉：带上 signal 才看得出是崩溃还是外部 kill
+          logError(
+            `[${this._connectionId}] ${type} worker exited with code:`,
+            `${code ?? 'null'}${signal ? ` (signal: ${signal})` : ''}`
+          );
         } else {
           logWarn(`[${this._connectionId}] ${type} worker 已按预期退出`, code);
+        }
+        // 只有活过启动宽限期才算真的可用；启动即退出保留失败计数，
+        // 交给 _scheduleRestart 的退避与上限处理（见 WORKER_BOOT_GRACE_MS）。
+        if (Date.now() - (w._spawnTime || 0) >= WORKER_BOOT_GRACE_MS) {
+          this._restartCount = 0;
         }
         this._cb.recordFailure();
         this._clearStall();
@@ -521,6 +538,10 @@ class CadConnection {
         }
         // 主动轮换/重置导致的退出由调用方负责补位，避免重复 spawn
         if (w._intentionalExit) return;
+        // 活过启动宽限期算真的可用，清零连续启动失败计数
+        if (Date.now() - (w._spawnTime || 0) >= WORKER_BOOT_GRACE_MS) {
+          this._readRestartAttempts = 0;
+        }
         this._scheduleReadWorkerRestart();
       }
     });
@@ -544,7 +565,10 @@ class CadConnection {
       this._primaryWorker = this._spawnWorker('primary');
       this._cb.recordSuccess();
       if (!this._heartbeatTimer) this._startHeartbeat();
-      this._restartCount = 0;
+      // 注意：这里不能重置 _restartCount。spawn 成功 ≠ worker 可用（edge-js/CLR
+      // 初始化失败时进程起来就退出），重置会让 MAX_RESTART_ATTEMPTS 永远达不到，
+      // 退避也永远停在第一档 → 无限重启风暴。计数只在「worker 真正回了消息」
+      // 或「存活超过启动宽限期」时清零。
       // 新 worker 没有 .NET 监控：连接还在的话补上，否则心跳轮询兜底
       if (this.connected) this._startMonitor();
     }
@@ -576,6 +600,13 @@ class CadConnection {
   _scheduleReadWorkerRestart() {
     const poolSize = this._workerPoolSize;
     if (poolSize <= 1) return;
+    // 与 primary 同理：读 worker 启动即退出时，无限补齐只会变成每 5s 一次的重生。
+    if ((this._readRestartAttempts || 0) >= MAX_RESTART_ATTEMPTS) {
+      logError(
+        `[${this._connectionId}] read worker 连续 ${this._readRestartAttempts} 次启动失败，停止自动补齐`
+      );
+      return;
+    }
     const attempt = (this._readRestartAttempts = (this._readRestartAttempts || 0) + 1);
     const delay = Math.min(200 * Math.pow(2, attempt - 1), 5000);
     const timer = setTimeout(() => {
@@ -730,6 +761,19 @@ class CadConnection {
     });
 
     w.stderr.on('data', (d) => logError(`[${self._connectionId}] ${w._workerType || 'worker'} stderr:`, d.toString()));
+
+    /* 子进程流上的 'error'（EPIPE / ERR_STREAM_DESTROYED 等）不监听就会被 Node
+       当作未捕获异常，直接放倒整个服务器进程。长时间运行时 worker 崩溃后下一次
+       写入 stdin 正是这种时序：exit 事件还没到，管道已经断了。 */
+    w.stdin.on('error', (e) => {
+      logError(`[${self._connectionId}] ${w._workerType || 'worker'} stdin error:`, e.message);
+      w.connected = false;
+    });
+    w.stdout.on('error', (e) => {
+      logError(`[${self._connectionId}] ${w._workerType || 'worker'} stdout error:`, e.message);
+      w.connected = false;
+    });
+    w.stderr.on('error', () => { /* stderr 自身写失败无需处理，只求不抛未捕获异常 */ });
   }
 
   /**
@@ -839,7 +883,14 @@ class CadConnection {
       this._restartTimer = null;
     }
     if (this._restartCount >= MAX_RESTART_ATTEMPTS) {
-      logError(`[${this._connectionId}] Max worker restart attempts reached, giving up`);
+      // 连续启动失败说明问题不在「重启能修好」的范畴（edge-js 原生模块/CLR/Node
+      // 版本不匹配）。停下来等下一次真实请求或显式 connect() 再试，避免无限重生
+      // 把整机拖垮（实测 3 小时 9644 次）。
+      logError(
+        `[${this._connectionId}] worker 连续 ${this._restartCount} 次启动失败，停止自动重启。` +
+        '请检查 edge-js 原生模块与当前 Node 版本是否匹配（node -e "require(\'edge-js\')"）、' +
+        '.NET/CLR 是否可用；修复后执行 connect 或重启服务恢复。'
+      );
       return;
     }
     const delay = Math.min(RESTART_BACKOFF_BASE * Math.pow(2, this._restartCount), 30000);
@@ -937,6 +988,8 @@ class CadConnection {
         resolve: (v) => { 
           if (!noCircuitBreaker && !entry._skipCb) self._cb.recordSuccess(); 
           clearTimeout(timeout);
+          // worker 正常回了消息 = 它真的起来了，重置「连续启动失败」计数
+          self._restartCount = 0;
           // 检查是否需要轮换 worker。这里不能按消息是否只读来过滤：
           // 只读请求全部落在读 worker 上，加 !isReadOnly 会让读 worker 永远不轮换。
           if (w._needsRotation) {

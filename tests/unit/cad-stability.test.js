@@ -4,6 +4,7 @@
 //   2. 熔断 OPEN 时的自动恢复有冷却限频（与心跳共用 _lastWorkerResetAt 窗口）：
 //      冷却期内快速失败 CAD_BUSY，不重复杀 worker。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 
 vi.mock('../../src/config.js', () => ({
   default: {
@@ -14,6 +15,8 @@ vi.mock('../../src/config.js', () => ({
     heartbeatInterval: 15000,
     heartbeatWarmupMs: 15000,
     heartbeatResetCooldown: 60000,
+    // 测试里每次推进 31s 触发退避，宽限期放大到 60s 才不会被误判为「已经正常运行过」
+    workerBootGraceMs: 60000,
     workerPoolSize: 1,
     busyRetries: 0,
     busyDelay: 0,
@@ -44,7 +47,7 @@ function makeSilentWorker() {
     _workerType: 'primary',
     _requestCount: 0,
     _warmupUntil: 0,
-    stdin: { write: vi.fn() },
+    stdin: { write: vi.fn(), on: vi.fn() },
     stdout: { on: vi.fn() },
     stderr: { on: vi.fn() },
     on: vi.fn(),
@@ -150,5 +153,83 @@ describe('熔断自动恢复的冷却限频', () => {
     expect(conn._getWorker).toHaveBeenCalled();
     expect(worker.kill).toHaveBeenCalled(); // 自动恢复确实重建了 worker
     await expect(p).rejects.toThrow(/超时|停滞/);
+  });
+});
+
+// worker 启动即退出（edge-js 原生模块/CLR 初始化失败、Node ABI 不匹配等）时，
+// 如果 spawn 成功就清零重启计数，MAX_RESTART_ATTEMPTS 永远达不到、退避永远停在
+// 第一档 —— 变成 500ms 一次的无限重生（实测 3 小时 9644 次）。
+describe('worker 启动失败的重启上限', () => {
+  let conn;
+
+  function makeBootFailWorker() {
+    return {
+      connected: true,
+      _workerType: 'primary',
+      _requestCount: 0,
+      _warmupUntil: 0,
+      stdin: { write: vi.fn(), on: vi.fn() },
+      stdout: { on: vi.fn(), off: vi.fn() },
+      stderr: { on: vi.fn() },
+      kill: vi.fn(),
+      _handlers: {},
+      on(event, fn) { this._handlers[event] = fn; return this; },
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    spawn.mockImplementation(() => makeBootFailWorker());
+    conn = createCadConnection();
+    conn._primaryWorker = null;
+  });
+
+  afterEach(() => {
+    conn._resetWorker();
+    vi.useRealTimers();
+  });
+
+  it('连续「启动即退出」时重启次数有上限，不会无限重生', async () => {
+    conn._getWorker(false); // 首次 spawn
+    expect(spawn.mock.calls.length).toBe(1);
+
+    let last = null;
+    for (let i = 0; i < 30; i++) {
+      const w = conn._primaryWorker;
+      if (w && w !== last) {
+        last = w;
+        w._handlers.exit?.(1, null); // 启动后立刻退出（存活 < 启动宽限期）
+      }
+      await vi.advanceTimersByTimeAsync(31000); // 走完退避（最大 30s）
+    }
+
+    // 1 次初始 spawn + 最多 MAX_RESTART_ATTEMPTS(10) 次自动重启，之后放弃
+    expect(conn._restartCount).toBe(10);
+    expect(spawn.mock.calls.length).toBe(11);
+  });
+
+  it('_getWorker 重新 spawn 不再清零启动失败计数', () => {
+    conn._restartCount = 5;
+    conn._getWorker(false);
+    expect(conn._restartCount).toBe(5);
+  });
+
+  it('worker 正常回话后清零启动失败计数', async () => {
+    let dataHandler = null;
+    const w = makeSilentWorker();
+    w.stdout.on.mockImplementation((event, fn) => {
+      if (event === 'data') dataHandler = fn;
+    });
+    spawn.mockImplementation(() => w);
+    conn._primaryWorker = null;
+    conn._restartCount = 7;
+
+    const p = conn._sendMessageInternal({ type: 'ping' }, true);
+    expect(typeof dataHandler).toBe('function');
+    dataHandler(Buffer.from(JSON.stringify({ pong: true, requestId: 'stab-1' }) + '\n'));
+    await p;
+
+    expect(conn._restartCount).toBe(0);
   });
 });

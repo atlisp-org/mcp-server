@@ -83,6 +83,14 @@ describe('log / error / warn', () => {
     expect(lines[2]).toMatchObject({ level: 'WARN', message: 'careful' });
   });
 
+  it('字符串/Buffer meta 不展开成逐字符键（worker stderr 场景）', async () => {
+    logger.error('worker stderr', 'CoreClrEmbedding::Initialize - Failed');
+    await flush();
+    const [line] = readDebugLines();
+    expect(line.meta).toBe('CoreClrEmbedding::Initialize - Failed');
+    expect(line['0']).toBeUndefined();
+  });
+
   it('config.debug=false 时 INFO 不输出 console，ERROR/WARN 始终输出', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

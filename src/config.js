@@ -19,6 +19,9 @@ const envSchema = z.object({
     HEARTBEAT_WARMUP_MS: z.coerce.number().optional().default(15000),
     // 心跳自动重启 worker 的最小间隔：CAD 停在模态对话框时重启无济于事，限频避免刷屏。
     HEARTBEAT_RESET_COOLDOWN: z.coerce.number().optional().default(60000),
+    // worker 启动后存活多久才算「真的起来了」：短于该值就退出视为启动失败
+    // （edge-js/CLR 初始化失败等），保留失败计数走退避 + 上限，避免无限重生。
+    WORKER_BOOT_GRACE_MS: z.coerce.number().optional().default(10000),
     BUSY_RETRIES: z.coerce.number().optional().default(10),
     BUSY_DELAY: z.coerce.number().optional().default(500),
     ENABLE_CORS: z.coerce.boolean().optional().default(true),
@@ -115,6 +118,7 @@ const configSchema = z.object({
     heartbeatInterval: z.number().optional(),
     heartbeatWarmupMs: z.number().optional(),
     heartbeatResetCooldown: z.number().optional(),
+    workerBootGraceMs: z.number().optional(),
     busyRetries: z.number().optional(),
     busyDelay: z.number().optional(),
     enableCors: z.boolean().optional(),
@@ -308,6 +312,7 @@ const config = {
     heartbeatInterval: fileConfig?.heartbeatInterval ?? env.HEARTBEAT_INTERVAL,
     heartbeatWarmupMs: fileConfig?.heartbeatWarmupMs ?? env.HEARTBEAT_WARMUP_MS,
     heartbeatResetCooldown: fileConfig?.heartbeatResetCooldown ?? env.HEARTBEAT_RESET_COOLDOWN,
+    workerBootGraceMs: fileConfig?.workerBootGraceMs ?? env.WORKER_BOOT_GRACE_MS,
     busyRetries: fileConfig?.busyRetries ?? env.BUSY_RETRIES,
     busyDelay: fileConfig?.busyDelay ?? env.BUSY_DELAY,
     enableCors: fileConfig?.enableCors ?? env.ENABLE_CORS,
