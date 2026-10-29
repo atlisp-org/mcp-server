@@ -90,6 +90,9 @@ mcp-server 生成的 LISP **不能假设执行它的 CAD 会话加载了 @lisp l
 - **输出格式**：worker 用 `(princ r f)` 写结果，直接返回 list 会丢字符串引号（空串值 `("A" "")` 变成 `("A")`、块名带空格会被拆开）。统一 `(vl-prin1-to-string (list ...))` 收尾，且条目用 `(list "k" v)` 而非 `(cons "k" v)`（后者 value 为 nil 时退化成 `("k")`，服务端按二元对消费会丢字段）
 - **结果只能是返回值**：worker 只把被加载代码的**表达式返回值**写进结果文件（`(princ r f)`），`princ` 到命令行/回显的内容不会出现在 `sendCommandWithResult` 的结果里。探测类代码（如 @lisp 的 token）必须让 token 作为最终返回值，不能用 `(princ "TOKEN")` 后返回 nil
 - **标志位用 nil 不用 0**：AutoLISP 里只有 nil 为假，`0` 是真值。`(setq flag 0)` 后再 `(if flag ...)` 会恒真，未保存图纸判断踩过这个坑
+- **`f` / `r` 是保留变量**：结果包装器是 `(progn (setq f (open 结果文件 "w")) (setq r (vl-catch-all-apply '(lambda () (load 用户文件)))) (if (vl-catch-all-error-p r) (princ ... f) (princ r f)) (close f))`。
+  用户代码里写 `(setq f ...)` / `(setq r ...)` 会把文件句柄覆盖掉 → 结果写不进去 → 工具返回**空字符串**（不是报错）。
+  排查「eval 莫名返回空串」先查代码里有没有这两个变量名（历史案例：FSO 读文件返回空，实为 `(setq f (findfile ...))` 所致）
 - **冻结表跨仓同步**：图框标准表 `frame-standards.js` ↔ lib `frame:` ↔ `packages/at-plot`；属性别名表 `frame-aliases.js` ↔ lib `frame:aliases`（单测有跨仓守卫）
 - **信任弹窗与 TRUSTEDPATHS**：长代码（>255 字符或要结果）走 `%USERPROFILE%\@lisp\tmp` 的临时 `.lsp` + `(load ...)`，
   在非受信任目录会弹「无法验证该可执行文件的发布者，且该文件不在受信任文件夹内」，阻断非交互执行。
