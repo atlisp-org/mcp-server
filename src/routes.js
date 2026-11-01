@@ -110,6 +110,12 @@ function extractBearerKey(req) {
     return auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth.trim();
 }
 
+function isLoopbackRequest(req) {
+    // 用 TCP 源地址，不看 X-Forwarded-For（可伪造）。
+    const ip = (req.socket && req.socket.remoteAddress) || req.ip || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
 export function createAuthMiddleware() {
     // 公开端点：仅保留监控与静态文档。管理/调试类端点（/debug、/health/full 等）
     // 必须经过鉴权，避免泄露会话/内存/环境等运行态信息。
@@ -118,6 +124,12 @@ export function createAuthMiddleware() {
     return (req, res, next) => {
         // Public GET endpoints are unrestricted
         if (req.method === 'OPTIONS' || PUBLIC_PATHS.includes(req.path)) return next();
+
+        // **回环地址放行**：本机浏览器页面（/agent/chat、/workflow-editor）永远
+        // 拿不到 MCP_API_KEY，配了 key 之后它们连一次探测都过不去（401），表现为
+        // 「本机 MCP 明明是通的，页面却说连不上」。浏览器这条路的边界是 CORS
+        // 白名单（localhost / *.atlisp.cn），key 的作用是挡住**局域网**调用方。
+        if (isLoopbackRequest(req)) return next();
 
         const key = extractBearerKey(req);
         const role = resolveApiKeyRole(key, config);
