@@ -2,7 +2,7 @@
   "sha256": "46ea8dd51614c9d32464cd1f536b6e3b0e7c014bc816604cf6724ce29c7d084f",
   "version": "1.12.24",
   "generatedAt": "2026-11-04T14:49:51.637Z",
-  "note": "1.12.24 重建：@atlisp/mcp 的检查/安装固定走官方源，npmmirror 只作检查更新兜底（防降级）。新哈希尚未重新提交误报白名单，见 tray/false-positive-submission.md。",
+  "note": "1.12.24 重建：@atlisp/mcp 的检查/安装固定走官方源，npmmirror 只作检查更新兜底（防降级）。新哈希的误报申诉作业单见 tray/false-positive-1.12.24.md（通过后把本行改成「已提交白名单（日期）」）。",
   "size": 179712,
   "signed": false
 }

@@ -565,6 +565,10 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
    `tray/exe-baseline.json`，不重新编译；只有把仓库变量 `TRAY_REBUILD` 设为 `true` 才重建
    （重建后必须重新提交误报并更新基线）。
 
+   每次重建的**填表作业单**放在 `tray/false-positive-<版本>.md`（含哈希、大小、版本资源、
+   中英文正文、自检清单、提交跟踪表）。当前待提交的是
+   [`false-positive-1.12.24.md`](false-positive-1.12.24.md)（`46ea8dd5…`）。
+
 2. **提交误报**：<https://www.microsoft.com/en-us/wdsi/filesubmission>（按「软件开发者」提交，公司名与签名主体一致）。
    国内再报 360 / 火绒 / 腾讯的误报通道。**先改行为再提报**，否则换 hash 后要重提。
 3. 不要把 exe 加壳/混淆/UPX；发布时附 `SHA256SUMS`。
