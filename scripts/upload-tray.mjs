@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isAuthenticodeSigned } from './pe-signature.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -29,6 +30,14 @@ const FILES = ['AtlispTray.exe', 'tray-manifest.json', 'SHASUMS256.txt'];
 const MAX_ATTEMPTS = 3;
 
 const dryRun = process.argv.includes('--dry-run');
+// 未签名 PE 会被 SmartScreen 拦、被 Defender 报 !ml —— 默认拒绝上传。
+// 拿不到证书时（个人/大陆主体常被 CA 拒），用 --allow-unsigned 或
+// ATLISP_ALLOW_UNSIGNED=1 显式放行；此时必须冻结 exe（hash 不变）并提交误报，
+// 见 tray/false-positive-submission.md。
+const allowUnsigned =
+  process.argv.includes('--allow-unsigned') ||
+  process.env.ATLISP_ALLOW_UNSIGNED === '1' ||
+  process.env.ATLISP_ALLOW_UNSIGNED === 'true';
 // 位置参数 = 只上传指定文件（默认全部），例如：node scripts/upload-tray.mjs AtlispTray.exe
 const only = process.argv.slice(2).filter((arg) => !arg.startsWith('-'));
 
@@ -132,6 +141,27 @@ async function main() {
   }
 
   log(`目标：${UPLOAD_URL} → ${publicBase}/`);
+  // 上传前先确认 exe 真的签过：未签名的 PE 是本项目杀软误报的唯一根因，
+  // 而人工上传（不走 sign-release.yml）很容易把签名前的产物推上去。
+  for (const file of existing) {
+    if (path.extname(file).toLowerCase() !== '.exe') continue;
+    const name = path.basename(file);
+    const signed = isAuthenticodeSigned(await fs.promises.readFile(file));
+    if (signed) {
+      log(`${name} 已签名`);
+      continue;
+    }
+    if (!allowUnsigned) {
+      fail(
+        `${name} 未做 Authenticode 签名，拒绝上传：\n` +
+        '  · 浏览器下载会带 MOTW，触发 SmartScreen「未知发布者」；\n' +
+        '  · Defender 的云端 ML 会把它判成 Wacatac/!ml 一类。\n' +
+        '请先用 sign-release.yml（或 tray/build.ps1 -SignThumbprint）签名；\n' +
+        '确实要上传未签名版本时加 --allow-unsigned。'
+      );
+    }
+    log(`[警告] ${name} 未签名，按 --allow-unsigned 继续上传`);
+  }
   for (const file of existing) {
     if (dryRun) {
       log(`[dry-run] ${path.basename(file)} → ${publicBase}/${path.basename(file)}`);

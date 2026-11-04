@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_BASE_URLS, TRAY_FILES } from '../tray/tray-download.js';
+import { isAuthenticodeSigned } from './pe-signature.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -46,7 +47,13 @@ export function buildManifest({
       continue;
     }
     const buffer = fs.readFileSync(file);
-    files[name] = { sha256: sha256(buffer), size: buffer.length };
+    // `signed` 让下载页能如实显示「当前版本是否已签名」——以前页面把
+    // 「这个文件没有数字签名」写死了，签名上线后会一直误导用户。
+    files[name] = {
+      sha256: sha256(buffer),
+      size: buffer.length,
+      signed: isAuthenticodeSigned(buffer),
+    };
   }
 
   if (missing.length && requireAll) {
@@ -111,6 +118,41 @@ async function main() {
     `[tray-manifest] v${manifest.version}：` +
     Object.keys(manifest.files).join(', ')
   );
+  const unsigned = Object.entries(manifest.files)
+    .filter(([, entry]) => entry.signed === false)
+    .map(([name]) => name);
+  if (unsigned.length) {
+    console.warn(
+      `[tray-manifest] 警告：${unsigned.join(', ')} 未做 Authenticode 签名，` +
+      '浏览器下载会触发 SmartScreen、Defender 也可能报 !ml；发布前先跑签名（见 sign-release.yml）'
+    );
+  }
+  warnIfNotWhitelisted(manifest);
+}
+
+/**
+ * 没有证书时，杀软白名单是按**文件哈希**给的：重建一次就失效。
+ * 这里对 tray/exe-baseline.json 做一次提醒（不失败——重建本身是合法的，
+ * 只是提醒你该重新提交误报了）。
+ */
+function warnIfNotWhitelisted(manifest) {
+  const baselinePath = path.join(root, 'tray', 'exe-baseline.json');
+  if (!fs.existsSync(baselinePath)) return;
+  let baseline;
+  try {
+    baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
+  } catch (error) {
+    console.warn(`[tray-manifest] tray/exe-baseline.json 不是合法 JSON：${error.message}`);
+    return;
+  }
+  const actual = manifest.files['AtlispTray.exe']?.sha256;
+  if (actual && baseline.sha256 && actual !== baseline.sha256) {
+    console.warn(
+      `[tray-manifest] 注意：exe 哈希与提交给杀软白名单的基线不同\n` +
+      `  基线 ${baseline.sha256}\n  当前 ${actual}\n` +
+      '  未签名的 exe 按哈希白名单，换了哈希就要重新提交误报（见 tray/false-positive-submission.md）'
+    );
+  }
 }
 
 const invokedDirectly =

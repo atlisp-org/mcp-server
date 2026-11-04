@@ -238,12 +238,15 @@ npm run build:tray
 
 `npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘并生成 `dist/tray-manifest.json`（含 SHA256）。
 
-> **exe 不再随 npm 包发布**：`dist/AtlispTray.exe` 会在打 tag 后
-> 上传到 **atlisp.cn/download**（主源，`scripts/upload-tray.mjs`）和 **GitHub Release**（兜底），
-> npm 包里只有 `atlisp-tray` 启动器、下载器和 manifest —— 这样 `npm install` 阶段不会再出现
-> 未签名 PE 被 Defender 扫描的情况。首次运行 `atlisp-tray` 时按 manifest 的 SHA256 校验后
-> 下载到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；两个源自动依次尝试，也可用
-> `ATLISP_TRAY_BASE_URL` 强制指定。
+> **exe 不随 npm 包发布**：`dist/AtlispTray.exe` 在打 tag 后上传到 **atlisp.cn/download**
+> （主源，`scripts/upload-tray.mjs`）和 **GitHub Release**（兜底），这样 `npm install` 阶段不会
+> 出现未签名 PE 被 Defender 扫描的情况。
+>
+> **v1.12.20 起 npm 包也不再包含 `atlisp-tray` / `tray-download.js` / `tray-manifest.json`**
+> （`bin` 与 `files` 都已移除，仓库里的 `tray/*.js` 仅供内核部署流程参考）。托盘二进制现在由
+> **@lisp 内核的 mini-sys** 从 atlisp.cn 自动下载并按 `dist/tray-manifest.json` 里的 SHA256 校验，
+> 以 CAD 进程下载（不带浏览器 MOTW，不触发 SmartScreen）。下面的 `atlisp-tray` 命令只在旧版
+> （≤ v1.12.19）可用。
 
 > 不要用 `npm publish --ignore-scripts`：它会跳过构建，把旧 `dist/` 发出去。服务端启动时和
 > `get_system_status` 的 `mcp.distMismatch` 都会提示这种不一致。

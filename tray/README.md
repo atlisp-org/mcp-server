@@ -549,6 +549,19 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
    > 把刚签好的 exe 覆盖成未签名版本。手动发布时同理：
    > 先 `npm run build`（只构建 JS）→ 放入已签名 exe → `node scripts/check-build.mjs` →
    > `npm publish --ignore-scripts`。
+   **发布链路上的闸门**（2026-11）：`sign-release.yml` 在 tag 发布 / `publish=true` 但没配签名凭据时
+   默认直接失败；确实拿不到证书时，把仓库变量 **`ALLOW_UNSIGNED_RELEASE=true`** 显式放行（会有
+   醒目警告）。`scripts/upload-tray.mjs` 会先解析 PE 的证书表，未签名就拒绝上传（`--allow-unsigned`
+   或 `ATLISP_ALLOW_UNSIGNED=1` 才放行）；`dist/tray-manifest.json` 的每个文件带
+   `signed: true|false`，下载页据此显示真实状态，不再写死「这个文件没有数字签名」。
+
+   **没有证书时的替代方案见 [`false-positive-submission.md`](false-positive-submission.md)**：
+   白名单按**文件哈希**生效，所以托盘二进制要冻结（`tray/exe-baseline.json` 记录基线，
+   哈希变化时 `build-tray-manifest` 会告警），而不是每个版本重建一次。
+   因此未签名发布（`signer=none`）时 CI 默认**直接从 atlisp.cn 取那份已发布的 exe**并核对
+   `tray/exe-baseline.json`，不重新编译；只有把仓库变量 `TRAY_REBUILD` 设为 `true` 才重建
+   （重建后必须重新提交误报并更新基线）。
+
 2. **提交误报**：<https://www.microsoft.com/en-us/wdsi/filesubmission>（按「软件开发者」提交，公司名与签名主体一致）。
    国内再报 360 / 火绒 / 腾讯的误报通道。**先改行为再提报**，否则换 hash 后要重提。
 3. 不要把 exe 加壳/混淆/UPX；发布时附 `SHA256SUMS`。
@@ -573,7 +586,7 @@ portable Node.js：`%LOCALAPPDATA%\atlisp-mcp\node\`
 | 提示「Node.js 安装包未通过校验」/「Python 安装包未通过校验」 | Authenticode 校验失败（下载被截断、镜像返回了错误页面、或证书链在本机不受信任）。托盘会删除该文件并拒绝执行；改用 `winget install OpenJS.NodeJS.LTS` / `winget install Python.Python.3.12`，或手动从官网下载后自行安装 |
 | 提示「下载包校验失败：SHA256 与官方清单不一致」 | 镜像上的 zip 与 `SHASUMS256.txt` 不一致（镜像同步中/被中间人替换）。换 `NodeMirror`、或删掉 `%LOCALAPPDATA%\atlisp-mcp\downloads\` 里的旧包后重试 |
 | 「关于」里的版本号和 exe 文件属性里的 1.0.0.0 不一样 | 正常：exe 版本资源固定，真实版本来自同目录 `AtlispTray.version`（或 npm 包 `package.json`） |
-| 首次运行被 SmartScreen 拦截 / 被杀软报毒 | exe 未做代码签名（见「杀软误报」）。临时处理：点“更多信息 → 仍要运行”，或把安装目录加入排除项；根治靠代码签名 + 提交误报 |
+| 首次运行被 SmartScreen 拦截 / 被杀软报毒 | exe 未做代码签名（见「杀软误报」）。临时处理：点“更多信息 → 仍要运行”（不建议关闭实时保护或长期加排除项）；根治靠代码签名，拿不到证书时按 [`false-positive-submission.md`](false-positive-submission.md) 提交误报白名单 |
 
 ## 代码结构
 

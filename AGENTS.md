@@ -179,8 +179,13 @@ npm run release <patch|minor|major>   # 版本发布：bump + CHANGELOG + git ta
 npm publish                           # 发布到 npm（prepublishOnly 会重新构建 + 校验 dist 版本）
 
 > 签名发布：`.github/workflows/sign-release.yml` 在 Windows runner 上构建并用
-> Azure Trusted Signing / SignPath 给两个 exe 签名（凭据缺失时跳过）；publish job 用
-> `npm publish --ignore-scripts`，避免重编译覆盖已签名产物。手动签名见 `tray/README.md`。
+> Azure Trusted Signing / SignPath 给托盘 exe 签名。**tag 发布或 `publish=true` 时缺凭据默认直接失败**
+> （未签名 PE = SmartScreen + Defender `!ml` 的唯一根因）；拿不到证书时把仓库变量
+> `ALLOW_UNSIGNED_RELEASE` 设为 `true` 显式放行，并按 `tray/false-positive-submission.md`
+> 冻结哈希 + 提交误报：未签名发布时 CI **不重建**托盘，而是下载线上那份并与
+> `tray/exe-baseline.json` 核对（白名单按文件哈希，重建即失效）；确需重建设 `TRAY_REBUILD=true`。
+> `workflow_dispatch` 的构建验证默认允许跳过。
+> publish job 用 `npm publish --ignore-scripts`，避免重编译覆盖已签名产物。手动签名见 `tray/README.md`。
 ```
 
 ## Lint 代码分析
@@ -274,8 +279,8 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `tray/CodeSign.cs` | `WinVerifyTrust` 封装：校验下载到的安装包与托盘 exe 的 Authenticode 签名 |
 | `tray/build.ps1` | Windows 托盘构建脚本：用系统自带 csc.exe 编译到 `dist/AtlispTray.exe`，`-Install` 复制到用户目录并建快捷方式 |
 | `scripts/build-tray.mjs` | 跨平台托盘构建：Windows 调用 `tray/build.ps1`，Linux/macOS 用 dotnet + net48 参考程序集交叉编译 |
-| `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小 + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成 |
-| `scripts/upload-tray.mjs` | 把签名后的 exe/manifest 上传到 atlisp.cn `/upload`，对外地址 `https://atlisp.cn/download/<文件名>`（国内主源） |
+| `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小/`signed` + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成（`signed` 由 `scripts/pe-signature.mjs` 判定，下载页据此显示真实签名状态） |
+| `scripts/upload-tray.mjs` | 把 exe/manifest 上传到 atlisp.cn `/upload`，对外地址 `https://atlisp.cn/download/<文件名>`（国内主源）。**上传前校验 Authenticode，未签名直接拒绝**（`--allow-unsigned` 才放行） |
 | `tray/tray-download.js` | 托盘二进制下载器（仅存仓库，**npm 包不再包含**）：按 manifest 校验 SHA256 后落到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；下载源按 `baseUrls` 顺序尝试（atlisp.cn/download → GitHub），`ATLISP_TRAY_BASE_URL` 可强制单源 |
 | `tray/atlisp-tray.js` | npm `atlisp-tray` 命令（**已从 npm 包移除**，bin 与 files 均不再包含；仓库保留供参考）。托盘现仅经 kernel mini-sys 从 `atlisp.cn/<edition>/bin/` 自动下载 |
 | `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |

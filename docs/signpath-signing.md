@@ -159,8 +159,11 @@ Actions → **Sign release binaries** → Run workflow（不要勾 publish）：
    `https://atlisp.cn/download/<文件名>`，国内主源；上传失败不阻塞发版）
 3. 同时把同样四个文件挂到对应的 GitHub Release（兜底源）
 
-`atlisp-tray` 首次运行按顺序尝试这两个源，SHA256 对不上就拒绝执行。签名 job 被跳过
-（`signer=none`）时该 job 也不会跑，避免把未签名产物挂上去。
+@lisp 内核部署托盘时按顺序尝试这两个源，SHA256 对不上就拒绝落盘。签名 job 被跳过
+（`signer=none`）时该 job 不会跑；**tag 发布或 `publish=true` 时 `signer=none` 默认会让
+workflow 失败**（未签名 PE 正是 SmartScreen / Defender `!ml` 的来源）。确实拿不到证书时，
+把仓库变量 `ALLOW_UNSIGNED_RELEASE` 设为 `true` 显式放行（产物未签名），并照
+`tray/false-positive-submission.md` 冻结哈希、提交误报。`workflow_dispatch` 的构建验证允许跳过。
 
 `ATLISP_UPLOAD_KEY` 是 atlisp.cn 的开发者上传密钥（用户中心 → 安全 → 上传密钥，
 账号 role ≥ developer），不配也能发版，只是国内用户只能走 GitHub。

@@ -49,6 +49,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       signer: ${{ steps.pick.outputs.signer }}
+      unsigned_ok: ${{ steps.pick.outputs.unsigned_ok }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
@@ -69,10 +70,6 @@ jobs:
 
       - run: npm ci
 
-      # 走 Windows 自带 csc.exe（tray/build.ps1），产出 dist/AtlispTray.exe
-      - name: 构建托盘与更新器
-        run: npm run build:tray
-
       - name: 选择签名渠道
         id: pick
         shell: pwsh
@@ -85,12 +82,59 @@ jobs:
             Write-Host "签名渠道：SignPath Foundation"
           } else {
             "signer=none" >> $env:GITHUB_OUTPUT
-            Write-Host "::warning title=未配置签名凭据::AZURE_TS_* / SIGNPATH_* 都没有设置，跳过签名。产物保持未签名。"
+            "unsigned_ok=false" >> $env:GITHUB_OUTPUT
+            # 未签名的 PE 是 SmartScreen / Defender !ml 的唯一根因，默认拦住发布：
+            # 以前这里只 warning，于是 tag 发布照样往下走，人工上传又把未签名件推到
+            # atlisp.cn/download —— 用户下载到的就是那个被报毒的 exe。
+            #
+            # 拿不到证书时（个人/大陆主体常被 CA 拒），把仓库变量
+            # ALLOW_UNSIGNED_RELEASE 设为 true 可以显式放行：产出的 exe 必须
+            # **冻结不变**（版本资源固定 + -deterministic，改代码才换 hash），
+            # 然后按 tray/false-positive-submission.md 向微软/国内厂商提交误报。
+            $mustSign = ($env:GITHUB_REF -like 'refs/tags/*') -or ($env:INPUT_PUBLISH -eq 'true')
+            if ($mustSign) {
+              if ($env:ALLOW_UNSIGNED -eq 'true') {
+                "unsigned_ok=true" >> $env:GITHUB_OUTPUT
+                Write-Host "::warning title=发布未签名产物::ALLOW_UNSIGNED_RELEASE=true，本次发布会附上未签名的 AtlispTray.exe。用户会看到 SmartScreen「未知发布者」，部分杀软可能报 !ml；请确认该 exe 的 SHA256 已提交误报（tray/false-positive-submission.md）。"
+              } else {
+                throw "未配置签名凭据（AZURE_TS_* / SIGNPATH_*），但本次是正式发布。未签名 PE 会触发 SmartScreen「未知发布者」并被 Defender 判成 !ml。确实暂时拿不到证书时，把仓库变量 ALLOW_UNSIGNED_RELEASE 设为 true 显式放行。"
+              }
+            } else {
+              Write-Host "::warning title=未配置签名凭据::AZURE_TS_* / SIGNPATH_* 都没有设置，跳过签名。本次仅用于构建验证，产物不得对外发布。"
+            }
           }
         env:
           AZURE_TS_ENDPOINT: ${{ secrets.AZURE_TS_ENDPOINT }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ALLOW_UNSIGNED: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+
+      # 没有签名渠道时**默认不重建**托盘：杀软白名单是按文件哈希给的，重建一次就失效。
+      # 直接取线上那份已提交误报的 exe，并核对它等于 tray/exe-baseline.json。
+      # 真要重建（tray/ 下源码改了）时把仓库变量 TRAY_REBUILD 设为 true。
+      - name: 取已发布托盘（冻结哈希，白名单才有效）
+        if: steps.pick.outputs.signer == 'none' && vars.TRAY_REBUILD != 'true'
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $baseline = Get-Content tray/exe-baseline.json -Raw | ConvertFrom-Json
+          $url = "https://atlisp.cn/download/AtlispTray.exe?v=$($pkg.version)"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Write-Host "下载已发布的托盘二进制：$url"
+          Invoke-WebRequest -Uri $url -OutFile dist/AtlispTray.exe
+          $actual = (Get-FileHash dist/AtlispTray.exe -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $baseline.sha256.ToLower()) {
+            throw "下载到的 exe 哈希 ($actual) 与白名单基线 ($($baseline.sha256)) 不一致：线上文件已被替换或基线过期。核对 tray/exe-baseline.json，或设 TRAY_REBUILD=true 重建并重新提交误报。"
+          }
+          Write-Host "哈希与白名单基线一致：$actual"
+          npm run build:tray-manifest
+
+      # 走 Windows 自带 csc.exe（tray/build.ps1），产出 dist/AtlispTray.exe
+      - name: 构建托盘（签名渠道，或显式 TRAY_REBUILD=true）
+        if: steps.pick.outputs.signer != 'none' || vars.TRAY_REBUILD == 'true'
+        run: npm run build:tray
+
 
       # ---------- A. Azure Artifact Signing（原 Trusted Signing，2026-01 更名，功能不变）----------
       - name: Azure 登录（OIDC）
@@ -172,10 +216,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "签名校验失败：$exe" }
           }
 
-      - name: 上传已签名产物
+      - name: 上传托盘产物（已签名，或显式放行的未签名版本）
+        if: steps.pick.outputs.signer != 'none' || steps.pick.outputs.unsigned_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: signed-binaries-v${{ steps.version.outputs.version }}
+          name: tray-binaries-v${{ steps.version.outputs.version }}
           path: |
             dist/AtlispTray.exe
           if-no-files-found: error
@@ -184,7 +229,7 @@ jobs:
   # （npm 包里不再包含 exe，避免 npm install 阶段被 Defender 扫描）。
   release-assets:
     needs: sign
-    if: startsWith(github.ref, 'refs/tags/v') && needs.sign.outputs.signer != 'none'
+    if: startsWith(github.ref, 'refs/tags/v') && (needs.sign.outputs.signer != 'none' || needs.sign.outputs.unsigned_ok == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -194,7 +239,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: signed-binaries-v${{ needs.sign.outputs.version }}
+          name: tray-binaries-v${{ needs.sign.outputs.version }}
           path: dist
 
       - name: 生成下载清单
@@ -205,6 +250,7 @@ jobs:
         continue-on-error: true
         env:
           ATLISP_UPLOAD_KEY: ${{ secrets.ATLISP_UPLOAD_KEY }}
+          ATLISP_ALLOW_UNSIGNED: ${{ vars.ALLOW_UNSIGNED_RELEASE }}
         run: |
           if [ -z "$ATLISP_UPLOAD_KEY" ]; then
             echo "未配置 ATLISP_UPLOAD_KEY，跳过；本次只有 GitHub 一个下载源"
@@ -230,7 +276,7 @@ jobs:
   # 把刚签好的 exe 覆盖回未签名版本。JS 侧构建和版本校验在这里显式执行。
   publish:
     needs: sign
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == 'true' && (needs.sign.outputs.signer != 'none' || needs.sign.outputs.unsigned_ok == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -253,7 +299,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: signed-binaries-v${{ needs.sign.outputs.version }}
+          name: tray-binaries-v${{ needs.sign.outputs.version }}
           path: dist
 
       # 清单必须基于已签名产物生成：用户下载到的是这份，SHA256 要对得上
