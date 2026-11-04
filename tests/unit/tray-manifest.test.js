@@ -177,4 +177,22 @@ describe('npm 包内容', () => {
     expect(pkg.files).toContain('tray/tray-download.js');
     expect(pkg.files).not.toContain('!dist/tray-manifest.json');
   });
+
+  it('bin 指向的文件没有 BOM（BOM 会让 shebang 失效，npm 链接后无法执行）', () => {
+    // 实测踩过：tray/atlisp-tray.js 带 UTF-8 BOM，Linux/macOS 上执行 bin 时报
+    // 「#!/usr/bin/env: 没有那个文件或目录」，Windows 的 .cmd shim 反而看不出来。
+    const bins = [
+      'tray/atlisp-tray.js',
+      'dist/atlisp-mcp.js',
+    ];
+    for (const rel of bins) {
+      const file = path.join(process.cwd(), rel);
+      if (!fs.existsSync(file)) continue;
+      const head = fs.readFileSync(file).subarray(0, 3);
+      expect({
+        file: rel,
+        bom: head.equals(Buffer.from([0xef, 0xbb, 0xbf])),
+      }).toEqual({ file: rel, bom: false });
+    }
+  });
 });

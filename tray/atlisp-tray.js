@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 // @lisp MCP 托盘启动器（仅 Windows）
 //
 // npm i -g @atlisp/mcp 后执行：
