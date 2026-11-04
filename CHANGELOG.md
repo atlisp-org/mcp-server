@@ -2,6 +2,12 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.23] - 2026-11-04
+
+### 更新内容
+
+- fix(tray): 去掉 atlisp-tray.js 的 UTF-8 BOM (bbea140)
+
 ## [1.12.22] - 2026-11-04
 
 ### 更新内容
