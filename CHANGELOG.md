@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.22] - 2026-11-04
+
+### 更新内容
+
+- feat(tray): 恢复 atlisp-tray 到 npm 包，修复托盘自更新断链 (986fe89)
+- chore(tray): 基线版本随 1.12.21 更新（exe 字节未变，仍是 ce67af91…） (c2e5001)
+
 ## [1.12.21] - 2026-11-04
 
 ### 更新内容
