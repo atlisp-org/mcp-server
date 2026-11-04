@@ -283,6 +283,6 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `scripts/build-tray-manifest.mjs` | 生成 `dist/tray-manifest.json`（版本 + 每个 exe 的 SHA256/大小/`signed` + 下载源列表）与 `dist/SHASUMS256.txt`；签名后必须重新生成（`signed` 由 `scripts/pe-signature.mjs` 判定，下载页据此显示真实签名状态） |
 | `scripts/upload-tray.mjs` | 把 exe/manifest 上传到 atlisp.cn `/upload`，对外地址 `https://atlisp.cn/download/<文件名>`（国内主源）。**上传前校验 Authenticode，未签名直接拒绝**（`--allow-unsigned` 才放行） |
 | `tray/tray-download.js` | 托盘二进制下载器（仅存仓库，**npm 包不再包含**）：按 manifest 校验 SHA256 后落到 `%LOCALAPPDATA%\Programs\atlisp-mcp`；下载源按 `baseUrls` 顺序尝试（atlisp.cn/download → GitHub），`ATLISP_TRAY_BASE_URL` 可强制单源 |
-| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令（**已从 npm 包移除**，bin 与 files 均不再包含；仓库保留供参考）。托盘现仅经 kernel mini-sys 从 `atlisp.cn/<edition>/bin/` 自动下载 |
+| `tray/atlisp-tray.js` | npm `atlisp-tray` 命令（**v1.12.22 起重新进 bin/files**）：等旧托盘退出后按 `dist/tray-manifest.json` 下载/校验 exe 到 `%LOCALAPPDATA%\Programs\atlisp-mcp` 并拉起，不自我替换。清单缺失时 `scripts/ensure-tray-manifest.mjs` 用 `tray/exe-baseline.json` 的冻结哈希补一份 |
 | `scripts/build-rot.mjs` | 跨平台编译 `src/cad-rothelper.cs` → `dist/cad-rothelper.dll`（同 build-tray 方案） |
 | `scripts/net48-refs.mjs` | net48 交叉编译公共辅助：Roslyn csc 定位 + 参考程序集下载/缓存 |

@@ -236,17 +236,19 @@ atlisp-mcp --autostart-status
 npm run build:tray
 ```
 
-`npm publish` 时 `prepublishOnly` 会先重新构建并校验 `dist/build-meta.json` 的版本，`prepack` 再构建托盘并生成 `dist/tray-manifest.json`（含 SHA256）。
+`npm publish` 时 `prepublishOnly` 会先构建、补齐 `dist/tray-manifest.json`、
+再校验 `dist/build-meta.json` 的版本。
 
-> **exe 不随 npm 包发布**：`dist/AtlispTray.exe` 在打 tag 后上传到 **atlisp.cn/download**
+> **exe 仍不随 npm 包发布**：`dist/AtlispTray.exe` 在打 tag 后上传到 **atlisp.cn/download**
 > （主源，`scripts/upload-tray.mjs`）和 **GitHub Release**（兜底），这样 `npm install` 阶段不会
 > 出现未签名 PE 被 Defender 扫描的情况。
 >
-> **v1.12.20 起 npm 包也不再包含 `atlisp-tray` / `tray-download.js` / `tray-manifest.json`**
-> （`bin` 与 `files` 都已移除，仓库里的 `tray/*.js` 仅供内核部署流程参考）。托盘二进制现在由
-> **@lisp 内核的 mini-sys** 从 atlisp.cn 自动下载并按 `dist/tray-manifest.json` 里的 SHA256 校验，
-> 以 CAD 进程下载（不带浏览器 MOTW，不触发 SmartScreen）。下面的 `atlisp-tray` 命令只在旧版
-> （≤ v1.12.19）可用。
+> **v1.12.22 起 `atlisp-tray` / `tray-download.js` / `dist/tray-manifest.json` 重新随包发布**
+> （v1.12.20 曾把它们一起删掉，导致托盘自更新静默失败）。首次运行 `atlisp-tray` 会按清单的
+> SHA256 从 atlisp.cn / GitHub Release 下载 exe 到 `%LOCALAPPDATA%\Programs\atlisp-mcp`。
+> 发版机上没有 exe 时，`scripts/ensure-tray-manifest.mjs` 用 `tray/exe-baseline.json` 的
+> 冻结哈希补齐清单——白名单按文件哈希生效，托盘二进制不应每个版本重建。
+> @lisp 内核的 mini-sys 也能直接从 atlisp.cn 部署托盘，两条路互不影响。
 
 > 不要用 `npm publish --ignore-scripts`：它会跳过构建，把旧 `dist/` 发出去。服务端启动时和
 > `get_system_status` 的 `mcp.distMismatch` 都会提示这种不一致。

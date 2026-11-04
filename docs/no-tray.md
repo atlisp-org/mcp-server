@@ -87,7 +87,8 @@ curl -X POST http://127.0.0.1:8110/config/reload    # 改完配置后热重载
 | 异常退出自动拉起 | 用任务计划（`schtasks /sc onfailure`）或 Windows 服务包一层；普通用户场景一般不需要 |
 | 更新提示 | `npm outdated -g @atlisp/mcp` |
 
-想用图形界面时运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe`（由 @lisp 内核部署
+想用图形界面时运行 `npx -p @atlisp/mcp atlisp-tray`（首次会下载并校验托盘），
+或直接运行 `%LOCALAPPDATA%\Programs\atlisp-mcp\AtlispTray.exe`（由 @lisp 内核部署
 或从 <https://atlisp.cn/download/AtlispTray.exe> 下载），不用长期常驻。
 
 ---

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { buildManifest, formatShasums } from '../../scripts/build-tray-manifest.mjs';
+import { ensureTrayManifest } from '../../scripts/ensure-tray-manifest.mjs';
 import { isAuthenticodeSigned } from '../../scripts/pe-signature.mjs';
 import { DEFAULT_BASE_URLS } from '../../tray/tray-download.js';
 
@@ -110,5 +111,70 @@ describe('isAuthenticodeSigned（发布清单的 signed 字段 / 上传闸门）
     fs.writeFileSync(path.join(TEST_DIR, 'AtlispTray.exe'), fakePe({ certSize: 1024 }));
     const manifest = buildManifest({ distDir: TEST_DIR, version: '1.2.3' });
     expect(manifest.files['AtlispTray.exe'].signed).toBe(true);
+  });
+});
+
+describe('ensureTrayManifest（发布前补齐启动器需要的清单）', () => {
+  function seedPackage(dir, version) {
+    fs.mkdirSync(path.join(dir, 'tray'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version }));
+  }
+
+  it('dist 里没有清单时按基线生成（发版机不需要那个 178KB 的 exe）', () => {
+    const dir = path.join(TEST_DIR, 'pkg-a');
+    seedPackage(dir, '9.9.9');
+    fs.writeFileSync(
+      path.join(dir, 'tray', 'exe-baseline.json'),
+      JSON.stringify({ sha256: 'a'.repeat(64), size: 1234, signed: false })
+    );
+
+    const manifest = ensureTrayManifest({ rootDir: dir, log: () => {} });
+
+    expect(manifest.version).toBe('9.9.9');
+    expect(manifest.files['AtlispTray.exe']).toEqual({
+      sha256: 'a'.repeat(64), size: 1234, signed: false,
+    });
+    expect(manifest.baseUrl).toBe(DEFAULT_BASE_URLS[0]);
+    const written = JSON.parse(fs.readFileSync(path.join(dir, 'dist', 'tray-manifest.json'), 'utf8'));
+    expect(written.version).toBe('9.9.9');
+    expect(fs.readFileSync(path.join(dir, 'dist', 'SHASUMS256.txt'), 'utf8'))
+      .toBe(`${'a'.repeat(64)}  AtlispTray.exe\n`);
+  });
+
+  it('已有清单时只更新版本、保留真实哈希（并提示与基线不一致）', () => {
+    const dir = path.join(TEST_DIR, 'pkg-b');
+    seedPackage(dir, '1.0.0');
+    fs.writeFileSync(
+      path.join(dir, 'tray', 'exe-baseline.json'),
+      JSON.stringify({ sha256: 'a'.repeat(64), size: 1234, signed: false })
+    );
+    fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'dist', 'tray-manifest.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        baseUrls: ['https://example.test/tray'],
+        baseUrl: 'https://example.test/tray',
+        files: { 'AtlispTray.exe': { sha256: 'b'.repeat(64), size: 5, signed: false } },
+      })
+    );
+    const logs = [];
+    const manifest = ensureTrayManifest({ rootDir: dir, version: '2.0.0', log: (m) => logs.push(m) });
+
+    expect(manifest.version).toBe('2.0.0');
+    expect(manifest.files['AtlispTray.exe'].sha256).toBe('b'.repeat(64));
+    expect(manifest.baseUrl).toBe('https://example.test/tray');
+    expect(logs.join('\n')).toMatch(/与基线/);
+  });
+});
+
+describe('npm 包内容', () => {
+  it('bin 注册 atlisp-tray，files 收录启动器与 manifest', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    expect(pkg.bin['atlisp-tray']).toBe('./tray/atlisp-tray.js');
+    expect(pkg.files).toContain('tray/atlisp-tray.js');
+    expect(pkg.files).toContain('tray/tray-download.js');
+    expect(pkg.files).not.toContain('!dist/tray-manifest.json');
   });
 });
