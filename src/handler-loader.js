@@ -5,8 +5,8 @@ import { log } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-let _handlerModulesInit = false;
-let _handlerNameMapInit = false;
+let _handlerModulesPromise = null;
+let _handlerNameMapPromise = null;
 const handlerModules = {};
 const moduleCache = new Map();
 const resolvedCache = new Map();
@@ -54,21 +54,36 @@ export function toolNameToFuncName(toolName) {
   return toolName.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 }
 
-async function buildHandlerNameMap() {
-  if (_handlerNameMapInit) return;
-  _handlerNameMapInit = true;
-  await initHandlerModules();
-  const modules = Object.keys(handlerModules);
-  const mods = await Promise.all(modules.map(name => getHandlerModule(name).then(mod => ({ name, mod }))));
-  for (const { name, mod } of mods) {
-    if (!mod) continue;
-    for (const key of Object.keys(mod)) {
-      if (typeof mod[key] === 'function') {
-        const entry = { moduleName: name, funcName: key };
-        resolvedCache.set(key, entry);
+/* 名字表只建一次，且**并发安全**。
+ *
+ * 旧实现用布尔标志 `_handlerNameMapInit`：第一个调用者把它置 true 后就去
+ * `await initHandlerModules()`，此时第二个调用者（另一个工具的 lazy handler）
+ * 直接 return，拿到一个**空的** handlerModules，于是该工具被判成不存在并
+ * 永久缓存 null。内存里 1.12.20/ffabc74 的「connect_cad Handler not found，
+ * 同机其他工具正常/随后整组失效」就是这个竞态：MCP 启动后第一波并发调用
+ * （get_cad_info + connect_cad + get_system_status）必然踩中。
+ *
+ * 改成共享 Promise：所有并发调用者等同一份初始化完成，没人能提前返回。 */
+function buildHandlerNameMap() {
+  if (!_handlerNameMapPromise) {
+    _handlerNameMapPromise = (async () => {
+      await initHandlerModules();
+      const modules = Object.keys(handlerModules);
+      const mods = await Promise.all(
+        modules.map((name) => getHandlerModule(name).then((mod) => ({ name, mod }))),
+      );
+
+      for (const { name, mod } of mods) {
+        if (!mod) continue;
+        for (const key of Object.keys(mod)) {
+          if (typeof mod[key] === 'function') {
+            resolvedCache.set(key, { moduleName: name, funcName: key });
+          }
+        }
       }
-    }
+    })();
   }
+  return _handlerNameMapPromise;
 }
 
 async function resolveHandler(toolName) {
@@ -82,12 +97,13 @@ async function resolveHandler(toolName) {
   }
 
   const entry = resolvedCache.get(funcName);
+
   if (entry) {
     resolvedCache.set(toolName, entry);
     return entry;
   }
-
-  resolvedCache.set(toolName, null);
+  /* 不缓存 null：模块加载失败（磁盘/import 抖动）是暂时的，缓存下来会让
+     这个工具在进程余下的生命周期里永久报 Handler not found。 */
   return null;
 }
 
@@ -102,29 +118,36 @@ export async function getHandlerModule(name) {
     log(`Handler module loaded: ${name}`);
     return mod;
   } catch (e) {
+    /* 不缓存失败：一次 import 抖动不该让这个模块永久不可用。 */
     log(`Handler module load failed: ${name} - ${e.message}`);
-    moduleCache.set(name, null);
     return null;
   }
 }
 
-export async function initHandlerModules() {
-  if (_handlerModulesInit) return;
-  _handlerModulesInit = true;
-  const handlerDir = path.join(__dirname, 'handlers');
-  let names = [];
-  try {
-    names = await fs.promises.readdir(handlerDir);
-  } catch {
-    /* 目录不在（单文件部署 / 精简安装）时不能直接 return：bundle 里的
-       glob import 仍能解析这些路径，静态清单就是兜底的名字来源。 */
-    log('Handler directory not found, using static manifest');
+/* 初始化只跑一次，但**所有并发调用者必须等到同一份结果**。
+   旧实现是 `if (_handlerModulesInit) return; _handlerModulesInit = true;`
+   ——第二个调用者在 readdir 还没回来时就返回，handlerModules 还是空的。
+   这是「Handler not found」最常见的真实原因，见 buildHandlerNameMap 注释。 */
+export function initHandlerModules() {
+  if (!_handlerModulesPromise) {
+    _handlerModulesPromise = (async () => {
+      const handlerDir = path.join(__dirname, 'handlers');
+      let names = [];
+      try {
+        names = await fs.promises.readdir(handlerDir);
+      } catch {
+        /* 目录不在（单文件部署 / 精简安装）时不能直接 return：bundle 里的
+           glob import 仍能解析这些路径，静态清单就是兜底的名字来源。 */
+        log('Handler directory not found, using static manifest');
+      }
+      for (const f of handlerFileNames(names)) {
+        const name = f.replace('-handlers.js', '');
+        handlerModules[name] = () => import(`./handlers/${name}-handlers.js`);
+      }
+      watchHandlers();
+    })();
   }
-  for (const f of handlerFileNames(names)) {
-    const name = f.replace('-handlers.js', '');
-    handlerModules[name] = () => import(`./handlers/${name}-handlers.js`);
-  }
-  watchHandlers();
+  return _handlerModulesPromise;
 }
 
 export async function getHandler(toolName) {
@@ -156,8 +179,8 @@ export function watchHandlers() {
         const name = filename.replace('-handlers.js', '');
         moduleCache.delete(name);
         resolvedCache.clear();
-        _handlerNameMapInit = false;
-        _handlerModulesInit = false;
+        _handlerNameMapPromise = null;
+        _handlerModulesPromise = null;
 
         try {
           await initHandlerModules();
