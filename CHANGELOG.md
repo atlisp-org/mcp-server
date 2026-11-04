@@ -2,6 +2,13 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.24] - 2026-11-04
+
+### 更新内容
+
+- fix(tray): @atlisp/mcp 的检查/安装固定走官方源，镜像只作检查兜底 (115512d)
+- chore(tray): 基线版本随 1.12.23 更新 (6cfb245)
+
 ## [1.12.23] - 2026-11-04
 
 ### 更新内容
