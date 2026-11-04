@@ -2,6 +2,21 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.12.21] - 2026-11-04
+
+### 更新内容
+
+- fix(handler-loader): 并发初始化竞态导致「Handler not found」 (f4c5f16)
+- fix(http): 无会话 POST 不再泄漏 MCP Server；keep-alive 覆盖 Node 默认 5s (fdf2187)
+- tray: 未签名发布不再阻塞，改为冻结哈希 + 误报白名单 (0403d90)
+- fix(stdio): Linux/容器下启动即崩，Docker e2e 卡在 initialize (c33a6a7)
+- fix(auth): 回环地址放行，避免配了 MCP_API_KEY 后本机浏览器页面（/workflow-editor、/agent/chat）全部 401 (adfb4e2)
+- remove tray cli (c2fa634)
+- docs(agents): eval 返回空串的真因——f / r 是结果包装器保留变量 (ffabc74)
+- fix(cad): 轮换 worker 时立即失败旧 worker 上的在途请求 (6aedd2a)
+- fix: 长时间运行后退出的稳定性修复（重启风暴上限、未捕获异常兜底、流错误监听） (fb375b2)
+- fix: CAD 阻塞时稳定性修复（探测直通、熔断限频、/health 有界） (284b043)
+
 ## [1.12.20] - 2026-10-28
 
 ### 更新内容
