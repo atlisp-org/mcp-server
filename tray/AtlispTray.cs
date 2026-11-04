@@ -580,7 +580,11 @@ namespace Atlisp.Tray
         public string NpmPath { get; set; }
         public string ServerScript { get; set; }
         public string ConfigFile { get; set; }
-        /// <summary>npm 源；留空 = 官方源（NpmRunner.DefaultRegistry），设为 npmmirror 镜像则用国内镜像。</summary>
+        /// <summary>
+        /// npm 镜像兜底开关：留空 = 只用官方源（默认）；设为 npmmirror 时，
+        /// 「检查更新」在官方源失败后用它兜底读取版本号。
+        /// **安装/升级/@atlisp/mcp 的版本来源永远走官方源**（见 NpmRunner.WithRegistry）。
+        /// </summary>
         public string NpmRegistry { get; set; }
         public string NodeVersion { get; set; }
         public string NodeMirror { get; set; }
@@ -1887,15 +1891,24 @@ namespace Atlisp.Tray
     internal static class NpmRunner
     {
         /// <summary>
-        /// 官方 npm 源（@lisp 官方 registry）。所有 npm 命令默认走这个源：
-        /// 国内网络比 npmjs.org 快，且保证装到 @lisp 官方包。用户勾选托盘里
-        /// 「使用 npmmirror 国内镜像」时，NpmRegistry 会被设为 <see cref="NpmMirror"/>
-        /// 覆盖此默认值；tray.json 的 NpmRegistry 留空即「官方源」。
+        /// 官方 npm 源（@lisp 自建 registry，同时代理 npmjs 的依赖包）。
+        /// **@atlisp/mcp 的检查/安装/升级/重新安装一律走这个源**：官方包的新版本
+        /// 不一定同步到 npmjs（npmmirror 只镜像 npmjs），用镜像装包会把本地版本
+        /// 降级（实测官方 1.12.23，npmjs 与 npmmirror 仍是 1.12.19）。
         /// </summary>
         public const string DefaultRegistry = "https://registry.atlisp.cn";
 
-        /// <summary>npmmirror 国内镜像（托盘菜单可勾选切换，覆盖默认官方源）。</summary>
+        /// <summary>
+        /// npmmirror 国内镜像。**只作「检查更新」读取失败时的兜底，绝不参与安装**：
+        /// 镜像上的 @atlisp/mcp 可能落后，拿它装包就是降级。
+        /// </summary>
         public const string NpmMirror = "https://registry.npmmirror.com";
+
+        /// <summary>用户是否允许镜像兜底（托盘开关；tray.json 的 NpmRegistry 非空即启用）。</summary>
+        public static bool MirrorFallbackEnabled(TrayConfig config)
+        {
+            return config != null && !string.IsNullOrEmpty(config.NpmRegistry);
+        }
 
         /// <summary>
         /// 全局安装/升级命令。没有 .NET SDK 时追加 --ignore-scripts：edge-js 的安装
@@ -1908,15 +1921,22 @@ namespace Atlisp.Tray
         }
 
         /// <summary>
-        /// 始终追加 --registry：NpmRegistry 留空时用官方源 <see cref="DefaultRegistry"/>，
-        /// 否则用用户选择的源——保证不会回落到 npmjs.org 默认源。
+        /// 始终追加官方源 --registry：@atlisp/mcp 的安装/升级/重新安装只用官方源，
+        /// 既不会装到镜像上的旧版本（降级），也不会回落到 npmjs.org 默认源。
+        /// 形参 config 保留只为不改调用点——镜像开关不影响装包。
         /// </summary>
         public static string WithRegistry(TrayConfig config, string arguments)
         {
-            string registry = string.IsNullOrEmpty(config.NpmRegistry)
-                ? DefaultRegistry
-                : config.NpmRegistry;
-            return arguments + " --registry=" + registry;
+            return arguments + " --registry=" + DefaultRegistry;
+        }
+
+        /// <summary>
+        /// 读取最新版本用的镜像源命令。仅用于「检查更新」在官方源失败后的兜底读取，
+        /// 绝不用于安装。
+        /// </summary>
+        public static string WithMirror(string arguments)
+        {
+            return arguments + " --registry=" + NpmMirror;
         }
 
         public static string Run(TrayConfig config, ServerInfo info, string arguments,
@@ -4764,6 +4784,9 @@ namespace Atlisp.Tray
         private readonly bool _startServerOnLaunch;
         private bool _restartForSelfUpdate;
         private string _latestVersion;
+        // 检查更新的镜像兜底状态：官方源失败后只重试一次镜像（只读，不用于安装）
+        private bool _checkMirrorTried;
+        private bool _checkUsedMirror;
         private string _lastNotifiedError;
         private LongTask _task;
         private OutputForm _taskWindow;
@@ -4866,8 +4889,10 @@ namespace Atlisp.Tray
             _serverAutoItem.ToolTipText = "关闭后托盘只做管理，不主动启动 MCP 服务";
             _serverAutoItem.Click += delegate { ToggleServerAutostart(); };
 
-            _mirrorItem = new ToolStripMenuItem("使用 npmmirror 国内镜像");
-            _mirrorItem.ToolTipText = "npm 默认走官方源 registry.atlisp.cn；勾选后改用 npmmirror 镜像";
+            _mirrorItem = new ToolStripMenuItem("官方源不通时回退 npmmirror（仅检查更新）");
+            _mirrorItem.ToolTipText = "检查/安装 @atlisp/mcp 始终走官方源 registry.atlisp.cn" +
+                "（npmjs 与 npmmirror 上的版本可能落后，用镜像装会降级）；" +
+                "勾选后官方源检查更新失败时，才用 npmmirror 兜底读版本号";
             _mirrorItem.Click += delegate { ToggleMirror(); };
 
             _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
@@ -5496,7 +5521,7 @@ namespace Atlisp.Tray
 
             _trayAutoItem.Checked = AutostartHelper.IsEnabled();
             _serverAutoItem.Checked = _config.AutoStartServer;
-            _mirrorItem.Checked = _config.NpmRegistry == NpmRunner.NpmMirror;
+            _mirrorItem.Checked = NpmRunner.MirrorFallbackEnabled(_config);
             _autoInstallItem.Checked = _config.AutoInstall;
             _autoUpgradeItem.Checked = _config.AutoUpgrade;
             _autoUpgradeItem.Text = "自动升级 @lisp/mcp（每 " +
@@ -7429,6 +7454,9 @@ namespace Atlisp.Tray
 
         private void CheckUpdate(bool silentCheck, bool autoUpgrade)
         {
+            // 主路径固定官方源；镜像只在失败后兜底读一次（见 HandleTaskFailure）
+            _checkMirrorTried = false;
+            _checkUsedMirror = false;
             RunNpmTask("检查更新",
                 NpmRunner.WithRegistry(_config, "view @atlisp/mcp version"),
                 autoUpgrade ? "check-auto" : (silentCheck ? "check-silent" : "check"),
@@ -7804,6 +7832,9 @@ namespace Atlisp.Tray
                 bool autoCheck = action == "check-auto";
                 string latest = VersionUtil.Extract(output);
                 _latestVersion = latest;
+                // 这轮结果来自镜像兜底：镜像可能落后，不触发自动升级，提示里标注来源
+                string sourceNote = _checkUsedMirror ? "（镜像源，可能滞后）" : "";
+                if (_checkUsedMirror) autoCheck = false;
                 if (latest == null)
                 {
                     if (showWindow) return;
@@ -7848,14 +7879,16 @@ namespace Atlisp.Tray
                     else
                     {
                         Balloon("发现新版本",
-                            "@lisp MCP Server v" + latest + " 可用（当前 " + info.VersionText + "）。" +
+                            "@lisp MCP Server v" + latest + sourceNote +
+                            " 可用（当前 " + info.VersionText + "）。" +
                             "右键托盘图标 → 升级到最新版。",
                             ToolTipIcon.Info);
                     }
                 }
                 else if (!string.IsNullOrEmpty(info.Version) && action == "check")
                 {
-                    Balloon("已是最新版本", "当前版本 " + info.VersionText + "。", ToolTipIcon.Info);
+                    Balloon("已是最新版本",
+                        "当前版本 " + info.VersionText + "。" + sourceNote, ToolTipIcon.Info);
                 }
                 UpdateUi();
                 return;
@@ -8121,6 +8154,21 @@ namespace Atlisp.Tray
                 return;
             }
 
+            // 检查更新失败：官方源不通时用镜像再读一次版本号（只读）。
+            // 镜像上的 @atlisp/mcp 可能落后，所以只用于提示、不触发自动升级，
+            // 也绝不用于安装（安装永远走官方源，见 NpmRunner.WithRegistry）。
+            if ((action == "check" || action == "check-silent" || action == "check-auto") &&
+                !_checkMirrorTried && NpmRunner.MirrorFallbackEnabled(_config))
+            {
+                _checkMirrorTried = true;
+                _checkUsedMirror = true;
+                AppLog.Write("检查更新：官方源不可用，改用 npmmirror 兜底读取（只读）");
+                RunNpmTask("检查更新（镜像兜底）",
+                    NpmRunner.WithMirror("view @atlisp/mcp version"),
+                    action, false, false);
+                return;
+            }
+
             if (action == "check-silent")
             {
                 AppLog.Write("启动时检查更新失败（已静默）");
@@ -8351,8 +8399,7 @@ namespace Atlisp.Tray
 
         private void ToggleMirror()
         {
-            // 默认源是官方 registry（NpmRunner.DefaultRegistry）；勾选后切到
-            // npmmirror 镜像，再取消勾选即恢复默认。
+            // 镜像只作为「检查更新」在官方源失败时的兜底读取；安装永远走官方源。
             if (_config.NpmRegistry == NpmRunner.NpmMirror)
             {
                 _config.NpmRegistry = "";
@@ -8363,10 +8410,11 @@ namespace Atlisp.Tray
             }
             _config.Save();
             UpdateUi();
-            Balloon("npm 源",
-                _config.NpmRegistry == NpmRunner.NpmMirror
-                    ? "已切换到 npmmirror 镜像：" + _config.NpmRegistry
-                    : "已恢复使用官方源：" + NpmRunner.DefaultRegistry,
+            Balloon("npm 镜像兜底",
+                NpmRunner.MirrorFallbackEnabled(_config)
+                    ? "已开启：官方源检查更新失败时，用 npmmirror 兜底读版本号。" +
+                      "\r\n安装/升级仍然只走官方源 " + NpmRunner.DefaultRegistry + "。"
+                    : "已关闭：检查更新只用官方源 " + NpmRunner.DefaultRegistry + "。",
                 ToolTipIcon.Info);
         }
 
@@ -8448,10 +8496,10 @@ namespace Atlisp.Tray
                 (_config.AutoUpgrade
                     ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时检查并升级"
                     : "关"));
-            builder.AppendLine("npm 源       : " +
-                (string.IsNullOrEmpty(_config.NpmRegistry)
-                    ? "官方源（默认）：" + NpmRunner.DefaultRegistry
-                    : _config.NpmRegistry));
+            builder.AppendLine("npm 源       : 安装/检查固定官方源 " + NpmRunner.DefaultRegistry +
+                (NpmRunner.MirrorFallbackEnabled(_config)
+                    ? "（检查失败时回退 " + NpmRunner.NpmMirror + "，仅读版本）"
+                    : "（不用镜像兜底）"));
             builder.AppendLine("知识库地址   : " + _config.DwgKbUrl);
             builder.AppendLine("知识库自动   : " + (_config.DwgKbAutoStart ? "随托盘启动" : "手动启动") +
                 " / " + (_config.DwgKbAutoUpgrade ? "自动升级" : "不自动升级"));
