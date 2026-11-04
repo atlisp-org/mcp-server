@@ -129,8 +129,9 @@ export function createAuthMiddleware() {
         // 拿不到 MCP_API_KEY，配了 key 之后它们连一次探测都过不去（401），表现为
         // 「本机 MCP 明明是通的，页面却说连不上」。浏览器这条路的边界是 CORS
         // 白名单（localhost / *.atlisp.cn），key 的作用是挡住**局域网**调用方。
-        if (isLoopbackRequest(req)) return next();
-
+        //
+        // 先解析 key 再放行：本机带 admin key 的调用仍需拿到 role（否则
+        // /config/reload、/peers/* 这类 admin 端点会对本机管理端返回 403）。
         const key = extractBearerKey(req);
         const role = resolveApiKeyRole(key, config);
         if (role) {
@@ -138,6 +139,8 @@ export function createAuthMiddleware() {
             req.role = role;
             return next();
         }
+
+        if (isLoopbackRequest(req)) return next();
 
         return res.status(401).json({ error: 'Unauthorized' });
     };

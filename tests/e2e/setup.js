@@ -39,8 +39,10 @@ export class McpContainer {
     this._nextId = 1;
     this._stdoutBuffer = '';
     this._stderrLines = [];
+    this._nonJsonLines = [];
     this._started = false;
     this._closing = false;
+    this._exitReason = null;
   }
 
   async start() {
@@ -59,11 +61,22 @@ export class McpContainer {
 
       this.child.on('exit', (code, signal) => {
         const reason = signal ? `signal ${signal}` : `exit code ${code}`;
+        this._exitReason = reason;
+        // 容器挂了要立刻把在途请求打回，并带上容器 stderr——
+        // 否则只会看到 15s 后的 "Timeout waiting for response"，看不到真正的死因
         for (const [id, resolver] of this._pendingResolvers) {
-          resolver.reject(new Error(`Container exited (${reason}) while waiting for response id=${id}`));
+          clearTimeout(resolver.timer);
+          resolver.reject(new Error(
+            `Container exited (${reason}) while waiting for response id=${id}\n` +
+            `--- container stderr (tail) ---\n${this._stderrTail()}`
+          ));
         }
         this._pendingResolvers.clear();
       });
+
+      // 容器提前退出时往 stdin 写数据会触发 'error'（EPIPE / ERR_STREAM_DESTROYED），
+      // 没有监听器会直接炸掉测试进程
+      this.child.stdin.on('error', () => {});
 
       this.child.stdout.on('data', (chunk) => {
         this._stdoutBuffer += chunk.toString();
@@ -78,7 +91,9 @@ export class McpContainer {
               this._processMessage(msg);
             }
           } catch {
-            // skip non-JSON startup logs / docker output
+            // 非 JSON 行（docker 自身的输出、被污染的日志）记下来，
+            // 供用例断言 stdout 只剩 JSON-RPC
+            this._nonJsonLines.push(trimmed);
           }
         }
       });
@@ -87,26 +102,21 @@ export class McpContainer {
         this._stderrLines.push(...chunk.toString().split('\n').filter(Boolean));
       });
 
-      // Wait for server to be ready by sending initialize and awaiting response
-      // Give the server a moment to start up first
-      setTimeout(async () => {
-        try {
-          this._started = true;
-          const initResp = await this.sendRequest('initialize', {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            clientInfo: { name: 'e2e-test', version: '1.0.0' }
-          });
-          if (initResp.error) {
-            reject(new Error(`Initialize failed: ${JSON.stringify(initResp.error)}`));
-            return;
-          }
-          await this.sendNotification('notifications/initialized', {});
-          resolve();
-        } catch (e) {
-          reject(e);
+      // 直接发 initialize：容器 stdin 是管道，服务器起来后会自己读到，
+      // 不用猜启动耗时（之前的固定 2s 延迟反而掩盖了「容器已崩」这种情况）
+      this._started = true;
+      this.sendRequest('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'e2e-test', version: '1.0.0' }
+      }).then(async (initResp) => {
+        if (initResp.error) {
+          reject(new Error(`Initialize failed: ${JSON.stringify(initResp.error)}`));
+          return;
         }
-      }, 2000);
+        await this.sendNotification('notifications/initialized', {});
+        resolve();
+      }).catch(reject);
     });
   }
 
@@ -134,9 +144,20 @@ export class McpContainer {
     }) + '\n';
 
     return new Promise((resolve, reject) => {
+      if (this._exitReason) {
+        reject(new Error(
+          `Container already exited (${this._exitReason}) before sending ${method} (id=${id})\n` +
+          `--- container stderr (tail) ---\n${this._stderrTail()}`
+        ));
+        return;
+      }
+
       const timer = setTimeout(() => {
         this._pendingResolvers.delete(id);
-        reject(new Error(`Timeout waiting for response to ${method} (id=${id})`));
+        reject(new Error(
+          `Timeout waiting for response to ${method} (id=${id})\n` +
+          `--- container stderr (tail) ---\n${this._stderrTail()}`
+        ));
       }, 15000);
 
       this._pendingResolvers.set(id, { resolve, reject, timer });
@@ -158,7 +179,7 @@ export class McpContainer {
     }) + '\n';
     try {
       this.child.stdin.write(message);
-    } catch (e) {
+    } catch {
       // ignore write errors for notifications
     }
   }
@@ -171,17 +192,30 @@ export class McpContainer {
     return this._stderrLines.join('\n');
   }
 
+  /** stdout 上出现的非 JSON-RPC 行（Docker 输出或日志污染） */
+  getNonJsonLines() {
+    return [...this._nonJsonLines];
+  }
+
+  /** 最近 N 行 stderr，用于失败信息里带出容器真正的死因 */
+  _stderrTail(n = 30) {
+    const lines = this._stderrLines.filter(Boolean);
+    return lines.slice(-n).join('\n') || '(empty)';
+  }
+
   async close() {
     if (this._closing) return;
     this._closing = true;
-    if (this.child && this.child.stdin && !this.child.stdin.destroyed) {
-      try { this.child.stdin.end(); } catch {}
+    if (!this.child) return;
+    // 容器已经退出（启动失败等）就不用再等 5s 的 kill 超时
+    if (this._exitReason) return;
+    if (this.child.stdin && !this.child.stdin.destroyed) {
+      try { this.child.stdin.end(); } catch { /* 容器已退出时 end() 可能报错，忽略 */ }
     }
     return new Promise((resolve) => {
-      if (!this.child) { resolve(); return; }
       const timeout = setTimeout(() => {
         if (this.child && !this.child.killed) {
-          try { this.child.kill('SIGKILL'); } catch {}
+          try { this.child.kill('SIGKILL'); } catch { /* 进程已消失，忽略 */ }
         }
         resolve();
       }, 5000);
@@ -189,7 +223,7 @@ export class McpContainer {
         clearTimeout(timeout);
         resolve();
       });
-      try { this.child.kill('SIGTERM'); } catch {}
+      try { this.child.kill('SIGTERM'); } catch { /* 进程已消失，忽略 */ }
     });
   }
 }

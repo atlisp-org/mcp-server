@@ -18,10 +18,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import v8 from 'node:v8';
 import vm from 'node:vm';
 
-// cad-pool 静态引入 cad-rot-helper → edge-js（.NET ROT 枚举，仅 Windows 有意义）。
-// 本文件只测会话路由部分，mock 掉 cad-rot-helper，使 soak 在任何 Linux/CI 环境
-// 都不依赖 edge-js 能否加载（本机验证过 edge-js 在 Linux 可加载，仅打印 CoreCLR 警告，
-// 但 mock 后 soak 完全独立于该环境变量）。
+// cad-rot-helper 里的 edge-js 已改为懒加载（Linux 上 require 会 throw），这里仍
+// mock 掉 cad-rot-helper，使 soak 只测会话路由，不触发任何 ROT 枚举。
 vi.mock('../../src/cad-rot-helper.js', () => ({
   discoverCadInstances: async () => [],
 }));

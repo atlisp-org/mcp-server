@@ -67,6 +67,15 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **流式限制**：`streaming.js` 默认 20000 实体上限（`MAX_ENTITY_LIMIT` 环境变量可配），超限返回错误而非执行 `ssget "_X"`
 - **Webhook**：失败自动指数退避重试 3 次（1s/2s/4s），总耗时 ≈ 7s
 - **队列清理**：`resetWorker()` 会同时清空 `CommandQueue`，确保残留命令不被消费
+- **edge-js 只能延迟加载**：它只有 Windows/macOS 的原生模块，Linux 上 `require('edge-js')`
+  直接 throw。主进程的启动路径（`cad-pool` → `cad-rot-helper`）**不能**在模块顶层 import，
+  必须在函数里 `createRequire` 并按平台降级（非 Windows 直接返回空实例列表）；否则 Linux
+  容器里整个服务启动即崩，表现为 MCP `initialize` 永远不返回（Docker e2e 的经典坑）
+- **stdio 模式日志只走 stderr**：`stdout` 是 JSON-RPC 协议通道，`logger.log()` 的
+  debug 输出也必须 `console.error`，任何 `console.log` 都会插进消息流
+- **打包后不要拼运行期路径加载自家模块**：`dist` 是单文件 bundle，`path.join(__dirname, …)`
+  在 dist 下指向不存在的目录（prompts 定义/处理器都踩过）。用「字面量目录 + 变量文件名」的
+  模板字符串 `import(\`./handlers/${name}.js\`)`，esbuild 才会一起打包
 - **npm 安装脚本**：`edge-js` ≥25.0.0 的 `tools/install.js` 在 Windows 上**无条件**
   `spawn dotnet build`（CoreCLR bootstrap），没装 .NET SDK 的机器会以
   `Error: spawn dotnet ENOENT` 让 `npm install -g @atlisp/mcp` 退出码 1。因此依赖**锁在

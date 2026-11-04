@@ -23,8 +23,8 @@ vi.mock('../../src/audit-log.js', () => ({
   AUDIT_FILE: '/dev/null',
 }));
 
-// routes → cad-pool 会静态引入 cad-rot-helper → edge-js（.NET ROT，仅 Windows 有意义）。
-// 本 e2e 从不调用 CAD 发现/连接，mock 掉使其完全不依赖 edge-js 能否在本机加载。
+// cad-rot-helper 里的 edge-js 已改为懒加载（Linux 上 require 会 throw），
+// 这里仍 mock 掉：本 e2e 从不调用 CAD 发现/连接，完全隔离 ROT 枚举。
 vi.mock('../../src/cad-rot-helper.js', () => ({
   discoverCadInstances: async () => [],
 }));

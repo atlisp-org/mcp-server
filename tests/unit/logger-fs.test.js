@@ -102,7 +102,7 @@ describe('log / error / warn', () => {
     expect(warnSpy).toHaveBeenCalledWith('[WARN] m3', {});
   });
 
-  it('config.debug=true 时同步输出 console', async () => {
+  it('config.debug=true 时同步输出到 stderr（不污染 stdio 协议通道）', async () => {
     config.debug = true;
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -112,7 +112,9 @@ describe('log / error / warn', () => {
       logger.error('m2');
       logger.warn('m3');
       await flush();
-      expect(logSpy).toHaveBeenCalledWith('[INFO] m1', { a: 1 });
+      // stdout 是 stdio 传输的 JSON-RPC 通道，任何日志都不能走 console.log
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith('[INFO] m1', { a: 1 });
       expect(errSpy).toHaveBeenCalledWith('[ERROR] m2', {});
       expect(warnSpy).toHaveBeenCalledWith('[WARN] m3', {});
     } finally {

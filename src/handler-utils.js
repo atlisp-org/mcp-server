@@ -42,6 +42,15 @@ async function ensureAtlispAfterConnect(autoInstall) {
 }
 
 export async function ensureCadConnected(options = {}) {
+  // edge-js 的原生模块只在 Windows（及 macOS）上可用，Linux 上连 worker 都起不来。
+  // 不在这里早退的话，每次 CAD 工具调用都要空等 connect 的 30s 超时（Docker e2e
+  // 里 get_cad_info 就是这么超时的），而且会拖慢 CAD_NOT_CONNECTED → peer 自动转发。
+  // 单测里 cad.js 被 mock（connect 返回 true），不受平台限制，所以 VITEST 下跳过。
+  if (process.platform !== 'win32' && !process.env.VITEST) {
+    throw createError(ERROR_CODES.CAD_NOT_CONNECTED,
+      `CAD 未连接。当前平台 ${process.platform} 不支持本地 CAD 连接（edge-js 仅 Windows），`
+      + '请用 peer 转发到 Windows 主机，或直接连接远端 MCP 服务');
+  }
   const { resolveCadConnection } = await import('./cad.js');
   const { pool } = await import('./cad-pool.js');
   const config = (await import('./config.js')).default;

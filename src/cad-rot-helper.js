@@ -1,10 +1,33 @@
-import edge from 'edge-js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { log, error as logError } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const projectRoot = path.dirname(path.dirname(__filename));
+
+const require = createRequire(import.meta.url);
+
+/* edge-js 只能延迟加载：它只有 Windows（以及 macOS）的原生模块，linux 上
+   `require('edge-js')` 直接 throw。本文件被 cad-pool.js → mcp-tools.js 静态引入，
+   一旦在模块顶层 import，整个服务器在 Linux 容器里启动即崩溃（Docker e2e 就卡在
+   `initialize` 上不返回）。CAD 只可能跑在 Windows，所以非 Windows 平台静默降级为
+   「无实例可发现」即可。 */
+let _edge = null;
+let _edgeLoadFailed = false;
+
+function loadEdge() {
+  if (_edge) return _edge;
+  if (_edgeLoadFailed) return null;
+  try {
+    _edge = require('edge-js');
+    return _edge;
+  } catch (e) {
+    _edgeLoadFailed = true;
+    log(`edge-js 不可用（${process.platform} ${process.arch}），跳过 CAD 实例发现: ${e.message}`);
+    return null;
+  }
+}
 
 let _rotHelper = null;
 // 加载失败后不再重试：edge-js 原生模块/CLR 初始化失败时，每次 edge.func() 都是
@@ -15,6 +38,16 @@ let _rotHelperFailed = false;
 function getRotHelper() {
   if (_rotHelper) return _rotHelper;
   if (_rotHelperFailed) return null;
+  // ROT（Running Object Table）是 Windows COM 概念，其他平台没有必要尝试
+  if (process.platform !== 'win32') {
+    _rotHelperFailed = true;
+    return null;
+  }
+  const edge = loadEdge();
+  if (!edge) {
+    _rotHelperFailed = true;
+    return null;
+  }
   const dllPath = path.join(projectRoot, 'dist', 'cad-rothelper.dll');
   try {
     _rotHelper = edge.func({

@@ -132,6 +132,15 @@ beforeAll(async () => {
   config.metricsEnabled = true; // 注册 /metrics 路由
 
   const app = express();
+  // 鉴权中间件会放行回环地址（本机页面免 key），而测试服务器本身就监听 127.0.0.1，
+  // 不放行伪造源地址的话 401/403 用例永远测不到。默认把来源改成内网 IP，
+  // 需要验证「回环放行」时用 x-test-client-ip 请求头指回 127.0.0.1。
+  app.use((req, _res, next) => {
+    let ip = req.headers['x-test-client-ip'] || '10.10.10.10';
+    if (Array.isArray(ip)) ip = ip[0];
+    Object.defineProperty(req.socket, 'remoteAddress', { value: ip, configurable: true });
+    next();
+  });
   setupRoutes(app);
   server = http.createServer(app);
   const port = await listen(server);
@@ -333,6 +342,31 @@ describe('鉴权与 RBAC', () => {
     config.apiKey = 'root-secret';
     expect((await req('/health')).status).toBe(200);
     expect((await req('/debug')).status).toBe(401);
+  });
+
+  it('回环地址免 key，局域网仍需 key', async () => {
+    config.apiKey = 'root-secret';
+    const local = await req('/peers', { headers: { 'x-test-client-ip': '127.0.0.1' } });
+    expect(local.status).toBe(200);
+
+    const lanNoKey = await req('/peers', { headers: { 'x-test-client-ip': '192.168.1.20' } });
+    expect(lanNoKey.status).toBe(401);
+
+    const lanWithKey = await req('/peers', {
+      headers: { 'x-test-client-ip': '192.168.1.20' },
+      auth: 'root-secret',
+    });
+    expect(lanWithKey.status).toBe(200);
+  });
+
+  it('本机带 admin key 仍能通过 admin 端点（role 不被回环放行吃掉）', async () => {
+    config.apiKey = 'root-secret';
+    const r = await req('/rate-limit/reset', {
+      method: 'POST',
+      headers: { 'x-test-client-ip': '127.0.0.1' },
+      auth: 'root-secret',
+    });
+    expect(r.status).toBe(200);
   });
 
   it('viewer 调用 tools/call 返回 403 JSON-RPC 错误', async () => {

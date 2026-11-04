@@ -4,5 +4,7 @@ services:
     environment:
       - TRANSPORT=stdio
       - DEBUG=true
+      # 安全校验用 strict，e2e 才能验证危险函数确实被阻断（默认 relaxed 只告警）
+      - SECURITY_LEVEL=strict
     stdin_open: true
     tty: true

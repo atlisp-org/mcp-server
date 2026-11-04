@@ -60,7 +60,9 @@ export function log(message, meta = {}) {
     getStream().write(formatMessage('INFO', message, meta) + '\n');
     notify('info', message);
     if (config.debug) {
-        console.log(`[INFO] ${message}`, meta);
+        // 必须走 stderr：stdio 传输模式下 stdout 是 JSON-RPC 协议通道，
+        // 任何 console.log 都会插进消息流（DEBUG=true 的 Docker e2e 就是这样被污染的）
+        console.error(`[INFO] ${message}`, meta);
     }
 }
 

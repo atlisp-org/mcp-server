@@ -13,7 +13,7 @@ Windows 通知区域（托盘）小程序，用来管理本机 `@lisp/mcp` 服�
 - **日志与面板**：一键打开调试面板、API 文档、Playground、服务器日志
 - **开机自启**：首次启动**询问**是否加入 Windows 启动项（默认按钮在「否」，之后可在右键菜单随时开关）；可选托盘启动时自动启动服务
 - **环境诊断**：Node/npm 路径、安装位置、服务状态、健康检查一屏查看
-- **npm 镜像**：一键切换 npmmirror（国内网络）
+- **npm 源**：默认走官方源 `registry.atlisp.cn`，一键切换 npmmirror 镜像（国内网络）
 
 ## 构建
 
@@ -172,7 +172,7 @@ npm pack --dry-run
 | `NpmPath` | `""` | 手动指定 `npm.cmd` 路径（留空自动检测） |
 | `ServerScript` | `""` | 手动指定 `atlisp-mcp.js` 路径（留空自动检测） |
 | `ConfigFile` | `""` | 传给服务的 `--config` 路径（留空使用默认配置） |
-| `NpmRegistry` | `""` | npm 源；设为 `https://registry.npmmirror.com` 使用国内镜像 |
+| `NpmRegistry` | `""` | npm 源；留空默认走官方源 `https://registry.atlisp.cn`，设为 `https://registry.npmmirror.com` 用国内镜像 |
 | `NodeVersion` | `22.12.0` | 从 npmmirror 安装的 Node.js 版本（自动带 `v` 前缀） |
 | `NodeMirror` | `https://npmmirror.com/mirrors/node` | Node.js 安装包镜像地址 |
 | `AutoStartServer` | `true` | 托盘启动时自动启动服务 |

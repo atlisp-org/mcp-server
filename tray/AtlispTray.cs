@@ -580,6 +580,7 @@ namespace Atlisp.Tray
         public string NpmPath { get; set; }
         public string ServerScript { get; set; }
         public string ConfigFile { get; set; }
+        /// <summary>npm 源；留空 = 官方源（NpmRunner.DefaultRegistry），设为 npmmirror 镜像则用国内镜像。</summary>
         public string NpmRegistry { get; set; }
         public string NodeVersion { get; set; }
         public string NodeMirror { get; set; }
@@ -1886,6 +1887,17 @@ namespace Atlisp.Tray
     internal static class NpmRunner
     {
         /// <summary>
+        /// 官方 npm 源（@lisp 官方 registry）。所有 npm 命令默认走这个源：
+        /// 国内网络比 npmjs.org 快，且保证装到 @lisp 官方包。用户勾选托盘里
+        /// 「使用 npmmirror 国内镜像」时，NpmRegistry 会被设为 <see cref="NpmMirror"/>
+        /// 覆盖此默认值；tray.json 的 NpmRegistry 留空即「官方源」。
+        /// </summary>
+        public const string DefaultRegistry = "https://registry.atlisp.cn";
+
+        /// <summary>npmmirror 国内镜像（托盘菜单可勾选切换，覆盖默认官方源）。</summary>
+        public const string NpmMirror = "https://registry.npmmirror.com";
+
+        /// <summary>
         /// 全局安装/升级命令。没有 .NET SDK 时追加 --ignore-scripts：edge-js 的安装
         /// 脚本会因 `spawn dotnet ENOENT` 让 npm 退出码 1（见 EdgeNativeSupport）。
         /// </summary>
@@ -1895,13 +1907,16 @@ namespace Atlisp.Tray
                 "install -g @atlisp/mcp@latest --loglevel=error" + EdgeNativeSupport.InstallArgs());
         }
 
+        /// <summary>
+        /// 始终追加 --registry：NpmRegistry 留空时用官方源 <see cref="DefaultRegistry"/>，
+        /// 否则用用户选择的源——保证不会回落到 npmjs.org 默认源。
+        /// </summary>
         public static string WithRegistry(TrayConfig config, string arguments)
         {
-            if (!string.IsNullOrEmpty(config.NpmRegistry))
-            {
-                return arguments + " --registry=" + config.NpmRegistry;
-            }
-            return arguments;
+            string registry = string.IsNullOrEmpty(config.NpmRegistry)
+                ? DefaultRegistry
+                : config.NpmRegistry;
+            return arguments + " --registry=" + registry;
         }
 
         public static string Run(TrayConfig config, ServerInfo info, string arguments,
@@ -2476,7 +2491,7 @@ namespace Atlisp.Tray
             }
             if (!info.IsInstalled)
             {
-                throw new TrayException("未检测到 @lisp MCP Server。请先安装：npm install -g @atlisp/mcp");
+                throw new TrayException("未检测到 @lisp MCP Server。请先安装：npm install -g @atlisp/mcp --registry " + NpmRunner.DefaultRegistry);
             }
 
             lock (_sync)
@@ -4852,7 +4867,7 @@ namespace Atlisp.Tray
             _serverAutoItem.Click += delegate { ToggleServerAutostart(); };
 
             _mirrorItem = new ToolStripMenuItem("使用 npmmirror 国内镜像");
-            _mirrorItem.ToolTipText = "国内网络建议开启，下载 Node.js / npm 包更快";
+            _mirrorItem.ToolTipText = "npm 默认走官方源 registry.atlisp.cn；勾选后改用 npmmirror 镜像";
             _mirrorItem.Click += delegate { ToggleMirror(); };
 
             _autoInstallItem = new ToolStripMenuItem("启动时自动补齐运行环境");
@@ -5481,7 +5496,7 @@ namespace Atlisp.Tray
 
             _trayAutoItem.Checked = AutostartHelper.IsEnabled();
             _serverAutoItem.Checked = _config.AutoStartServer;
-            _mirrorItem.Checked = !string.IsNullOrEmpty(_config.NpmRegistry);
+            _mirrorItem.Checked = _config.NpmRegistry == NpmRunner.NpmMirror;
             _autoInstallItem.Checked = _config.AutoInstall;
             _autoUpgradeItem.Checked = _config.AutoUpgrade;
             _autoUpgradeItem.Text = "自动升级 @lisp/mcp（每 " +
@@ -7354,7 +7369,7 @@ namespace Atlisp.Tray
                 "1) 关闭占用它的程序（MCP 客户端 / 旧版托盘 / 残留 node.exe）后，" +
                 "在托盘菜单里重试升级；\r\n" +
                 "2) 或关掉托盘后在命令行执行：\r\n" +
-                "     npm install -g @atlisp/mcp@latest\r\n\r\n" +
+                "     npm install -g @atlisp/mcp@latest --registry https://registry.atlisp.cn\r\n\r\n" +
                 "查看谁在占用：任务管理器 → 详细信息，找 node.exe / AtlispTray.exe，" +
                 "\r\n" +
                 "  右键「打开文件所在位置」，确认路径是否在 @atlisp\\mcp 目录内。";
@@ -8150,7 +8165,7 @@ namespace Atlisp.Tray
                     "edge-js 的 npm 安装脚本会调用 dotnet 构建 CoreCLR bootstrap，" +
                     "本机没有 .NET SDK 时报 spawn dotnet ENOENT。\r\n\r\n" +
                     "请关闭托盘后在命令行执行：\r\n" +
-                    "  npm install -g @atlisp/mcp --ignore-scripts\r\n\r\n" +
+                    "  npm install -g @atlisp/mcp --ignore-scripts --registry https://registry.atlisp.cn\r\n\r\n" +
                     LastLines(text, 6));
                 if (restartAfter)
                 {
@@ -8336,20 +8351,22 @@ namespace Atlisp.Tray
 
         private void ToggleMirror()
         {
-            if (string.IsNullOrEmpty(_config.NpmRegistry))
+            // 默认源是官方 registry（NpmRunner.DefaultRegistry）；勾选后切到
+            // npmmirror 镜像，再取消勾选即恢复默认。
+            if (_config.NpmRegistry == NpmRunner.NpmMirror)
             {
-                _config.NpmRegistry = "https://registry.npmmirror.com";
+                _config.NpmRegistry = "";
             }
             else
             {
-                _config.NpmRegistry = "";
+                _config.NpmRegistry = NpmRunner.NpmMirror;
             }
             _config.Save();
             UpdateUi();
             Balloon("npm 源",
-                string.IsNullOrEmpty(_config.NpmRegistry)
-                    ? "已恢复使用 npm 默认源。"
-                    : "已切换到 npmmirror 镜像：" + _config.NpmRegistry,
+                _config.NpmRegistry == NpmRunner.NpmMirror
+                    ? "已切换到 npmmirror 镜像：" + _config.NpmRegistry
+                    : "已恢复使用官方源：" + NpmRunner.DefaultRegistry,
                 ToolTipIcon.Info);
         }
 
@@ -8432,7 +8449,9 @@ namespace Atlisp.Tray
                     ? "每 " + (_config.AutoUpgradeHours > 0 ? _config.AutoUpgradeHours : 24) + " 小时检查并升级"
                     : "关"));
             builder.AppendLine("npm 源       : " +
-                (string.IsNullOrEmpty(_config.NpmRegistry) ? "默认" : _config.NpmRegistry));
+                (string.IsNullOrEmpty(_config.NpmRegistry)
+                    ? "官方源（默认）：" + NpmRunner.DefaultRegistry
+                    : _config.NpmRegistry));
             builder.AppendLine("知识库地址   : " + _config.DwgKbUrl);
             builder.AppendLine("知识库自动   : " + (_config.DwgKbAutoStart ? "随托盘启动" : "手动启动") +
                 " / " + (_config.DwgKbAutoUpgrade ? "自动升级" : "不自动升级"));

@@ -5,8 +5,19 @@ import { renderPrompt } from './renderer.js';
 import {  error as logError } from '../logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFS_DIR = path.join(__dirname, 'definitions');
-const PROMPTS_DIR = path.join(__dirname, '..', '..', 'prompts');
+
+/* 源码运行（src/prompts/loader.js）与 esbuild 打包运行（dist/atlisp-mcp.js）的目录
+   层级不同：打包后 __dirname 直接就是 dist/，`__dirname/definitions` 会指向不存在的
+   目录，导致 npm 包/容器里 prompts/list 永远为空。用 __dirname 的目录名判断走哪条路径。 */
+const isBundled = path.basename(__dirname) !== 'prompts';
+const DEFS_DIR = isBundled
+  ? (fs.existsSync(path.join(__dirname, 'prompts', 'definitions'))
+    ? path.join(__dirname, 'prompts', 'definitions')
+    : path.join(__dirname, 'definitions'))
+  : path.join(__dirname, 'definitions');
+const PROMPTS_DIR = isBundled
+  ? path.join(__dirname, '..', 'prompts')
+  : path.join(__dirname, '..', '..', 'prompts');
 
 const CACHE_TTL = 60000;
 const cache = new Map();
@@ -96,13 +107,16 @@ function findExternalPrompt(name) {
   return ext.find(p => p.name === name);
 }
 
-const HANDLERS_DIR = path.join(__dirname, 'handlers');
 const handlerCache = new Map();
 
 async function loadHandler(handlerFile) {
   if (handlerCache.has(handlerFile)) return handlerCache.get(handlerFile);
   try {
-    const mod = await import(path.join(HANDLERS_DIR, handlerFile + '.js'));
+    // 必须用「字面量目录 + 变量文件名」的模板字符串：esbuild 只有看到这种形式
+    // 才会把 ./prompts/handlers/*.js 一起打包。用 path.join(__dirname, ...) 拼路径
+    // 时 dist 里没有这些文件，npm 包/容器里 prompts/get 一律报
+    // "Failed to load prompt handler"（同 handler-loader.js 的 glob import 约定）。
+    const mod = await import(`./handlers/${handlerFile}.js`);
     const fn = mod.default || mod.handler;
     if (typeof fn !== 'function') throw new Error(`Handler ${handlerFile} does not export a function`);
     handlerCache.set(handlerFile, fn);

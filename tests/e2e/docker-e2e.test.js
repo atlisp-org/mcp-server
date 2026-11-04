@@ -11,6 +11,18 @@ const SKIP_REASON = 'Docker not available or docker compose not found';
 describe.sequential('MCP Server Docker E2E Tests', () => {
   let container;
 
+  /** tools/list 每页 100 条，跨页收集全部工具名 */
+  async function listAllToolNames() {
+    const names = [];
+    let cursor;
+    do {
+      const resp = await container.sendRequest('tools/list', cursor ? { cursor } : {});
+      names.push(...resp.result.tools.map(t => t.name));
+      cursor = resp.result.nextCursor;
+    } while (cursor);
+    return names;
+  }
+
   beforeAll(async () => {
     if (!checkDockerAvailable() || !checkDockerComposeAvailable()) {
       console.warn(`Skipping Docker E2E tests: ${SKIP_REASON}`);
@@ -34,6 +46,14 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
       if (!container) return;
       const stderr = container.getStderrText();
       expect(stderr).toContain('stdio');
+    });
+
+    it('stdout 只承载 JSON-RPC（日志不得污染协议通道）', () => {
+      if (!container) return;
+      // DEBUG=true 曾经把 [INFO] 日志写到 stdout，混进 initialize/tools 消息流
+      const polluted = container.getNonJsonLines()
+        .filter(line => /^\[(INFO|WARN|ERROR|DEBUG)\]/.test(line));
+      expect(polluted).toEqual([]);
     });
   });
 
@@ -62,8 +82,7 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
 
     it('includes known tools', async () => {
       if (!container) return;
-      const resp = await container.sendRequest('tools/list', {});
-      const names = resp.result.tools.map(t => t.name);
+      const names = await listAllToolNames();
       expect(names).toContain('search_tools');
       expect(names).toContain('eval_lisp');
       expect(names).toContain('draw_line');
@@ -96,9 +115,10 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
   describe('tools/call', () => {
     it('calls search_tools successfully', async () => {
       if (!container) return;
+      // search_tools 默认只列前 10 条，查询要足够精确才能稳定命中目标工具
       const resp = await container.sendRequest('tools/call', {
         name: 'search_tools',
-        arguments: { query: 'line' }
+        arguments: { query: 'draw_line' }
       });
       expect(resp).toHaveProperty('result');
       expect(resp.result).toHaveProperty('content');
@@ -115,12 +135,15 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
       expect(resp).toHaveProperty('result');
       const text = resp.result.content[0].text;
       const result = JSON.parse(text);
-      expect(result).toHaveProperty('safe');
-      expect(result).toHaveProperty('issues');
+      expect(result).toHaveProperty('valid', true);
+      expect(result).toHaveProperty('blocked', false);
+      expect(Array.isArray(result.results)).toBe(true);
+      expect(result).toHaveProperty('summary');
     });
 
     it('calls sandbox_validate and detects dangerous code', async () => {
       if (!container) return;
+      // compose 里设了 SECURITY_LEVEL=strict，危险函数会被阻断
       const resp = await container.sendRequest('tools/call', {
         name: 'sandbox_validate',
         arguments: { code: '(startapp "cmd.exe")' }
@@ -128,8 +151,9 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
       expect(resp).toHaveProperty('result');
       const text = resp.result.content[0].text;
       const result = JSON.parse(text);
-      expect(result.safe).toBe(false);
-      expect(result.issues.length).toBeGreaterThan(0);
+      expect(result.valid).toBe(false);
+      expect(result.blocked).toBe(true);
+      expect(result.results.length).toBeGreaterThan(0);
     });
 
     it('calls agent_set_context and agent_get_context', async () => {
@@ -212,7 +236,8 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
         name: 'nonexistent-prompt-xyz',
         arguments: {}
       });
-      expect(resp.result).toHaveProperty('isError', true);
+      // SDK 对未知 prompt 走 JSON-RPC error；兼容未来可能改成 result.isError 的形态
+      expect(resp.error || resp.result?.isError).toBeTruthy();
     });
   });
 
@@ -298,26 +323,28 @@ describe.sequential('MCP Server Docker E2E Tests', () => {
   // ====================== Completion ======================
 
   describe('completion/complete', () => {
-    it('returns completions for tool ref type', async () => {
+    it('returns completions for resource ref type', async () => {
       if (!container) return;
       const resp = await container.sendRequest('completion/complete', {
-        ref: { type: 'ref/tool' },
-        argument: { name: 'toolName', value: 'dr' }
+        ref: { type: 'ref/resource', uri: 'atlisp://dwg/context' },
+        argument: { name: 'uri', value: 'atlisp://' }
       });
       expect(resp).toHaveProperty('result');
       expect(resp.result).toHaveProperty('completion');
       expect(resp.result.completion).toHaveProperty('values');
       expect(Array.isArray(resp.result.completion.values)).toBe(true);
+      expect(resp.result.completion.values.length).toBeGreaterThan(0);
     });
 
-    it('returns completions for prompt ref type', async () => {
+    it('returns completion shape for prompt ref type', async () => {
       if (!container) return;
       const resp = await container.sendRequest('completion/complete', {
-        ref: { type: 'ref/prompt' },
-        argument: { name: 'promptName', value: 'ana' }
+        ref: { type: 'ref/prompt', name: 'analyze-drawing' },
+        argument: { name: 'drawingType', value: 'a' }
       });
       expect(resp).toHaveProperty('result');
-      expect(resp.result.completion.values).toBeTruthy();
+      expect(resp.result.completion).toHaveProperty('values');
+      expect(Array.isArray(resp.result.completion.values)).toBe(true);
     });
   });
 });
