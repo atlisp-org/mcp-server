@@ -1,6 +1,6 @@
 {
   "sha256": "ce67af9190df774eb9ede6fa6ed8039126712e940106af7d6495ecc4a221921b",
-  "version": "1.12.20",
+  "version": "1.12.21",
   "generatedAt": "2026-11-03T10:47:33.133Z",
   "note": "已提交误报白名单的托盘二进制。重建后 SHA256 变化会让白名单失效（见 tray/false-positive-submission.md），提交通过后把新值写回这里。"
 }
