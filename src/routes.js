@@ -536,8 +536,27 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
 }
 
 async function handleMcpPost(req, res) {
-    const sessionId = req.headers['mcp-session-id'] || req.query.sessionId || randomUUID();
+    /* 只有客户端**明确带回**会话 id 时才复用会话。
+       页面/无状态客户端每次都是裸 POST（不带 mcp-session-id），以前这里给每个
+       POST 都 new 一个随机 id 并保留 30 分钟：一个对话几十次调用就能攒出上百个
+       完整的 MCP Server + SessionTransport（createMcpServer 会注册全部工具/资源），
+       内存单调增长、GC 变频繁，最终表现就是「用一会儿就开始偶发超时/连不上」。
+       无会话 id 的请求在响应发出后立刻回收，语义上仍然是「一次性」。 */
+    const reusedId = req.headers['mcp-session-id'] || req.query.sessionId;
+    const sessionId = reusedId || randomUUID();
     sessionManager.createSession(sessionId);
+    if (!reusedId) {
+        let released = false;
+        const release = () => {
+            if (released) return;
+            released = true;
+            removeSessionServer(sessionId);
+            sessionManager.removeSession(sessionId);
+        };
+        // finish = 正常回完；close = 客户端中途断开。两者都可能触发，用 released 去重。
+        res.once('finish', release);
+        res.once('close', release);
+    }
     const body = req.body;
     if (!body) {
         return res.status(400).json({ error: 'Invalid request' });

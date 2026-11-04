@@ -464,6 +464,31 @@ describe('/mcp 路由', () => {
     expect(transportMock.handleRequestCalls).toHaveLength(1);
   });
 
+  it('无会话头的请求在响应后立即回收（否则每个 POST 泄漏一个 MCP Server）', async () => {
+    const state = await import('../../src/mcp-server-state.js');
+    state.removeSessionServer.mockClear();
+    const r = await req('/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: { jsonrpc: '2.0', id: 11, method: 'tools/list', params: {} },
+    });
+    expect(r.status).toBe(200);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(state.removeSessionServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('带 mcp-session-id 的请求保留会话，供客户端复用', async () => {
+    const state = await import('../../src/mcp-server-state.js');
+    state.removeSessionServer.mockClear();
+    const r = await req('/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-session-id': 'keep-sess' },
+      body: { jsonrpc: '2.0', id: 12, method: 'tools/list', params: {} },
+    });
+    expect(r.status).toBe(200);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(state.removeSessionServer).not.toHaveBeenCalled();
+  });
+
   it('批量数组逐条处理，无效条目返回 -32600', async () => {
     const r = await req('/mcp', {
       method: 'POST', headers: { 'content-type': 'application/json' },

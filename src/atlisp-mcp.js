@@ -393,6 +393,13 @@ export async function startServer() {
         }
 
         const rawServer = httpsServer || http.createServer(app);
+        /* Node 默认 keepAliveTimeout = 5s。浏览器会复用空闲连接，如果它挑中的
+           正是服务端刚关掉的那条，请求直接失败（`ERR_EMPTY_RESPONSE` /
+           `Failed to fetch`），而 POST 不会自动重试——症状是「偶发连不上，
+           刷新一下又好」。把服务端的空闲超时放到远大于浏览器的复用窗口；
+           headersTimeout 必须比 keepAliveTimeout 大，否则连接在收头阶段被切。 */
+        rawServer.keepAliveTimeout = 65_000;
+        rawServer.headersTimeout = 70_000;
         createWebSocketServer(rawServer);
 
         const isLoopbackHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host);
