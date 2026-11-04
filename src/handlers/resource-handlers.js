@@ -101,6 +101,78 @@ function parseTemplateUri(uri) {
 }
 
 // =============================================================================
+// Context Bundle
+// =============================================================================
+
+/* 一次 RPC 拿齐编排所需的全部上下文。
+ *
+ * 页面侧（server/pages/agent-ui.src.html 的 relayRpc）和 relay-client 早就有
+ * 这个合并包，但**直连部署**（agent → mcp-server）没有：agent 的
+ * ContextGatherer 先读 bundle，读不到就回退成 5 次 resources/read。现在把同一
+ * 份实现放进服务端，直连也能 1 次往返拿齐。
+ *
+ * 并发固定 3：CAD COM 读不可重入（实测 8 路并发会返回 "No open document"），
+ * 3 是页面与 relay-client 已验证的安全值。 */
+const CONTEXT_BUNDLE_URIS = [
+  'atlisp://cad/info',
+  'atlisp://dwg/name',
+  'atlisp://dwg/path',
+  'atlisp://dwg/context',
+  'atlisp://dwg/analysis?type=summary',
+];
+
+/** 并发上限受控的 map：保持输出顺序，异常由 fn 自己处理。 */
+export async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const width = Math.max(1, Math.min(limit, items.length));
+
+  async function worker() {
+    for (;;) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: width }, worker));
+  return out;
+}
+
+function toResourceResult(uri, data) {
+  if (data && data._blob) {
+    return {
+      contents: [{ uri, mimeType: data.mimeType || 'application/octet-stream', blob: data._blob }],
+    };
+  }
+  return {
+    contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(data === undefined ? null : data) }],
+  };
+}
+
+/**
+ * 组装 context-bundle。
+ *
+ * @param {(uri: string) => Promise<any>} readOne 单个资源的读取函数（默认 readResource）
+ * @param {Record<string, string>} [params] ?text=1 时附带 text-combined
+ * @param {number} [limit] 并发上限
+ */
+export async function buildContextBundle(readOne, params = {}, limit = 3) {
+  const uris = [...CONTEXT_BUNDLE_URIS];
+
+  if (String(params.text || '') === '1') uris.push('atlisp://dwg/text-combined');
+
+  const items = await mapPool(uris, limit, async (uri) => {
+    try {
+      return { uri, result: toResourceResult(uri, await readOne(uri)) };
+    } catch (e) {
+      return { uri, error: e.message || String(e) };
+    }
+  });
+
+  return { items };
+}
+
+// =============================================================================
 // Public API
 // =============================================================================
 
@@ -221,6 +293,8 @@ export async function readResource(uri) {
       return await getCadEvents(params);
     case 'atlisp://dwg/context':
       return await getDwgContext();
+    case 'atlisp://dwg/context-bundle':
+      return await buildContextBundle(readResource, params);
     case 'atlisp://tools/relationships':
       return getToolRelationships();
     case 'atlisp://dwg/analysis':

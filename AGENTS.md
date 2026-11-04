@@ -29,6 +29,8 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **CAD 通信**：`cad.js` 通过子进程 `cad-worker.js` 通信。worker 使用 `edge-js` 调用 .NET COM，通过 stdin/stdout JSON 行协议通信
 - **HTTP 连接稳定性**：`/mcp` 的**无会话**请求（浏览器页面就是这么用的：每次裸 POST）在响应后立即 `removeSessionServer`，不再保留 30 分钟——否则每个 POST 都留下一个完整 MCP Server + Transport，长对话内存单调增长、GC 变频繁，表现为「用一会儿就偶发超时」。`keepAliveTimeout=65s / headersTimeout=70s` 覆盖 Node 默认的 5s，避免浏览器复用「服务端刚关掉的空闲连接」时 POST 直接失败（`Failed to fetch` / `ERR_EMPTY_RESPONSE`）。
 - **读批处理**：`cad.js` 的 `ReadBatcher` 将只读命令（以 `(tblnext`/`(ssget`/`(entget` 等开头）在 50ms 窗口内批量合并发送
+- **上下文合并包**：`atlisp://dwg/context-bundle` 把 `cad/info`、`dwg/name`、`dwg/path`、`dwg/context`、`dwg/analysis?type=summary` 一次 RPC 读齐（`?text=1` 追加 `dwg/text-combined`），服务端并发固定 3（CAD COM 读不可重入）。Agent 的 `ContextGatherer` 优先读它，直连部署不再回退成 5 次 `resources/read`
+- **只读批处理并发**：`/mcp` 的 JSON-RPC 数组仅在**全部只读**时并发 3（`resources/read`，或 `tools/call` 且工具在 `READ_ONLY_TOOLS`）；保持顺序、单项失败隔离。含写操作的数组仍严格串行
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）；临时文件方式会先把 tmp 目录写进 `TRUSTEDPATHS` 免弹信任框，写不进去（中望/浩辰等）则改走内存分块注入，见下文「信任弹窗与 TRUSTEDPATHS」
 - **工具定义**：`src/tools/` 下 47 个文件定义工具 Schema（共 379 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
 - **协议版本**：`src/constants.js` 的 `PROTOCOL_VERSION` 取自 SDK 的 `LATEST_PROTOCOL_VERSION`（不再写死，当前 2025-11-25）；Server 握手按 SDK `SUPPORTED_PROTOCOL_VERSIONS` 协商，旧客户端仍可回退 2024-11-05（`mcp-scanner.js` 用该常量做探测）

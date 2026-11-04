@@ -19,16 +19,24 @@ const cadMock = vi.hoisted(() => ({
 const transportMock = vi.hoisted(() => ({
   handleRequestCalls: [],
   delay: 0,
+  active: 0,
+  peak: 0,
   handleRequest(body) {
     transportMock.handleRequestCalls.push(body);
+    transportMock.active += 1;
+    transportMock.peak = Math.max(transportMock.peak, transportMock.active);
+    const finish = (value) => {
+      transportMock.active -= 1;
+      return value;
+    };
     const response = {
       jsonrpc: '2.0',
       id: body.id ?? null,
       result: { ok: true, method: body.method },
     };
     return transportMock.delay
-      ? new Promise(r => setTimeout(() => r(response), transportMock.delay))
-      : Promise.resolve(response);
+      ? new Promise(r => setTimeout(() => r(finish(response)), transportMock.delay))
+      : Promise.resolve(finish(response));
   },
   resetCleanupTimer: vi.fn(),
 }));
@@ -168,6 +176,8 @@ beforeEach(() => {
   cadMock.connected = false;
   transportMock.handleRequestCalls = [];
   transportMock.delay = 0;
+  transportMock.active = 0;
+  transportMock.peak = 0;
   resetRateLimit();
 });
 
@@ -504,6 +514,64 @@ describe('/mcp 路由', () => {
     expect(r.json[1].error.code).toBe(-32600);
     expect(r.json[2]).toEqual({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } });
     expect(transportMock.handleRequestCalls).toHaveLength(1); // 无效条目不进 transport
+  });
+
+  it('只读批处理并发 ≤3；含写工具的数组仍严格串行', async () => {
+    transportMock.delay = 40;
+    const reads = Array.from({ length: 6 }, (_, i) => ({
+      jsonrpc: '2.0',
+      id: i + 1,
+      method: 'resources/read',
+      params: { uri: `atlisp://bench/${i}` },
+    }));
+
+    const started = Date.now();
+    const readRes = await req('/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: reads,
+    });
+    const readElapsed = Date.now() - started;
+
+    /* 6 条串行 = 240ms；并发 3 应接近 80ms。留足 CI 抖动余量。 */
+    expect(readRes.status).toBe(200);
+    expect(readRes.json.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(transportMock.peak).toBeLessThanOrEqual(3);
+    expect(transportMock.peak).toBeGreaterThan(1);
+    expect(readElapsed).toBeLessThan(200);
+
+    /* 只读 tools/call 同样可以并发（agent 的 fetchMetadataBatched 一次 9 条）。 */
+    transportMock.peak = 0;
+    transportMock.handleRequestCalls = [];
+    const metaCalls = Array.from({ length: 6 }, (_, i) => ({
+      jsonrpc: '2.0',
+      id: i + 1,
+      method: 'tools/call',
+      params: { name: ['list_layouts', 'list_ucs', 'list_named_views', 'list_text_styles', 'get_blocks', 'list_groups'][i], arguments: {} },
+    }));
+    const metaStarted = Date.now();
+    const metaRes = await req('/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: metaCalls,
+    });
+    const metaElapsed = Date.now() - metaStarted;
+
+    expect(metaRes.json.map((x) => x.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(transportMock.peak).toBeLessThanOrEqual(3);
+    expect(metaElapsed).toBeLessThan(200);
+
+    /* 写工具混进来：顺序不能动，退回串行。 */
+    transportMock.peak = 0;
+    transportMock.handleRequestCalls = [];
+    const mixed = [
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_cad_info', arguments: {} } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'delete_entity', arguments: { handle: '1' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_packages', arguments: {} } },
+    ];
+    await req('/mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: mixed });
+
+    expect(transportMock.peak).toBe(1);
   });
 
   it('并发相同 tools/call 请求被去重为一次调用', async () => {

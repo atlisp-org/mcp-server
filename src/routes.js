@@ -18,7 +18,7 @@ import { SseSession, parseLastEventId } from './sse-session.js';
 import { subscribeEvents, unsubscribeEvents } from './cad-event-bus.js';
 import { metrics, trackRequest, trackMcpMethod } from './metrics.js';
 import { createRateLimitMiddleware, getRateLimitStatus, resetRateLimit } from './rate-limiter.js';
-import { getVisibleTools } from './tools/index.js';
+import { getVisibleTools, READ_ONLY_TOOLS } from './tools/index.js';
 import { getApiKeyRole, canAccess, resolveApiKeyRole } from './auth.js';
 import { SERVER_VERSION } from './constants.js';
 import { pairRelay, unpairRelay, getRelayStatus } from './relay-client.js';
@@ -535,6 +535,24 @@ export function setupRoutes(app, { registerMcpRoutes = true } = {}) {
     return app;
 }
 
+/* 并发上限受控、保持输出顺序。只用于**只读批处理**：CAD COM 读不可重入，
+   3 是页面与 relay-client 已验证的安全值；写操作仍走严格串行。 */
+async function runWithConcurrency(items, limit, fn) {
+    const out = new Array(items.length);
+    let cursor = 0;
+    const width = Math.max(1, Math.min(limit, items.length));
+
+    async function worker() {
+        for (;;) {
+            const i = cursor++;
+            if (i >= items.length) return;
+            out[i] = await fn(items[i], i);
+        }
+    }
+    await Promise.all(Array.from({ length: width }, worker));
+    return out;
+}
+
 async function handleMcpPost(req, res) {
     /* 只有客户端**明确带回**会话 id 时才复用会话。
        页面/无状态客户端每次都是裸 POST（不带 mcp-session-id），以前这里给每个
@@ -563,22 +581,39 @@ async function handleMcpPost(req, res) {
     }
 
     if (Array.isArray(body)) {
-        const results = [];
-        for (const single of body) {
+        /* 只读批量可以并发；以前一律串行 await，9 条读元数据就是 9 次 CAD 往返。
+           判定用服务端自己的 READ_ONLY_TOOLS（与 tools/call 的 readOnlyHint 同源）：
+           - resources/read：只读；
+           - tools/call 且名字在白名单：只读。
+           混入任何写工具就退回严格串行，顺序不能动。 */
+        const parallelizable =
+            body.length > 1 &&
+            body.every((s) =>
+                s?.method === 'resources/read' ||
+                (s?.method === 'tools/call' && READ_ONLY_TOOLS.has(s?.params?.name)));
+        const results = new Array(body.length);
+
+        const runOne = async (single, i) => {
             if (!single || !single.method) {
-                results.push({ jsonrpc: '2.0', id: single?.id || null, error: { code: -32600, message: 'Invalid Request' } });
-                continue;
+                results[i] = { jsonrpc: '2.0', id: single?.id || null, error: { code: -32600, message: 'Invalid Request' } };
+                return;
             }
             try {
                 const result = await getMcpResponse(sessionId, single);
-                if (result !== undefined) results.push(result);
+                if (result !== undefined) results[i] = result;
             } catch (err) {
-                results.push({ jsonrpc: '2.0', id: single.id || null, error: { code: -32603, message: err.message } });
+                results[i] = { jsonrpc: '2.0', id: single.id || null, error: { code: -32603, message: err.message } };
             }
+        };
+
+        if (parallelizable) {
+            await runWithConcurrency(body, 3, runOne);
+        } else {
+            for (let i = 0; i < body.length; i++) await runOne(body[i], i);
         }
         const headers = { 'Content-Type': 'application/json' };
         res.writeHead(200, headers);
-        res.end(JSON.stringify(results));
+        res.end(JSON.stringify(results.filter((r) => r !== undefined)));
         return;
     }
 

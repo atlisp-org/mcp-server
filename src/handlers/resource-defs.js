@@ -136,6 +136,15 @@ export const RESOURCES = [
     mimeType: 'application/json', subscribable: true,
   },
   {
+    uri: 'atlisp://dwg/context-bundle',
+    name: 'DWG Context Bundle',
+    description: '上下文合并包（一次 RPC 拿齐）：cad/info、dwg/name、dwg/path、dwg/context、'
+      + 'dwg/analysis?type=summary；加 ?text=1 再带 dwg/text-combined（文本类 Agent 用）。'
+      + '返回 { items: [{ uri, result } | { uri, error }] }，服务端并发 3 读取（CAD COM 读不可重入）。'
+      + 'Agent 编排开头只读它一个即可，替代 5 次单独 resources/read。',
+    mimeType: 'application/json', subscribable: false,
+  },
+  {
     uri: 'atlisp://tools/relationships',
     name: 'Tool Relationships',
     description: '工具协作关系图：按场景（selection/drawing/editing/batch_ops/export/layers/blocks/analysis）'
