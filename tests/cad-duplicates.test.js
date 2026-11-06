@@ -16,13 +16,17 @@ const { cadDuplicates } = await import('../src/handlers/analysis-handlers.js');
 describe('cadDuplicates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSend.mockResolvedValue('重复实体组: 2（最多显示 50 组；tol=0.000001）\\nLINE => ("A1" "A2")');
+    mockSend.mockResolvedValue(
+      '重复实体组: 2（显示 2 / 最多显示 50 组；重复实体 3；tol=0.000001）\\nLINE => ("A1" "A2")',
+    );
   });
 
-  it('返回确定性分组文本', async () => {
+  it('返回确定性分组文本（总组数/重复实体数不受 maxGroups 截断）', async () => {
     const result = await cadDuplicates({});
+
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('重复实体组: 2');
+    expect(result.content[0].text).toContain('重复实体 3');
     expect(result.content[0].text).toContain('A1');
   });
 
@@ -31,6 +35,8 @@ describe('cadDuplicates', () => {
     const lisp = mockSend.mock.calls[0][0];
     expect(lisp).toContain('@dup:key');
     expect(lisp).toContain('(ssget "_X")');
+    expect(lisp).toContain('tot');
+    expect(lisp).toContain('refs');
     expect(lisp).not.toContain('entdel');
   });
 

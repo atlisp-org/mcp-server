@@ -190,13 +190,19 @@ export async function cadDuplicates(params = {}) {
         (if (setq g (assoc k groups))
           (setq groups (subst (cons k (cons h (cdr g))) g groups))
           (setq groups (cons (list k h) groups))))))
-  (setq out "" n 0)
+  (setq out "" n 0 tot 0 refs 0)
   (foreach g groups
-    (if (and (> (length g) 2) (< n ${maxGroups}))
+    (if (> (length g) 2)
       (progn
-        (setq n (1+ n))
-        (setq out (strcat out "\\n" (car g) " => " (vl-princ-to-string (cdr g)))))))
-  (strcat "重复实体组: " (itoa n) "（最多显示 ${maxGroups} 组；tol=${tolerance}）" out)
+        ;; 每个重复组多出来的实体数 = 组内实体数 - 1；长度含 key，所以再减 1。
+        (setq tot (1+ tot) refs (+ refs (- (length g) 2)))
+        (if (< n ${maxGroups})
+          (progn
+            (setq n (1+ n))
+            (setq out (strcat out "\\n" (car g) " => " (vl-princ-to-string (cdr g)))))))))
+  (strcat "重复实体组: " (itoa tot)
+          "（显示 " (itoa n) " / 最多显示 ${maxGroups} 组；重复实体 " (itoa refs)
+          "；tol=${tolerance}）" out)
 )`;
 
   try {
