@@ -2,6 +2,18 @@
 
 本文件由 `scripts/release.mjs` 自动维护（`npm run release <patch|minor|major>`）。
 
+## [1.13.0] - 2026-11-07
+
+### 更新内容
+
+- docs: 2026-11 开发计划、交付说明与 Q4 路线图状态更新 (891ff9c)
+- feat(observability,security): sampling 流式/降级、启动 profiling、Grafana 模板 (c95a83e)
+- feat(task,elicit): 长任务引擎、破坏性确认与错误上下文 (f34c433)
+- fix(test): 资源清单断言改为显式集合；覆盖率失败时也出报告并设阈值 (1702b7a)
+- feat(duplicates): 摘要返回总组数与重复实体数，不受 maxGroups 截断 (baa04e7)
+- perf(resources): 服务端 context-bundle + 只读批处理并发 3 (c491a79)
+- docs(tray): 1.12.24 误报申诉作业单（新哈希 46ea8dd5…） (f60b9b0)
+
 ## [1.12.24] - 2026-11-04
 
 ### 更新内容
