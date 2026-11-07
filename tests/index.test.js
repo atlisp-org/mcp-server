@@ -116,6 +116,18 @@ describe('tools definition', () => {
     expect(tools.length).toBeGreaterThan(100);
   });
 
+  it('never registers the same tool name twice', () => {
+    const names = tools.map(t => t.name);
+    const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+    expect(dupes).toEqual([]);
+  });
+
+  it('every tool name is snake_case', () => {
+    for (const tool of tools) {
+      expect(tool.name).toMatch(/^[a-z][a-z0-9_]*$/);
+    }
+  });
+
   it('each tool has name, description, and inputSchema', () => {
     for (const tool of tools) {
       expect(tool).toHaveProperty('name');

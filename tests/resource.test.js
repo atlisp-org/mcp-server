@@ -91,32 +91,49 @@ describe('resource-handlers', () => {
       expect(pkgRes.subscribable).toBe(true);
     });
 
+    // 资源清单的单一事实来源。新增资源时同步这里——刻意不做「数量联动」，
+    // 否则删掉一条资源测试仍会绿。
+    const EXPECTED_URIS = [
+      'atlisp://cad/info',
+      'atlisp://dwg/entities',
+      'atlisp://dwg/text-content',
+      'atlisp://dwg/text-combined',
+      'atlisp://dwg/name',
+      'atlisp://dwg/path',
+      'atlisp://dwg/block-refs',
+      'atlisp://dwg/tbl',
+      'atlisp://cad/dwgs',
+      'atlisp://cad/events',
+      'atlisp://packages',
+      'atlisp://platforms',
+      'atlisp://standards',
+      'atlisp://standards/drafting',
+      'atlisp://standards/coding',
+      'atlisp://dwg/context',
+      'atlisp://dwg/context-bundle',
+      'atlisp://tools/relationships',
+      'atlisp://dwg/analysis',
+      'atlisp://tools/categories',
+      'atlisp://tools/industries',
+      'atlisp://dwg/standards/check',
+      'atlisp://system/cad-status',
+      'atlisp://dwg/frames',
+    ];
+
     it('contains all expected resources', () => {
-      expect(RESOURCES).toHaveLength(23);
+      const uris = RESOURCES.map(r => r.uri).sort();
+      expect(uris).toEqual([...EXPECTED_URIS].sort());
+    });
+
+    it('never registers the same resource URI twice', () => {
       const uris = RESOURCES.map(r => r.uri);
-      expect(uris).toContain('atlisp://cad/info');
-      expect(uris).toContain('atlisp://dwg/entities');
-      expect(uris).toContain('atlisp://dwg/text-content');
-      expect(uris).toContain('atlisp://dwg/text-combined');
-      expect(uris).toContain('atlisp://dwg/name');
-      expect(uris).toContain('atlisp://dwg/path');
-      expect(uris).toContain('atlisp://dwg/block-refs');
-      expect(uris).toContain('atlisp://dwg/tbl');
-      expect(uris).toContain('atlisp://cad/dwgs');
-      expect(uris).toContain('atlisp://packages');
-      expect(uris).toContain('atlisp://platforms');
-      expect(uris).toContain('atlisp://standards');
-      expect(uris).toContain('atlisp://standards/drafting');
-      expect(uris).toContain('atlisp://standards/coding');
-      expect(uris).toContain('atlisp://cad/events');
-      expect(uris).toContain('atlisp://dwg/context');
-      expect(uris).toContain('atlisp://tools/relationships');
-      expect(uris).toContain('atlisp://dwg/analysis');
-      expect(uris).toContain('atlisp://tools/categories');
-      expect(uris).toContain('atlisp://tools/industries');
-      expect(uris).toContain('atlisp://dwg/standards/check');
-      expect(uris).toContain('atlisp://system/cad-status');
-      expect(uris).toContain('atlisp://dwg/frames');
+      expect(new Set(uris).size).toBe(uris.length);
+    });
+
+    it('context-bundle advertises merged context semantics', () => {
+      const bundle = RESOURCES.find(r => r.uri === 'atlisp://dwg/context-bundle');
+      expect(bundle).toBeDefined();
+      expect(bundle.description).toContain('?text=1');
     });
   });
 
