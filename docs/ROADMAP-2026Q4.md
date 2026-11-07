@@ -13,23 +13,23 @@
 - [x] **B1 Token 治理**（150ec8f）：TOOL_PROFILE（full=358/356KB、standard=227/232KB、minimal=103/102KB，默认 full）；search_tools 摘要化 + limit；15 工具描述瘦身；20 新用例
 - [x] **D1 内存 soak + HTTP e2e**（e9caf71）：soak 5 用例（会话×800/SSE×600/agent-context×500/CAD 切换×100，堆增长<50MB）+ HTTP e2e 6 用例；耗时净增 ≈0.7s
 
-## Wave 2a — P1 质量（并行）
+## Wave 2a — P1 质量（并行）✅ 2026-10
 
-- [ ] **E1 覆盖率 41.7% → ≥60%**：补 sampling/plugin-loader/debug-engine/audit-log/cad-router/lint-handlers/routes/logger/autostart 测试
-- [ ] **F1 大文件拆分**：resource-handlers.js（1583 行）按域拆分，对外 handler 函数名不变
+- [x] **E1 覆盖率 41.7% → ≥60%**（4d7bdba）：补 sampling/plugin-loader/debug-engine/audit-log/cad-router/lint-handlers/routes/logger/autostart 测试；当前行覆盖 63.5%
+- [x] **F1 大文件拆分**：resource-handlers.js 1583 → 318 行，拆为 resource-readers/resource-snapshot/resource-defs，对外 handler 函数名不变
 
-## Wave 2b — P1 新能力
+## Wave 2b — P1 新能力 ✅ 2026-11
 
-- [ ] **G1 长任务引擎**：task-engine + task_* 工具；批量操作可异步返回 taskId；进度走 notifications/progress
-- [ ] **J1 插件示例**：3 个官方示例插件（自定义工具/事件钩子/审计）+ 加载冒烟测试
+- [x] **G1 长任务引擎**：`task-engine.js` + `task_submit/status/result/list/cancel`；并发 2、状态落盘、TTL 24h、进度走 notifications/progress（2026-11）
+- [x] **J1 插件示例**：3 个官方示例插件 + `tests/unit/examples-plugins.test.js`
 
-## Wave 3 — P2 增强
+## Wave 3 — P2 增强 ✅ 2026-11
 
-- [ ] **H1 sampling 补完**：流式、失败降级链（vllm→deepseek→openai→echo）、token 成本记账进 metrics
-- [ ] **I1 elicitation 破坏性确认**：destructiveHint 工具按配置向客户端请求确认
-- [ ] **K1 错误结构化**：createError 附带 tool/instance/hint 上下文，工具错误结果可被 Agent 自我纠错
-- [ ] **L1 启动 profiling**：import 链分析 + 重模块懒加载
-- [ ] **M1 OTel Grafana 模板**：工具耗时/CAD 忙等/peer 成功率看板
+- [x] **H1 sampling 补完**：`stream:true` SSE 解析、`SAMPLING_PROVIDERS` 降级链、token/成本指标（2026-11）
+- [x] **I1 elicitation 破坏性确认**：`ELICITATION_MODE=off|destructive|all`，默认 off；不支持客户端降级放行
+- [x] **K1 错误结构化**：`withErrorContext()`/`summarizeArgs()`，错误带 tool/instance/phase/correlationId，审计同步关联 ID
+- [x] **L1 启动 profiling**：`--profile-startup` + `npm run profile:startup`；传输层/可选模块懒加载（stdio 启动约 -3%，未达 400ms 目标，瓶颈是 390 个工具 schema 与 handler 依赖链）
+- [x] **M1 OTel Grafana 模板**：`deploy/grafana/atlisp-mcp-dashboard.json` + `docs/observability.md`；修复直方图后缀位于标签之后的 Prometheus 非法格式
 
 ## 里程碑
 

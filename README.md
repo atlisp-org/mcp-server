@@ -1,6 +1,6 @@
 ﻿# @lisp MCP Server
 
-MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **340+ 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
+MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @lisp 包管理服务的 MCP 服务器，同时为 AI Agent 操控 CAD 提供 **390 个调用工具**和通道。自 v1.8.32 起，Windows 自动启动支持后台静默运行（无终端窗口）。
 
 支持 **AutoCAD / ZWCAD / GStarCAD / BricsCAD**，通过 COM 互操作与 CAD 通信。
 
@@ -32,7 +32,7 @@ MCP (Model Context Protocol) Server for @lisp on CAD — 为 CAD 环境提供 @l
 
 - **连接多平台 CAD** — AutoCAD / ZWCAD / GStarCAD / BricsCAD
 - **执行 AutoLISP** — 执行 LISP 代码并获取结果
-- **AI Agent 控制 CAD** — 340+ MCP 工具，涵盖绘图、编辑、查询、管理
+- **AI Agent 控制 CAD** — 390 个 MCP 工具，涵盖绘图、编辑、查询、管理、长任务
 - **包管理** — 列出、搜索、安装 @lisp 包
 - **自动安装 @lisp** — 连接 CAD 后自动安装/加载核心与函数库（未保存图纸时安全跳过）
 - **批量操作** — 批量复制/移动/旋转/缩放/镜像/偏移/改名/改色/改图层
@@ -966,6 +966,9 @@ atlisp-mcp --no-auto-install-atlisp
 | `LLM_MODEL` | `gpt-4o-mini` | LLM 模型 |
 | `LLM_MAX_TOKENS` | `4096` | LLM 最大 tokens |
 | `LLM_TEMPERATURE` | `0.7` | LLM 温度 |
+| `LLM_STREAM` | `false` | Sampling 使用 SSE 流式响应 |
+| `SAMPLING_PROVIDERS` | — | 降级链，如 `vllm,deepseek,openai`；全部失败回退 echo |
+| `ELICITATION_MODE` | `off` | 破坏性操作确认：`off`/`destructive`/`all`（客户端需支持 MCP elicitation） |
 | `API_KEY_RATE_LIMIT` | `1000` | API Key 速率限制 |
 | `AUTO_INSTALL_ATLISP` | `true` | 连接 CAD 后自动安装/加载 @lisp 核心与函数库（false/0/off/no 关闭） |
 | `ATLISP_BOOTSTRAP_TIMEOUT` | `120000` | 自动安装/加载单条命令超时 (ms) |

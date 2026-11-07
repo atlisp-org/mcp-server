@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-@lisp MCP Server 是 AI Agent 与 CAD 之间的桥接层——通过 MCP 协议提供 330+ 工具供 Agent 调用，底层通过 `edge-js` → .NET COM 互操作控制 AutoCAD/ZWCAD/GStarCAD/BricsCAD。
+@lisp MCP Server 是 AI Agent 与 CAD 之间的桥接层——通过 MCP 协议提供 390 个工具供 Agent 调用，底层通过 `edge-js` → .NET COM 互操作控制 AutoCAD/ZWCAD/GStarCAD/BricsCAD。
 
 ## 常用命令
 
@@ -32,7 +32,10 @@ AI Agent → (MCP协议) → mcp-server (Node.js) → edge-js → .NET COM → C
 - **上下文合并包**：`atlisp://dwg/context-bundle` 把 `cad/info`、`dwg/name`、`dwg/path`、`dwg/context`、`dwg/analysis?type=summary` 一次 RPC 读齐（`?text=1` 追加 `dwg/text-combined`），服务端并发固定 3（CAD COM 读不可重入）。Agent 的 `ContextGatherer` 优先读它，直连部署不再回退成 5 次 `resources/read`
 - **只读批处理并发**：`/mcp` 的 JSON-RPC 数组仅在**全部只读**时并发 3（`resources/read`，或 `tools/call` 且工具在 `READ_ONLY_TOOLS`）；保持顺序、单项失败隔离。含写操作的数组仍严格串行
 - **SendCommand 255 字符限制**：超过 255 字符的代码自动降级为临时文件方式（`cadSendWithResult`）；临时文件方式会先把 tmp 目录写进 `TRUSTEDPATHS` 免弹信任框，写不进去（中望/浩辰等）则改走内存分块注入，见下文「信任弹窗与 TRUSTEDPATHS」
-- **工具定义**：`src/tools/` 下 47 个文件定义工具 Schema（共 379 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
+- **工具定义**：`src/tools/` 下 54 个文件定义工具 Schema（共 390 个工具，以 `npm run build` 后 tools 数组为准），`src/tools/index.js` 合并为 `tools` 数组并添加 `readOnlyHint`/`destructiveHint`/`category` 注解，并为每个工具生成人类可读的 `title`（取描述首段）
+- **长任务**：`task_*`（submit/status/result/list/cancel）由 `src/task-engine.js` 承载，后台执行仍走 `handleToolCall`（校验/限速/Undo/审计/插件钩子），并发默认 2、状态落盘 `~/.atlisp/tasks.json`、完成保留 24h；取消只在步骤之间生效
+- **破坏性确认**：`src/elicitation.js` 按 `ELICITATION_MODE`（默认 `off`）对 `destructiveHint` 工具调用 MCP `elicitInput`；客户端不支持/请求失败一律降级放行，确认结果按会话缓存 5 分钟
+- **错误上下文**：`errors.js` 的 `withErrorContext()`/`summarizeArgs()` 给工具错误补 `tool/instance/phase/correlationId/args`，响应同时带 `structuredContent.error` 并写入审计日志
 - **协议版本**：`src/constants.js` 的 `PROTOCOL_VERSION` 取自 SDK 的 `LATEST_PROTOCOL_VERSION`（不再写死，当前 2025-11-25）；Server 握手按 SDK `SUPPORTED_PROTOCOL_VERSIONS` 协商，旧客户端仍可回退 2024-11-05（`mcp-scanner.js` 用该常量做探测）
 - **结构化输出**：查询类工具在定义中声明 `outputSchema`，对应 handler 同时返回 `content`（文本，向后兼容）与 `structuredContent`（JSON）；`src/tool-executor.js` 统一透传 structuredContent，并在缺少 content 时回填 JSON 文本块（解析辅助见 `src/handlers/structured-output.js`）
 - **远程 Peer 转发**：Linux 服务器可将 CAD 工具调用转发到 Windows 主机（MCP-to-MCP）。`src/peer-discovery.js` UDP 广播发现（端口 9811）、`src/peer-manager.js` 管理 peer 生命周期（健康检查/静态 peer）、`src/peer-proxy.js` HTTP 转发（JSON + SSE）、`src/peer-forward.js` 转发白名单（`peer_`/`skill_`/`webhook_`/`audit_` 等本地管理工具永不转发）
@@ -240,6 +243,8 @@ npm publish                           # 发布到 npm（prepublishOnly 会重新
 | `src/atlisp-mcp.js` | 入口：CLI 解析、Express 服务器、MCP 初始化 |
 | `src/relay-client.js` | 后台中继：连接服务端 relay WS、配对/状态、执行 rpc |
 | `src/mcp-tools.js` | 工具调度：TOOL_HANDLERS 映射、参数校验、审计、资源变更通知 |
+| `src/task-engine.js` | 长任务引擎：并发/排队/取消/进度/TTL/落盘 |
+| `src/elicitation.js` | 破坏性操作确认（MCP elicitation，默认关闭） |
 | `src/mcp-handlers.js` | MCP 协议处理器（initialize/tools/list/call） |
 | `src/tool-executor.js` | 工具执行引擎：参数校验/限速检查/Undo 包装/审计写入/错误统一处理 |
 | `src/tool-validators.js` | 参数运行时校验（类型/enum/范围/必填），抛出 MCPError |
