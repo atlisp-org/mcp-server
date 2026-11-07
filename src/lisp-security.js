@@ -24,7 +24,9 @@ export const SECURITY_RULES = [
   { re: /\bvlax-import-type-library\b/i, baseSeverity: THREAT_BLOCK, msg: '禁止导入类型库' },
   { re: /\bdos_command_string\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 dos_command_string' },
   { re: /\beval\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用 eval 函数' },
-  { re: /\bcommand\s*["\s]*[_(]?\s*["']?\.?\s*_?(?:shell|quit|exit|close|open|new|recover|audit|purge|wblock|export)/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用危险 CAD 命令' },
+  // CAD 命令名通常在字符串里（(command "_.quit")），不能对 strip 后的代码匹配，
+  // 否则规则形同虚设；见 2026-11 回归用例。
+  { re: /\bcommand\s*["\s]*[_(]?\s*["']?\.?\s*_?(?:shell|quit|exit|close|open|new|recover|audit|purge|wblock|export)/i, baseSeverity: THREAT_BLOCK, msg: '禁止使用危险 CAD 命令', scan: 'raw' },
   { re: /\bload\s*[(\s"]/i, baseSeverity: THREAT_BLOCK, msg: 'load 函数可能加载外部代码' },
   { re: /\b(?:read-line|read-char|write-line|write-char)\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '文件 I/O 操作可能影响系统' },
   { re: /\bvl-file-copy\s*[(\s]/i, baseSeverity: THREAT_BLOCK, msg: '禁止文件复制' },
@@ -58,13 +60,47 @@ function resolveSeverity(_rule) {
   return _cachedLevel;
 }
 
+/** 只剥离注释，保留字符串内容（用于必须看命令名的规则）。 */
+export function stripComments(code) {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i];
+    if (inString) {
+      out += ch;
+      if (ch === '\\' && i + 1 < code.length) {
+        out += code[++i];
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ';') {
+      while (i < code.length && code[i] !== '\n') i++;
+      out += '\n';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function ruleMatches(rule, clean, raw) {
+  return rule.re.test(rule.scan === 'raw' ? raw : clean);
+}
+
 export function validateLispCodeWorker(code) {
   const clean = stripStringsAndComments(code);
+  const raw = stripComments(code);
   const effectiveSeverity = resolveSeverity();
 
   for (const rule of SECURITY_RULES) {
-    const re = rule.re;
-    if (re.test(clean)) {
+    if (ruleMatches(rule, clean, raw)) {
       if (effectiveSeverity === THREAT_BLOCK) {
         return { valid: false, error: rule.msg };
       }
@@ -161,6 +197,7 @@ export function clearSessionAllowlist(sessionId) {
 
 export function validateLispCode(code, sessionId = null) {
   const withoutComments = stripStringsAndComments(code);
+  const raw = stripComments(code);
   const effectiveSeverity = getEffectiveSeverity();
 
   const results = [];
@@ -168,7 +205,7 @@ export function validateLispCode(code, sessionId = null) {
 
   for (let i = 0; i < RULES.length; i++) {
     const rule = RULES[i];
-    if (rule.re.test(withoutComments)) {
+    if (ruleMatches(rule, withoutComments, raw)) {
       const isAllowed = !!sessionId && !!_touch(sessionId)?.has(i);
 
       const severity = effectiveSeverity === THREAT_ALLOW ? THREAT_ALLOW

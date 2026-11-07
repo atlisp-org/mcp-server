@@ -73,12 +73,12 @@ class Metrics {
         } catch { return null; }
     }
 
-    increment(name, labels = {}) {
+    increment(name, labels = {}, value = 1) {
         const key = this.makeKey(name, labels);
         const current = this.counters.get(key) || 0;
-        this.counters.set(key, current + 1);
+        this.counters.set(key, current + value);
         const otelCounter = this.getOtelCounter(name.replace(/-/g,'_'), labels);
-        if (otelCounter) otelCounter.add(1, labels);
+        if (otelCounter) otelCounter.add(value, labels);
     }
 
     histogram(name, value, labels = {}) {
@@ -108,6 +108,15 @@ class Metrics {
         return labelStr ? `${name}{${labelStr}}` : name;
     }
 
+    /**
+     * 拆出 "name{labels}" 的 name 与 labels。
+     * Prometheus 要求直方图后缀（_count/_sum）在标签之前，不能拼在右花括号后面。
+     */
+    static splitKey(key) {
+        const idx = key.indexOf('{');
+        return idx < 0 ? [key, ''] : [key.slice(0, idx), key.slice(idx)];
+    }
+
     getMetrics() {
         const lines = [];
         const uptime = Math.floor((Date.now() - this.startTime) / 1000);
@@ -123,7 +132,8 @@ class Metrics {
         lines.push('# HELP atlisp_mcp_tool_calls_total Total number of tool calls');
         lines.push('# TYPE atlisp_mcp_tool_calls_total counter');
         for (const [key, value] of this.counters) {
-            if (key.startsWith('tool_call')) {
+            if (key.startsWith('tool_call') || key.startsWith('mcp_method')
+                || key.startsWith('sampling_')) {
                 lines.push(`atlisp_mcp_${key} ${value}`);
             }
         }
@@ -136,15 +146,19 @@ class Metrics {
                 const sorted = [...bucket.values].sort((a, b) => a - b);
                 const p50 = percentile(sorted, 0.5);
                 const p90 = percentile(sorted, 0.9);
+                const p95 = percentile(sorted, 0.95);
                 const p99 = percentile(sorted, 0.99);
-                lines.push(`atlisp_mcp_${key}_count ${bucket.count}`);
-                lines.push(`atlisp_mcp_${key}_sum ${bucket.sum.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_avg ${avg.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_min ${bucket.min.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_max ${bucket.max.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_p50 ${p50.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_p90 ${p90.toFixed(2)}`);
-                lines.push(`atlisp_mcp_${key}_p99 ${p99.toFixed(2)}`);
+                // 后缀必须在标签之前（Prometheus 文本格式要求），否则 scrape 报错。
+                const [name, labels] = Metrics.splitKey(key);
+                lines.push(`atlisp_mcp_${name}_count${labels} ${bucket.count}`);
+                lines.push(`atlisp_mcp_${name}_sum${labels} ${bucket.sum.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_avg${labels} ${avg.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_min${labels} ${bucket.min.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_max${labels} ${bucket.max.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_p50${labels} ${p50.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_p90${labels} ${p90.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_p95${labels} ${p95.toFixed(2)}`);
+                lines.push(`atlisp_mcp_${name}_p99${labels} ${p99.toFixed(2)}`);
             }
         }
 

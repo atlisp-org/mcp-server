@@ -111,6 +111,41 @@ describe('lisp-security', () => {
       // 注释里的 startapp 被剥离
       expect(validateLispCodeWorker('; (startapp "x")\n(princ "ok")').valid).toBe(true);
     });
+
+    it('危险 CAD 命令写在字符串里也能拦截（不能只看 strip 后的代码）', () => {
+      expect(validateLispCodeWorker('(command "_.quit")').valid).toBe(false);
+      expect(validateLispCodeWorker('(command "_.close")').valid).toBe(false);
+      // 注释里的命令不算
+      expect(validateLispCodeWorker('; (command "_.quit")\n(princ "ok")').valid).toBe(true);
+    });
+
+    // 逐条覆盖 SECURITY_RULES，防止正则改坏后某条规则静默失效
+    it.each([
+      ['(startapp "calc")', 'startapp'],
+      ['(vl-bt)', 'vl-bt'],
+      ['(vlax-import-type-library :tlb-filename "x")', '导入类型库'],
+      ['(dos_command_string "dir")', 'dos_command_string'],
+      ['(eval (read "x"))', 'eval'],
+      ['(command "_.quit")', '危险 CAD 命令'],
+      ['(load "x.lsp")', 'load 函数'],
+      ['(read-line f)', '文件 I/O'],
+      ['(vl-file-copy "a" "b")', '文件复制'],
+      ['(vl-file-delete "a")', '文件删除'],
+      ['(vl-file-rename "a" "b")', '文件重命名'],
+      ['(vl-registry-write "HKEY" "x" "y")', '注册表'],
+      ['(vl-exit-with-value 0)', 'vl-exit-with-value'],
+      ['(vl-exit-with-error "x")', 'vl-exit-with-error'],
+      ['(vlax-add-cmd "x" (defun x ()))', '注册新命令'],
+      ['(vla-Delete obj)', '删除 vla 对象'],
+      ['(vla-Save doc)', '保存文档'],
+      ['(vla-deletefile fso "x")', '删除文件'],
+      ['(vla-copyfile fso "a" "b")', '复制文件'],
+      ['(vla-movefile fso "a" "b")', '移动文件'],
+    ])('规则拦截: %s', (code, keyword) => {
+      const r = validateLispCodeWorker(code);
+      expect(r.valid).toBe(false);
+      expect(r.error).toContain(keyword);
+    });
   });
 
   describe('validateLispCode + session allowlist', () => {

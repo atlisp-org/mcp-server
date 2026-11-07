@@ -1,0 +1,171 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "工具调用速率（按结果）",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(atlisp_mcp_tool_call_total[5m]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "工具耗时 P50 / P95 / P99",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "max(atlisp_mcp_tool_duration_ms_p50)", "legendFormat": "P50" },
+        { "refId": "B", "expr": "max(atlisp_mcp_tool_duration_ms_p95)", "legendFormat": "P95" },
+        { "refId": "C", "expr": "max(atlisp_mcp_tool_duration_ms_p99)", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "单工具 P95 耗时",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "atlisp_mcp_tool_duration_ms_p95 > 0",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "错误 / CAD 命令速率",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(atlisp_mcp_errors_total[5m])", "legendFormat": "errors" },
+        { "refId": "B", "expr": "rate(atlisp_mcp_cad_commands_total[5m])", "legendFormat": "cad commands" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "活跃会话",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "refId": "A", "expr": "atlisp_mcp_sessions_active" }]
+    },
+    {
+      "type": "stat",
+      "title": "CAD 连接",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "未连接", "color": "red" }, "1": { "text": "已连接", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [{ "refId": "A", "expr": "atlisp_mcp_cad_connected" }]
+    },
+    {
+      "type": "gauge",
+      "title": "堆使用率",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.6 },
+              { "color": "red", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [{ "refId": "A", "expr": "atlisp_mcp_heap_used_ratio" }]
+    },
+    {
+      "type": "stat",
+      "title": "运行时长",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "atlisp_mcp_uptime" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "进程内存",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "atlisp_mcp_memory_bytes",
+          "legendFormat": "{{type}}"
+        },
+        { "refId": "B", "expr": "atlisp_mcp_heap_limit_bytes", "legendFormat": "heap limit" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sampling 调用与 token 速率",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider, status) (rate(atlisp_mcp_sampling_requests_total[5m]))",
+          "legendFormat": "{{provider}}/{{status}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(atlisp_mcp_sampling_tokens_input_total[5m]))",
+          "legendFormat": "input tokens/s"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(atlisp_mcp_sampling_tokens_output_total[5m]))",
+          "legendFormat": "output tokens/s"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["atlisp", "mcp"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "@lisp MCP Server",
+  "uid": "atlisp-mcp",
+  "version": 1
+}

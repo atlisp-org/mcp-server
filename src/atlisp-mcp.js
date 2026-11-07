@@ -21,22 +21,17 @@ import { sessionManager } from './subscription-manager.js';
 
 
 import config from './config.js';
-import { setupRoutes } from './routes.js';
 import { mcpContext, removeSessionServer, sessionServers, createStdioServer } from './mcp-server-state.js';
 import { tools, handleToolCall } from './mcp-tools.js';
-import { createWebSocketServer } from './websocket-transport.js';
+// 传输层按需加载：stdio 模式不需要 express 路由/WebSocket，省 ~230ms 启动时间。
 import { loadPlugins, initPlugins, onPluginChange, startPluginWatcher, stopPluginWatcher, getPlugins } from './plugin-loader.js';
 import { registerTool } from './tool-registry.js';
 import { broadcastToolListChanged, broadcastResourcesListChanged, broadcastPromptsListChanged, scheduleResourceUpdated } from './mcp-server-state.js';
-// startHealthReporter 暂时停用（健康上报到 atlisp.cn），需要时恢复导入和下方调用
-import { stopHealthReporter } from './health-reporter.js';
 import { startLocalMemWatcher } from './mem-monitor.js';
-import { startRelayClient, stopRelayClient } from './relay-client.js';
-import { startErrorReporter, stopErrorReporter } from './error-reporter.js';
+// health-reporter / relay-client / error-reporter 只在特定配置下启用，按需加载。
 
-import { initStreamableHttpServer, setupStreamableHttpRoutes, closeStreamableHttpServer } from './streamable-http.js';
+
 import { acquirePortLock, releasePortLock } from './lockfile.js';
-import { installAutostart, uninstallAutostart, autostartStatus } from './autostart.js';
 import peerManager from './peer-manager.js';
 import { isAuthConfigured } from './auth.js';
 import { enableConsoleTimestamp } from './console-timestamp.js';
@@ -137,6 +132,7 @@ Options:
   --mem                        Terminal memory monitor (polls /health/full, Ctrl+C to exit)
   --mem-interval <sec>         Memory monitor refresh interval (default: 2)
   --mem-once                   Memory monitor single snapshot then exit
+  --profile-startup            Print module load time and exit (detailed: npm run profile:startup)
 
 Environment Variables:
   TRANSPORT             Transport mode (http/stdio/ws)
@@ -221,13 +217,21 @@ For more info: https://atlisp.cn
             process.env.CLIENT_ID = cliArgs[++i];
         } else if (arg === '--metrics-enabled' && cliArgs[i + 1]) {
             process.env.METRICS_ENABLED = cliArgs[++i];
+        } else if (arg === '--profile-startup') {
+            // 静态 import 先于模块体执行，此处 performance.now() 即「进程启动 + 全部模块加载」耗时。
+            console.error(`[profile] 模块加载完成: ${performance.now().toFixed(0)}ms（含 Node 启动）`);
+            console.error('[profile] 逐模块耗时: npm run profile:startup');
+            process.exit(0);
         } else if (arg === '--install-autostart') {
+            const { installAutostart } = await import('./autostart.js');
             installAutostart();
             process.exit(0);
         } else if (arg === '--uninstall-autostart') {
+            const { uninstallAutostart } = await import('./autostart.js');
             uninstallAutostart();
             process.exit(0);
         } else if (arg === '--autostart-status') {
+            const { autostartStatus } = await import('./autostart.js');
             const s = autostartStatus();
             if (s.installed) {
                 console.error(`自动启动: 已安装`);
@@ -282,6 +286,7 @@ export async function startServer() {
     console.error('');
 
     // ERROR 日志上报：尽早启用，覆盖后续插件/peer/CAD 初始化阶段的错误
+    const { startErrorReporter } = await import('./error-reporter.js');
     startErrorReporter();
 
     // 加载插件
@@ -360,6 +365,7 @@ export async function startServer() {
         });
     } else {
         const app = express();
+        const { setupRoutes } = await import('./routes.js');
 
         // streamable-http 模式下由 setupStreamableHttpRoutes 注册 /mcp，避免被默认路由抢先匹配
         setupRoutes(app, { registerMcpRoutes: config.transport !== 'streamable-http' });
@@ -377,6 +383,7 @@ export async function startServer() {
         });
 
         if (config.transport === 'streamable-http') {
+            const { initStreamableHttpServer, setupStreamableHttpRoutes } = await import('./streamable-http.js');
             await initStreamableHttpServer();
             setupStreamableHttpRoutes(app);
         }
@@ -400,6 +407,7 @@ export async function startServer() {
            headersTimeout 必须比 keepAliveTimeout 大，否则连接在收头阶段被切。 */
         rawServer.keepAliveTimeout = 65_000;
         rawServer.headersTimeout = 70_000;
+        const { createWebSocketServer } = await import('./websocket-transport.js');
         createWebSocketServer(rawServer);
 
         const isLoopbackHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(config.host);
@@ -449,6 +457,7 @@ export async function startServer() {
             /* 后台中继：配置过（页面配对过 / RELAY_TOKEN）就连服务端。
                没有配置时是 no-op，不影响纯本地使用。 */
             try {
+                const { startRelayClient } = await import('./relay-client.js');
                 startRelayClient();
             } catch (e) {
                 logError(`[relay] 启动失败: ${e.message}`);
@@ -457,8 +466,11 @@ export async function startServer() {
 
         async function shutdown(signal) {
             console.error(`\n收到 ${signal}，正在优雅关闭...`);
+            const { stopRelayClient } = await import('./relay-client.js');
             stopRelayClient();
+            const { stopHealthReporter } = await import('./health-reporter.js');
             stopHealthReporter();
+            const { stopErrorReporter } = await import('./error-reporter.js');
             await stopErrorReporter();
             if (stopMemWatcher) { stopMemWatcher(); stopMemWatcher = null; }
             stopPluginWatcher();
@@ -468,6 +480,7 @@ export async function startServer() {
             for (const [sid] of sessionServers) {
                 removeSessionServer(sid);
             }
+            const { closeStreamableHttpServer } = await import('./streamable-http.js');
             await closeStreamableHttpServer();
             releasePortLock(config.port);
             await cad.disconnect();
