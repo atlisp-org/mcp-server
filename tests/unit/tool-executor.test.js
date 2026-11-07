@@ -194,4 +194,38 @@ describe('tool-executor handleToolCall', () => {
         expect(mocks.callPluginHook).toHaveBeenCalledWith('onToolExecuted', expect.objectContaining({ success: false }));
         expect(mocks.callPluginHook).toHaveBeenCalledWith('onError', expect.objectContaining({ message: '业务失败' }));
     });
+
+    describe('K1 错误上下文', () => {
+        it('执行阶段错误带 tool/phase/correlationId/参数摘要', async () => {
+            mocks.handler.mockRejectedValue(new Error('CAD timeout'));
+            const result = await handleToolCall('test_write_tool', { name: 'x', big: 'y'.repeat(500), list: [1, 2] });
+            const error = result.structuredContent.error;
+            expect(error.tool).toBe('test_write_tool');
+            expect(error.phase).toBe('execute');
+            expect(error.correlationId).toMatch(/^[0-9a-f-]{36}$/);
+            expect(error.args.name).toBe('x');
+            expect(error.args.big).toMatch(/^string\(500\)$/);
+            expect(error.args.list).toBe('array(2)');
+            // 文本块仍保持人类可读
+            expect(result.content[0].text).toContain('工具: test_write_tool');
+            expect(result.content[0].text).toContain('阶段: execute');
+        });
+
+        it('参数校验失败标记 phase=validate', async () => {
+            mocks.validateToolArgs.mockImplementation(() => { throw new Error('Missing required argument: name'); });
+            const result = await handleToolCall('test_write_tool', {});
+            expect(result.structuredContent.error.phase).toBe('validate');
+        });
+
+        it('审计日志写入同一个 correlationId', async () => {
+            mocks.handler.mockRejectedValue(new Error('boom'));
+            const result = await handleToolCall('test_write_tool', {});
+            const id = result.structuredContent.error.correlationId;
+            expect(mocks.writeAuditEntry).toHaveBeenCalledWith(expect.objectContaining({
+                tool: 'test_write_tool',
+                result: 'error',
+                correlationId: id,
+            }));
+        });
+    });
 });

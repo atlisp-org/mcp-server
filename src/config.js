@@ -47,6 +47,8 @@ const envSchema = z.object({
     TRACING_ENDPOINT: z.string().optional().default('http://127.0.0.1:4318/v1/traces'),
     TOOL_CATEGORIES: z.string().optional().default(''),
     TOOL_PROFILE: z.enum(['full', 'standard', 'minimal']).optional().default('full'),
+    // 破坏性操作确认：off（默认，兼容旧行为）/ destructive（仅破坏性工具）/ all（所有非只读工具）
+    ELICITATION_MODE: z.enum(['off', 'destructive', 'all']).optional().default('off'),
     LOCALE: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     REQUEST_LOG_ENABLED: z.coerce.boolean().optional().default(true),
     // 错误上报：字符串形式统一解析，支持 false/0/off/no 关闭（z.coerce.boolean 无法正确处理 "false"）
@@ -64,6 +66,9 @@ const envSchema = z.object({
     LLM_MODEL: z.string().optional().default('gpt-4o-mini'),
     LLM_MAX_TOKENS: z.coerce.number().optional().default(4096),
     LLM_TEMPERATURE: z.coerce.number().optional().default(0.7),
+    // Sampling 流式输出（默认关闭，保持旧行为）与降级链（如 "vllm,deepseek,openai"）
+    LLM_STREAM: z.coerce.boolean().optional().default(false),
+    SAMPLING_PROVIDERS: z.string().optional().default(''),
     WORKER_POOL_SIZE: z.coerce.number().optional().default(2),
     // 每个 CAD worker 处理多少个请求后轮换（释放 edge-js/.NET 原生内存）。
     // 高频调用场景可调大以减少 worker 冷启动开销；调小则更频繁回收。
@@ -148,6 +153,8 @@ const configSchema = z.object({
     llmModel: z.string().optional(),
     llmMaxTokens: z.number().optional(),
     llmTemperature: z.number().optional(),
+    llmStream: z.boolean().optional(),
+    samplingProviders: z.string().optional(),
     maxPoolSize: z.number().optional(),
     workerPoolSize: z.number().optional(),
     lintPreset: z.string().optional(),
@@ -156,6 +163,7 @@ const configSchema = z.object({
     noLint: z.boolean().optional(),
     toolCategories: z.array(z.string()).optional(),
     toolProfile: z.enum(['full', 'standard', 'minimal']).optional(),
+    elicitationMode: z.enum(['off', 'destructive', 'all']).optional(),
     locale: z.enum(['zh-CN', 'en']).optional().default('zh-CN'),
     securityLevel: z.enum(['strict', 'standard', 'relaxed']).optional(),
     clientId: z.string().optional(),
@@ -338,6 +346,7 @@ const config = {
     // 过滤 tools/list 暴露面以降低 token 成本，被过滤的工具仍可经 search_tools 检索。
     // 优先级同上：CLI > 配置文件 > 环境变量 > 默认 full。
     toolProfile: cliArgs.toolProfile ?? fileConfig?.toolProfile ?? env.TOOL_PROFILE,
+    elicitationMode: fileConfig?.elicitationMode ?? env.ELICITATION_MODE,
     locale: fileConfig?.locale ?? env.LOCALE,
     requestLogEnabled: fileConfig?.requestLogEnabled ?? env.REQUEST_LOG_ENABLED,
     // ERROR 日志上报（默认开启，用于改进项目；不包含图纸/用户数据）
@@ -355,6 +364,8 @@ const config = {
     llmModel: fileConfig?.llmModel ?? env.LLM_MODEL,
     llmMaxTokens: fileConfig?.llmMaxTokens ?? env.LLM_MAX_TOKENS,
     llmTemperature: fileConfig?.llmTemperature ?? env.LLM_TEMPERATURE,
+    llmStream: fileConfig?.llmStream ?? env.LLM_STREAM,
+    samplingProviders: fileConfig?.samplingProviders ?? env.SAMPLING_PROVIDERS,
     maxPoolSize: fileConfig?.maxPoolSize ?? 3,
     workerPoolSize: fileConfig?.workerPoolSize ?? env.WORKER_POOL_SIZE,
     workerMaxRequests: fileConfig?.workerMaxRequests ?? env.WORKER_MAX_REQUESTS,

@@ -9,7 +9,8 @@ import { error as logError } from './logger.js';
 import { cad, resolveCadConnection } from './cad.js';
 import { pool } from './cad-pool.js';
 import { writeAuditEntry } from './audit-log.js';
-import { mcpErrorResponse, ERROR_CODES, MCPError } from './errors.js';
+import { randomUUID } from 'node:crypto';
+import { mcpErrorResponse, withErrorContext, summarizeArgs, ERROR_CODES, MCPError } from './errors.js';
 import { callCustomTool } from './tool-registry.js';
 import { withSpan } from './tracing.js';
 import { isForwardableTool, forwardToolCall as peerForwardToolCall, getAutoForwardPeer } from './peer-forward.js';
@@ -42,22 +43,24 @@ function normalizeStructuredResult(result) {
   return result;
 }
 
-async function writeAuditSuccess(name, args, options, target) {
+async function writeAuditSuccess(name, args, options, target, correlationId) {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
     tool: name, args: args || {},
     sessionId: options.sessionId || '',
     result: 'success',
     target: target || '',
+    correlationId: correlationId || '',
   });
 }
 
-async function writeAuditError(name, args, options, error) {
+async function writeAuditError(name, args, options, error, correlationId) {
   writeAuditEntry({
     timestamp: new Date().toISOString(),
     tool: name, args: args || {},
     sessionId: options.sessionId || '',
     result: 'error', error: error.message,
+    correlationId: correlationId || '',
   });
 }
 
@@ -78,11 +81,15 @@ async function endUndo(instance) {
 }
 
 async function runToolCall(name, args, options) {
+    const correlationId = options.correlationId || randomUUID();
     const handler = TOOL_HANDLERS[name];
     if (!handler) {
         const customResult = callCustomTool(name, args);
         if (customResult !== null) return customResult;
-        return mcpErrorResponse(new MCPError(ERROR_CODES.HANDLER_NOT_FOUND, `未知工具: ${name}`));
+        return mcpErrorResponse(withErrorContext(
+            new MCPError(ERROR_CODES.HANDLER_NOT_FOUND, `未知工具: ${name}`),
+            { tool: name, phase: 'dispatch', correlationId },
+        ));
     }
 
     const isReadOnly = READ_ONLY_TOOLS.has(name);
@@ -90,25 +97,31 @@ async function runToolCall(name, args, options) {
 
     const rateCheck = checkToolRateLimit(name, isReadOnly, options.sessionId);
     if (!rateCheck.allowed) {
-        return mcpErrorResponse(new MCPError(ERROR_CODES.RATE_LIMITED, `工具调用频率超限，请 ${rateCheck.retryAfter} 秒后重试`));
+        return mcpErrorResponse(withErrorContext(
+            new MCPError(ERROR_CODES.RATE_LIMITED, `工具调用频率超限，请 ${rateCheck.retryAfter} 秒后重试`),
+            { tool: name, phase: 'rate-limit', correlationId },
+        ));
     }
 
     return progressContext.run({ notifyProgress }, async () => {
         setNotifyProgress(notifyProgress);
         const instance = args?.instance || null;
         let undoBegun = false;
+        let phase = 'validate';
 
         try {
             validateToolArgs(name, args || {});
             if (instance) {
                 const ctx = mcpContext.getStore();
-                ctx._toolInstance = instance;
+                if (ctx) ctx._toolInstance = instance;
             }
 
             if (!isReadOnly && DESTRUCTIVE_TOOLS.has(name)) {
+                phase = 'undo';
                 undoBegun = await beginUndo(instance);
             }
 
+            phase = 'execute';
             const np = getNotifyProgress();
             if (np) np(1, 1, `正在执行 ${name}...`);
 
@@ -116,11 +129,25 @@ async function runToolCall(name, args, options) {
 
             if (np) np(1, 1, `${name} 执行完成`);
 
-            await writeAuditSuccess(name, args, options);
+            await writeAuditSuccess(name, args, options, '', correlationId);
             notifyResourceChanges(name);
             return result;
         } catch (e) {
-            logError(`Tool call error [${name}]: ${e.message}`, { tool: name, args });
+            logError(`Tool call error [${name}]: ${e.message}`, { tool: name, args: summarizeArgs(args) });
+
+            const connectCodes = new Set([
+                ERROR_CODES.CAD_NOT_CONNECTED,
+                ERROR_CODES.CAD_BUSY,
+                ERROR_CODES.CAD_NO_DOCUMENT,
+            ]);
+            const errorPhase = e instanceof MCPError && connectCodes.has(e.code) ? 'connect' : phase;
+            const enriched = withErrorContext(e, {
+                tool: name,
+                instance: instance || undefined,
+                phase: errorPhase,
+                correlationId,
+                args: summarizeArgs(args),
+            });
 
             // CAD 未连接且配置了远程转发：自动将工具调用转发到远程 peer
             if (e instanceof MCPError && e.code === ERROR_CODES.CAD_NOT_CONNECTED && isForwardableTool(name)) {
@@ -128,7 +155,7 @@ async function runToolCall(name, args, options) {
                 if (remote) {
                     try {
                         const result = await peerForwardToolCall(remote.id, name, args || {}, { apikey: remote.apikey });
-                        await writeAuditSuccess(name, args, options, `peer:${remote.id}`);
+                        await writeAuditSuccess(name, args, options, `peer:${remote.id}`, correlationId);
                         return result;
                     } catch (fe) {
                         logError(`远程转发失败 [${name}]: ${fe.message} (peer: ${remote.url})`);
@@ -136,12 +163,15 @@ async function runToolCall(name, args, options) {
                 }
             }
 
-            await writeAuditError(name, args, options, e);
-            if (e instanceof MCPError) return mcpErrorResponse(e);
-            if (e.message?.startsWith('Missing required') || e.message?.startsWith('Invalid type')) {
-                return mcpErrorResponse(new MCPError(ERROR_CODES.INVALID_ARGS, e.message));
+            await writeAuditError(name, args, options, enriched, correlationId);
+            const invalidArgs = e.message?.startsWith('Missing required') || e.message?.startsWith('Invalid type');
+            if (invalidArgs && !(e instanceof MCPError)) {
+                return mcpErrorResponse(withErrorContext(
+                    new MCPError(ERROR_CODES.INVALID_ARGS, e.message),
+                    { tool: name, instance: instance || undefined, phase: errorPhase, correlationId, args: summarizeArgs(args) },
+                ));
             }
-            return mcpErrorResponse(e);
+            return mcpErrorResponse(enriched);
         } finally {
             const ctx = mcpContext.getStore();
             if (ctx) ctx._toolInstance = null;

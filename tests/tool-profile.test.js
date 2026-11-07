@@ -44,9 +44,10 @@ describe('toolProfile 档位过滤', () => {
     config.toolProfile = 'standard';
     const visible = getVisibleTools();
     expect(visible.length).toBeGreaterThanOrEqual(200);
-    // 上界从 230 提到 250：新增「图纸知识库」分类 11 个只读工具（2026-10）。
+    // 上界从 230 提到 250，再到 255：新增「图纸知识库」11 个只读工具（2026-10）
+    // 与「任务」5 个长任务工具（2026-11）。
     // 预算的意义是防止档位无节制膨胀，不是钉死一个数字——有意新增分类时同步调整。
-    expect(visible.length).toBeLessThanOrEqual(250);
+    expect(visible.length).toBeLessThanOrEqual(255);
     const n = names(visible);
     expect(n.has('create_block')).toBe(true);
     expect(n.has('insert_block')).toBe(true);

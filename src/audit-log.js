@@ -41,6 +41,7 @@ export function writeAuditEntry(entry) {
       target: entry.target || '',
       user: entry.user || '',
       role: entry.role || '',
+      correlationId: entry.correlationId || '',
     }) + '\n';
     fs.appendFileSync(AUDIT_FILE, line, 'utf-8');
   } catch (e) {

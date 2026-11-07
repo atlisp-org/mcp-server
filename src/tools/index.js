@@ -50,6 +50,7 @@ import { tools as frame_tools } from './frame-tools.js';
 import { tools as dwg_kb_tools } from './dwg-kb-tools.js';
 import { tools as library_tools } from './library-tools.js';
 import { tools as pattern_tools } from './pattern-tools.js';
+import { tools as task_tools } from './task-tools.js';
 import { TOOL_INDUSTRIES, CORE_TOOLS, RARE_TOOLS, RARE_CATEGORIES } from './grouping.js';
 
 const READ_ONLY_TOOLS = new Set([
@@ -110,6 +111,8 @@ const READ_ONLY_TOOLS = new Set([
   // 图层反查 / 异步任务 / 项目概览 / 跨专业全景（只读；verify+render 会落盘，故不算 readOnly）
   'dwg_kb_layer_drawings', 'dwg_kb_job', 'dwg_kb_project_overview',
   'dwg_kb_cross_ref_graph',
+  // 长任务查询：只读，不碰 CAD
+  'task_status', 'task_result', 'task_list',
 ]);
 
 const DEPRECATED_TOOLS = new Set([
@@ -156,6 +159,8 @@ function getToolCategory(name) {
   const n = name;
   // 图纸知识库单独成类：它是跨文件的历史库查询，与当前图纸的 CAD 操作不是一回事
   if (/^dwg_kb_/.test(n)) return '图纸知识库';
+  // 长任务：提交/查询/取消，属于基础能力，各档位都可见
+  if (/^task_/.test(n)) return '任务';
   if (/^(draw_|create_3d_|create_box|create_cone|create_cylinder|create_sphere|create_torus|create_wedge|extrude_|revolve_|boolean_|slice_solid|thicken_|offset_surface|create_loft_|create_region|create_cloud_line|convert_to_cloud_line|get_3d_solid_info|create_mesh)/.test(n)) return '绘图与3D';
   if (/^(move_entity|copy_entity|rotate_entity|scale_entity|mirror_entity|offset_entity|array_)/.test(n)) return '修改';
   if (/^batch_(?!get_block_attr|set_block_attr|plot_wizard|attach_pdfs)/.test(n)) return '修改';
@@ -318,6 +323,7 @@ export const tools = [
   ...dwg_kb_tools,
   ...library_tools,
   ...pattern_tools,
+  ...task_tools,
 ].map(addAnnotations);
 
 export const toolsByName = new Map(tools.map(t => [t.name, t]));
@@ -338,10 +344,10 @@ import config from '../config.js';
 // list_tools_by_category 检索并直接调用（工具调用校验走完整 toolsByName）。
 export const PROFILE_CATEGORIES = {
   minimal: new Set([
-    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具',
+    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具', '任务',
   ]),
   standard: new Set([
-    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具',
+    '系统', '选择与属性', '图层', '绘图与3D', '空间查询', '包与函数', '元工具', '任务',
     '修改', '编辑', '块', '标注与填充', '文字', '打印', '文件',
     '视口', '坐标系与布局', '样式', '扩展数据', '图纸知识库',
   ]),

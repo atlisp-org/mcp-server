@@ -20,6 +20,7 @@ import * as subMgr from './subscription-manager.js';
 
 import { skill_search, skill_install, skill_list_installed, skill_uninstall, skill_list_categories } from './handlers/skill-handlers.js';
 import { pluginList, pluginReload } from './handlers/plugin-handlers.js';
+import { taskSubmit, taskStatus, taskResult, taskList, taskCancel } from './handlers/task-handlers.js';
 import { search_tools, list_tools_by_category, list_tools_by_industry, list_tools_by_priority, get_tool_info, list_prompts_handler, get_prompt_handler } from './handlers/meta-handlers.js';
 import { peer_list, peer_scan, peer_connect, peer_disconnect, peer_forward, peer_call_tool, peer_cad_info, peer_cad_pool, peer_stats, peer_summary, peer_broadcast } from './handlers/peer-handlers.js';
 import {
@@ -792,6 +793,13 @@ export const TOOL_HANDLERS = {
     // === Plugin Management ===
     plugin_list: pluginList,
     plugin_reload: pluginReload,
+
+    // === Long-running Tasks ===
+    task_submit: taskSubmit,
+    task_status: taskStatus,
+    task_result: taskResult,
+    task_list: taskList,
+    task_cancel: taskCancel,
 };
 
 export { tools };

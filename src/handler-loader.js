@@ -28,7 +28,7 @@ export const HANDLER_MODULE_NAMES = [
   'external', 'file', 'frame', 'function', 'layer', 'library', 'lint', 'meta', 'pattern',
   'package', 'parametric', 'pdf-annotation', 'peer', 'plugin', 'prompt',
   'purge', 'query-print', 'resource', 'sheetset', 'skill', 'spatial',
-  'standards', 'style', 'text', 'ucs-layout', 'viewport', 'xdata', 'xref',
+  'standards', 'style', 'task', 'text', 'ucs-layout', 'viewport', 'xdata', 'xref',
 ];
 
 /* 把 readdir 的结果和静态清单合并：目录缺文件时静态清单兜底，目录里新增的

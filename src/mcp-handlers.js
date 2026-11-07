@@ -28,7 +28,9 @@ import { log, error as logError } from './logger.js';
 
 import { cad } from './cad.js';
 import { setClientRoots } from './client-roots.js';
-import { getVisibleTools } from './tools/index.js';
+import { getVisibleTools, toolsByName } from './tools/index.js';
+import { confirmDestructive } from './elicitation.js';
+import { MCPError, ERROR_CODES, mcpErrorResponse } from './errors.js';
 
 const COMPLETIONS_CACHE_TTL = 300;
 
@@ -103,6 +105,25 @@ export function createMcpServer(handlers = {}) {
             }).catch(() => {});
         } : null;
         try {
+            // 破坏性确认仅在显式开启 ELICITATION_MODE 且客户端支持时生效；
+            // 默认 off / 不支持 / 请求失败都按旧行为放行（见 elicitation.js）。
+            const toolDef = toolsByName.get(name);
+            const verdict = await confirmDestructive(server, {
+                toolName: name,
+                args: args || {},
+                isDestructive: Boolean(toolDef?.annotations?.destructiveHint),
+                sessionId: mcpContext.getStore()?.sessionId || '',
+            });
+            if (verdict.action === 'declined') {
+                trackToolCall(name, Date.now() - startTime, false);
+                trackError();
+                return mcpErrorResponse(new MCPError(
+                    ERROR_CODES.USER_DECLINED,
+                    `用户拒绝执行 ${name}`,
+                    { tool: name, phase: 'elicit', reason: verdict.reason || '' },
+                ));
+            }
+
             const result = await handleToolCall(name, args || {}, { notifyProgress });
             trackToolCall(name, Date.now() - startTime, !result.isError);
             return result;
